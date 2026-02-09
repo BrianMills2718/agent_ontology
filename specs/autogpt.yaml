@@ -16,7 +16,7 @@ entities:
   - id: planner
     type: agent
     label: "Planner"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are an autonomous AI agent planner. Given an objective, break it down into
       a concrete plan of 3-7 actionable steps. Each step should be specific enough to execute.
@@ -27,7 +27,7 @@ entities:
   - id: thinker
     type: agent
     label: "Thinker"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are the reasoning component of an autonomous agent. Given the current goal,
       plan, completed results, and current step, reason about what specific action to take.
@@ -39,7 +39,7 @@ entities:
   - id: critic
     type: agent
     label: "Critic"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are a self-critic for an autonomous agent. Review the proposed thought and action.
       Check for: logical errors, missing information, better alternatives, potential risks.
@@ -51,7 +51,7 @@ entities:
   - id: executor
     type: agent
     label: "Executor"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You execute a specific action. You receive the action description and any context.
       Perform the action to the best of your ability and return the result.

@@ -44,6 +44,8 @@ def dump_trace(path="trace.json"):
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
     else:
         return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
 
@@ -80,6 +82,21 @@ def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
         return response.content[0].text
     except Exception as e:
         print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
+        return json.dumps({"stub": True, "model": model})
+
+
+def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        response = client.models.generate_content(
+            model=model,
+            contents=f"{system_prompt}\n\n{user_message}",
+            config={"temperature": temperature, "max_output_tokens": max_tokens},
+        )
+        return response.text
+    except Exception as e:
+        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
         return json.dumps({"stub": True, "model": model})
 
 # ═══════════════════════════════════════════════════════════
@@ -593,6 +610,8 @@ def process_llm_call(state):
     claude_result = parse_response(claude_raw, "ApiResponse")
     # Merge output fields into state.data
     state.data.update(claude_result)
+    state.data["api_response"] = claude_result
+    state.data["llm_call_result"] = claude_result
     print(f"    ← Claude (LLM): {claude_result}")
 
     return state
@@ -855,7 +874,7 @@ TRANSITIONS = {
     # "check_tools": determined by gate logic
     "emit_text": "persist",
     # "check_permission": determined by gate logic
-    "prompt_user": "execute",  # multiple outflows, taking first
+    "prompt_user": ['execute', 'append'],  # fan-out
     "execute": "observe",
     "observe": "append",
     "append": "llm_call",  # loop: Re-reason after denial
@@ -899,6 +918,17 @@ def run(initial_data=None):
             current = result
         else:
             current = TRANSITIONS.get(current)
+
+        # Fan-out: if transition is a list, run all branches sequentially
+        while isinstance(current, list):
+            _targets = current
+            for _ft in _targets:
+                state.iteration += 1
+                print(f"\n[Iteration {state.iteration}] State: {_ft} (fan-out)")
+                _fn = PROCESSES.get(_ft)
+                if _fn:
+                    _fn(state)
+            current = TRANSITIONS.get(_targets[-1])
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

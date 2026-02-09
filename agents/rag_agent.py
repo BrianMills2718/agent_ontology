@@ -44,6 +44,8 @@ def dump_trace(path="trace.json"):
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
     else:
         return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
 
@@ -80,6 +82,21 @@ def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
         return response.content[0].text
     except Exception as e:
         print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
+        return json.dumps({"stub": True, "model": model})
+
+
+def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        response = client.models.generate_content(
+            model=model,
+            contents=f"{system_prompt}\n\n{user_message}",
+            config={"temperature": temperature, "max_output_tokens": max_tokens},
+        )
+        return response.text
+    except Exception as e:
+        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
         return json.dumps({"stub": True, "model": model})
 
 # ═══════════════════════════════════════════════════════════
@@ -284,13 +301,13 @@ enough information, say so. Cite which passages you used.
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Generator", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Generator", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -303,13 +320,13 @@ search query that will match relevant documents. Output only the rewritten query
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Query Rewriter", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Query Rewriter", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -322,13 +339,13 @@ output a relevance score (0-10) and whether to include it. Return a filtered lis
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Relevance Judge", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Relevance Judge", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -379,6 +396,8 @@ def process_rewrite_query(state):
     query_rewriter_result = parse_response(query_rewriter_raw, "RewrittenQuery")
     # Merge output fields into state.data
     state.data.update(query_rewriter_result)
+    state.data["rewritten_query"] = query_rewriter_result
+    state.data["rewrite_query_result"] = query_rewriter_result
     print(f"    ← Query Rewriter: {query_rewriter_result}")
 
     return state
@@ -422,6 +441,8 @@ def process_judge_relevance(state):
     relevance_judge_result = parse_response(relevance_judge_raw, "JudgeOutput")
     # Merge output fields into state.data
     state.data.update(relevance_judge_result)
+    state.data["judge_output"] = relevance_judge_result
+    state.data["judge_relevance_result"] = relevance_judge_result
     print(f"    ← Relevance Judge: {relevance_judge_result}")
 
     return state
@@ -466,6 +487,8 @@ def process_generate_answer(state):
     generator_result = parse_response(generator_raw, "GeneratedAnswer")
     # Merge output fields into state.data
     state.data.update(generator_result)
+    state.data["generated_answer"] = generator_result
+    state.data["generate_answer_result"] = generator_result
     print(f"    ← Generator: {generator_result}")
 
     return state
@@ -622,6 +645,17 @@ def run(initial_data=None):
             current = result
         else:
             current = TRANSITIONS.get(current)
+
+        # Fan-out: if transition is a list, run all branches sequentially
+        while isinstance(current, list):
+            _targets = current
+            for _ft in _targets:
+                state.iteration += 1
+                print(f"\n[Iteration {state.iteration}] State: {_ft} (fan-out)")
+                _fn = PROCESSES.get(_ft)
+                if _fn:
+                    _fn(state)
+            current = TRANSITIONS.get(_targets[-1])
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

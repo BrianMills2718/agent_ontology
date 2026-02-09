@@ -44,6 +44,8 @@ def dump_trace(path="trace.json"):
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
     else:
         return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
 
@@ -80,6 +82,21 @@ def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
         return response.content[0].text
     except Exception as e:
         print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
+        return json.dumps({"stub": True, "model": model})
+
+
+def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        response = client.models.generate_content(
+            model=model,
+            contents=f"{system_prompt}\n\n{user_message}",
+            config={"temperature": temperature, "max_output_tokens": max_tokens},
+        )
+        return response.text
+    except Exception as e:
+        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
         return json.dumps({"stub": True, "model": model})
 
 # ═══════════════════════════════════════════════════════════
@@ -210,13 +227,13 @@ def invoke_intake_agent(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Intake Agent", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Intake Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -228,13 +245,13 @@ def invoke_security_reviewer(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Security Reviewer", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Security Reviewer", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -246,13 +263,13 @@ def invoke_style_reviewer(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Style Reviewer", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Style Reviewer", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -264,13 +281,13 @@ def invoke_logic_reviewer(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Logic Reviewer", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Logic Reviewer", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -282,13 +299,13 @@ def invoke_lead_reviewer(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Lead Reviewer", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Lead Reviewer", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -355,6 +372,8 @@ def process_analyze_security(state):
     security_reviewer_result = parse_response(security_reviewer_raw, "SecurityReview")
     # Merge output fields into state.data
     state.data.update(security_reviewer_result)
+    state.data["security_review"] = security_reviewer_result
+    state.data["analyze_security_result"] = security_reviewer_result
     print(f"    ← Security Reviewer: {security_reviewer_result}")
 
     return state
@@ -380,6 +399,8 @@ def process_analyze_style(state):
     style_reviewer_result = parse_response(style_reviewer_raw, "StyleReview")
     # Merge output fields into state.data
     state.data.update(style_reviewer_result)
+    state.data["style_review"] = style_reviewer_result
+    state.data["analyze_style_result"] = style_reviewer_result
     print(f"    ← Style Reviewer: {style_reviewer_result}")
 
     return state
@@ -405,6 +426,8 @@ def process_analyze_logic(state):
     logic_reviewer_result = parse_response(logic_reviewer_raw, "LogicReview")
     # Merge output fields into state.data
     state.data.update(logic_reviewer_result)
+    state.data["logic_review"] = logic_reviewer_result
+    state.data["analyze_logic_result"] = logic_reviewer_result
     print(f"    ← Logic Reviewer: {logic_reviewer_result}")
 
     return state
@@ -434,6 +457,8 @@ def process_synthesize_review(state):
     lead_reviewer_result = parse_response(lead_reviewer_raw, "SynthesizedReview")
     # Merge output fields into state.data
     state.data.update(lead_reviewer_result)
+    state.data["synthesized_review"] = lead_reviewer_result
+    state.data["synthesize_review_result"] = lead_reviewer_result
     print(f"    ← Lead Reviewer: {lead_reviewer_result}")
 
     return state
@@ -533,7 +558,7 @@ PROCESSES = {
 }
 
 TRANSITIONS = {
-    "intake_pr": "analyze_security",  # multiple outflows, taking first
+    "intake_pr": ['analyze_security', 'analyze_style', 'analyze_logic'],  # fan-out
     "analyze_security": "synthesize_review",
     "analyze_style": "synthesize_review",
     "analyze_logic": "synthesize_review",
@@ -576,6 +601,17 @@ def run(initial_data=None):
             current = result
         else:
             current = TRANSITIONS.get(current)
+
+        # Fan-out: if transition is a list, run all branches sequentially
+        while isinstance(current, list):
+            _targets = current
+            for _ft in _targets:
+                state.iteration += 1
+                print(f"\n[Iteration {state.iteration}] State: {_ft} (fan-out)")
+                _fn = PROCESSES.get(_ft)
+                if _fn:
+                    _fn(state)
+            current = TRANSITIONS.get(_targets[-1])
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

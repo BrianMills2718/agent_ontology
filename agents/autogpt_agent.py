@@ -44,6 +44,8 @@ def dump_trace(path="trace.json"):
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
     else:
         return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
 
@@ -80,6 +82,21 @@ def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
         return response.content[0].text
     except Exception as e:
         print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
+        return json.dumps({"stub": True, "model": model})
+
+
+def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        response = client.models.generate_content(
+            model=model,
+            contents=f"{system_prompt}\n\n{user_message}",
+            config={"temperature": temperature, "max_output_tokens": max_tokens},
+        )
+        return response.text
+    except Exception as e:
+        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
         return json.dumps({"stub": True, "model": model})
 
 # ═══════════════════════════════════════════════════════════
@@ -284,13 +301,13 @@ Consider dependencies between steps. Return the plan as a JSON list of steps.
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Planner", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Planner", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -305,13 +322,13 @@ Output your thought process and a proposed action.
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Thinker", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Thinker", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -326,13 +343,13 @@ with specific feedback.
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Critic", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Critic", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -345,13 +362,13 @@ Perform the action to the best of your ability and return the result.
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Executor", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Executor", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -407,6 +424,8 @@ def process_decompose(state):
     planner_result = parse_response(planner_raw, "Plan")
     # Merge output fields into state.data
     state.data.update(planner_result)
+    state.data["plan"] = planner_result
+    state.data["decompose_result"] = planner_result
     print(f"    ← Planner: {planner_result}")
 
     return state
@@ -439,6 +458,8 @@ def process_think(state):
     thinker_result = parse_response(thinker_raw, "Thought")
     # Merge output fields into state.data
     state.data.update(thinker_result)
+    state.data["thought"] = thinker_result
+    state.data["think_result"] = thinker_result
     print(f"    ← Thinker: {thinker_result}")
 
     return state
@@ -458,6 +479,8 @@ def process_criticize(state):
     critic_result = parse_response(critic_raw, "Criticism")
     # Merge output fields into state.data
     state.data.update(critic_result)
+    state.data["criticism"] = critic_result
+    state.data["criticize_result"] = critic_result
     print(f"    ← Critic: {critic_result}")
 
     return state
@@ -542,6 +565,8 @@ def process_act(state):
     executor_result = parse_response(executor_raw, "ActionResult")
     # Merge output fields into state.data
     state.data.update(executor_result)
+    state.data["action_result"] = executor_result
+    state.data["act_result"] = executor_result
     print(f"    ← Executor: {executor_result}")
 
     return state
@@ -677,6 +702,17 @@ def run(initial_data=None):
             current = result
         else:
             current = TRANSITIONS.get(current)
+
+        # Fan-out: if transition is a list, run all branches sequentially
+        while isinstance(current, list):
+            _targets = current
+            for _ft in _targets:
+                state.iteration += 1
+                print(f"\n[Iteration {state.iteration}] State: {_ft} (fan-out)")
+                _fn = PROCESSES.get(_ft)
+                if _fn:
+                    _fn(state)
+            current = TRANSITIONS.get(_targets[-1])
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

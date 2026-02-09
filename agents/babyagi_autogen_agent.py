@@ -44,6 +44,8 @@ def dump_trace(path="trace.json"):
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
     else:
         return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
 
@@ -80,6 +82,21 @@ def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
         return response.content[0].text
     except Exception as e:
         print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
+        return json.dumps({"stub": True, "model": model})
+
+
+def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        response = client.models.generate_content(
+            model=model,
+            contents=f"{system_prompt}\n\n{user_message}",
+            config={"temperature": temperature, "max_output_tokens": max_tokens},
+        )
+        return response.text
+    except Exception as e:
+        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
         return json.dumps({"stub": True, "model": model})
 
 # ═══════════════════════════════════════════════════════════
@@ -263,13 +280,13 @@ def invoke_execution_agent(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Execution Agent", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Execution Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -281,13 +298,13 @@ def invoke_context_agent(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Context Agent", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Context Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -299,13 +316,13 @@ def invoke_task_creation_agent(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Task Creation Agent", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Task Creation Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -316,13 +333,13 @@ def invoke_prioritization_agent(user_message, output_schema=None):
         system += output_instruction(output_schema)
     t0 = time.time()
     result = call_llm(
-        model="gpt-4.1-mini",
+        model="gemini-3-flash-preview",
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
         max_tokens=4096,
     )
-    trace_call("Prioritization Agent", "gpt-4.1-mini", system, user_message, result, int((time.time()-t0)*1000))
+    trace_call("Prioritization Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -374,6 +391,8 @@ def process_pull_task(state):
     execution_agent_result = parse_response(execution_agent_raw, "ExecutionOutput")
     # Merge output fields into state.data
     state.data.update(execution_agent_result)
+    state.data["execution_output"] = execution_agent_result
+    state.data["pull_task_result"] = execution_agent_result
     print(f"    ← Execution Agent: {execution_agent_result}")
 
     return state
@@ -414,6 +433,8 @@ def process_enrich_and_store(state):
     context_agent_result = parse_response(context_agent_raw, "ContextResult")
     # Merge output fields into state.data
     state.data.update(context_agent_result)
+    state.data["context_result"] = context_agent_result
+    state.data["enrich_and_store_result"] = context_agent_result
     print(f"    ← Context Agent: {context_agent_result}")
 
     # Write: Store result in Vector DB
@@ -453,6 +474,8 @@ def process_create_and_reprioritize(state):
     task_creation_agent_result = parse_response(task_creation_agent_raw, "TaskList")
     # Merge output fields into state.data
     state.data.update(task_creation_agent_result)
+    state.data["task_list"] = task_creation_agent_result
+    state.data["create_and_reprioritize_result"] = task_creation_agent_result
     print(f"    ← Task Creation Agent: {task_creation_agent_result}")
 
     # Invoke: Reprioritize task list
@@ -462,6 +485,8 @@ def process_create_and_reprioritize(state):
     prioritization_agent_result = parse_response(prioritization_agent_raw, "TaskList")
     # Merge output fields into state.data
     state.data.update(prioritization_agent_result)
+    state.data["task_list"] = prioritization_agent_result
+    state.data["create_and_reprioritize_result"] = prioritization_agent_result
     print(f"    ← Prioritization Agent: {prioritization_agent_result}")
 
     return state
@@ -515,6 +540,17 @@ def run(initial_data=None):
         result = process_fn(state)
 
         current = TRANSITIONS.get(current)
+
+        # Fan-out: if transition is a list, run all branches sequentially
+        while isinstance(current, list):
+            _targets = current
+            for _ft in _targets:
+                state.iteration += 1
+                print(f"\n[Iteration {state.iteration}] State: {_ft} (fan-out)")
+                _fn = PROCESSES.get(_ft)
+                if _fn:
+                    _fn(state)
+            current = TRANSITIONS.get(_targets[-1])
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

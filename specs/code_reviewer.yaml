@@ -7,7 +7,7 @@ entities:
   - id: intake_agent
     type: agent
     label: "Intake Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You receive pull request metadata including diff, files changed, and PR description. Store the PR metadata for downstream analysis.
     input_schema: PRInput
@@ -16,7 +16,7 @@ entities:
   - id: security_reviewer
     type: agent
     label: "Security Reviewer"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You analyze the full pull request diff for security vulnerabilities such as SQL injection, XSS, hardcoded secrets, and other risks. Provide a structured review of security issues.
     input_schema: PRMetadata
@@ -25,7 +25,7 @@ entities:
   - id: style_reviewer
     type: agent
     label: "Style Reviewer"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You analyze the full pull request diff for code style issues including naming conventions, formatting consistency, and style guide adherence. Provide a structured style review.
     input_schema: PRMetadata
@@ -34,7 +34,7 @@ entities:
   - id: logic_reviewer
     type: agent
     label: "Logic Reviewer"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You analyze the full pull request diff for logical errors, edge cases, and performance issues. Provide a structured logic review.
     input_schema: PRMetadata
@@ -43,7 +43,7 @@ entities:
   - id: lead_reviewer
     type: agent
     label: "Lead Reviewer"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You synthesize the security, style, and logic reviews into a single structured review. Provide an overall quality score (1-10), a list of issues with severity (critical/warning/info), file, line, and description, and a summary recommendation (approve, request changes, or comment).
     input_schema: SynthesizerInput

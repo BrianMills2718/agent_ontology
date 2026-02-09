@@ -12,7 +12,7 @@ entities:
   - id: moderator_agent
     type: agent
     label: "Moderator Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are the Moderator Agent. Given a user-provided topic, you will frame it as a clear proposition and assign pro and con positions to two agents. Output a DebateSetup object with the proposition and assigned positions.
     input_schema: TopicInput
@@ -21,7 +21,7 @@ entities:
   - id: pro_agent
     type: agent
     label: "Pro Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are the Pro Agent arguing in favor of the proposition. You will receive the debate history and your position. Provide your argument or rebuttal for the current round.
     input_schema: DebateTurnInput
@@ -30,7 +30,7 @@ entities:
   - id: con_agent
     type: agent
     label: "Con Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are the Con Agent arguing against the proposition. You will receive the debate history and your position. Provide your argument or rebuttal for the current round.
     input_schema: DebateTurnInput
@@ -39,7 +39,7 @@ entities:
   - id: judge_agent
     type: agent
     label: "Judge Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are the Judge Agent. After the debate rounds, evaluate the strength of arguments (1-10 per side), quality of rebuttals, determine the overall winner, and summarize key points from each side. If the combined score is less than 12, request one more round.
     input_schema: DebateHistoryInput

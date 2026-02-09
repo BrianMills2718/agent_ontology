@@ -8,7 +8,7 @@ entities:
   - id: execution_agent
     type: agent
     label: "Execution Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are an AI who performs one task. You will receive a JSON object with 'task' (the task to perform), 'objective' (the overall goal), and 'context' (relevant prior results). Perform the task and return your result.
     input_schema: ExecutionInput
@@ -17,7 +17,7 @@ entities:
   - id: context_agent
     type: agent
     label: "Context Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You retrieve relevant context for a given query from stored results. You will receive a query, top_k count, and stored_results (a list of text strings from previous task executions). Select and return the top_k most relevant stored_results as the 'context' array. For 'sources', use short labels like 'task_result_1'. If stored_results is empty, return empty arrays for both context and sources.
     input_schema: ContextQuery
@@ -26,7 +26,7 @@ entities:
   - id: task_creation_agent
     type: agent
     label: "Task Creation Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You create new tasks based on the result of an execution agent. You will receive the objective, the latest execution result, and a list of existing incomplete tasks. Return a TaskList containing ALL existing incomplete tasks PLUS any new tasks needed to achieve the objective. Assign incrementing integer IDs to new tasks (starting after the highest existing ID). Each task needs: id (integer), description (string), status ('pending'), priority (integer, 1=highest). Do NOT drop any existing tasks from the list.
     input_schema: TaskCreationInput
@@ -35,7 +35,7 @@ entities:
   - id: prioritization_agent
     type: agent
     label: "Prioritization Agent"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: "You reprioritize a task list based on the objective."
     input_schema: TaskList
     output_schema: TaskList

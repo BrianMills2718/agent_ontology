@@ -118,6 +118,8 @@ def generate_agent(spec):
     w('def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):')
     w('    if model.startswith("claude") or model.startswith("anthropic"):')
     w('        return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)')
+    w('    elif model.startswith("gemini"):')
+    w('        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)')
     w('    else:')
     w('        return _call_openai(model, system_prompt, user_message, temperature, max_tokens)')
     w('')
@@ -154,6 +156,21 @@ def generate_agent(spec):
     w('        return response.content[0].text')
     w('    except Exception as e:')
     w('        print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")')
+    w('        return json.dumps({"stub": True, "model": model})')
+    w('')
+    w('')
+    w('def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):')
+    w('    try:')
+    w('        from google import genai')
+    w('        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))')
+    w('        response = client.models.generate_content(')
+    w('            model=model,')
+    w('            contents=f"{system_prompt}\\n\\n{user_message}",')
+    w('            config={"temperature": temperature, "max_output_tokens": max_tokens},')
+    w('        )')
+    w('        return response.text')
+    w('    except Exception as e:')
+    w('        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")')
     w('        return json.dumps({"stub": True, "model": model})')
     w('')
 
@@ -464,6 +481,10 @@ def generate_agent(spec):
                     w(f'    {_safe_name(entity_id)}_result = parse_response({_safe_name(entity_id)}_raw, "{output_schema}")')
                     w(f'    # Merge output fields into state.data')
                     w(f'    state.data.update({_safe_name(entity_id)}_result)')
+                    # G2: Also store namespaced by output schema (snake_case) and process ID
+                    snake = _camel_to_snake(output_schema)
+                    w(f'    state.data["{snake}"] = {_safe_name(entity_id)}_result')
+                    w(f'    state.data["{pid}_result"] = {_safe_name(entity_id)}_result')
                     w(f'    print(f"    ← {entity.get("label", entity_id)}: {{{_safe_name(entity_id)}_result}}")')
                 else:
                     w(f'    {_safe_name(entity_id)}_result = invoke_{_safe_name(entity_id)}({_safe_name(entity_id)}_msg)')
@@ -586,7 +607,8 @@ def generate_agent(spec):
         elif len(proc_targets) == 1:
             w(f'    "{pid}": "{proc_targets[0][0]}",')
         elif len(proc_targets) > 1:
-            w(f'    "{pid}": "{proc_targets[0][0]}",  # multiple outflows, taking first')
+            target_ids = [t for t, e in proc_targets]
+            w(f'    "{pid}": {target_ids},  # fan-out')
         else:
             w(f'    "{pid}": None,  # terminal')
     w('}')
@@ -628,6 +650,17 @@ def generate_agent(spec):
         w(f'            current = TRANSITIONS.get(current)')
     else:
         w(f'        current = TRANSITIONS.get(current)')
+    w(f'')
+    w(f'        # Fan-out: if transition is a list, run all branches sequentially')
+    w(f'        while isinstance(current, list):')
+    w(f'            _targets = current')
+    w(f'            for _ft in _targets:')
+    w(f'                state.iteration += 1')
+    w(f'                print(f"\\n[Iteration {{state.iteration}}] State: {{_ft}} (fan-out)")')
+    w(f'                _fn = PROCESSES.get(_ft)')
+    w(f'                if _fn:')
+    w(f'                    _fn(state)')
+    w(f'            current = TRANSITIONS.get(_targets[-1])')
     w(f'')
     w(f'        if current is None or state.data.get("_done"):')
     w(f'            print("\\n  [DONE] Reached terminal state.")')
@@ -950,6 +983,14 @@ def _safe_name(s):
 
 def _escape_triple(s):
     return s.replace('"""', '\\"\\"\\"')
+
+
+def _camel_to_snake(name):
+    """Convert CamelCase to snake_case. E.g., SecurityReview -> security_review."""
+    import re
+    s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
+    s = re.sub(r'([a-z\d])([A-Z])', r'\1_\2', s)
+    return s.lower()
 
 
 def spec_stats(spec):

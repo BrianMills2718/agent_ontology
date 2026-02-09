@@ -16,7 +16,7 @@ entities:
   - id: generator
     type: agent
     label: "Generator"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You are an answer generator. You receive a user question and retrieved context passages.
       Answer the question based ONLY on the provided context. If the context doesn't contain
@@ -27,7 +27,7 @@ entities:
   - id: query_rewriter
     type: agent
     label: "Query Rewriter"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You rewrite user queries to improve retrieval. Given a query, produce a more specific
       search query that will match relevant documents. Output only the rewritten query text.
@@ -37,7 +37,7 @@ entities:
   - id: relevance_judge
     type: agent
     label: "Relevance Judge"
-    model: gpt-4.1-mini
+    model: gemini-3-flash-preview
     system_prompt: |
       You judge whether retrieved passages are relevant to the query. For each passage,
       output a relevance score (0-10) and whether to include it. Return a filtered list.
