@@ -725,10 +725,435 @@ def modify_prompt(spec):
 
 
 # ════════════════════════════════════════════════════════════════════
+# Pattern-level mutation operators
+# ════════════════════════════════════════════════════════════════════
+
+def _get_patterns_module():
+    """Lazy import of patterns module to avoid circular imports."""
+    import patterns as pat_mod
+    return pat_mod
+
+
+def swap_pattern(spec):
+    """Replace one detected pattern in the spec with a compatible alternative.
+
+    Detects patterns in the spec, picks one at random, finds a replacement
+    pattern with a compatible interface, removes the old pattern's processes/
+    entities/edges, and inserts the new one with proper wiring.
+    """
+    pat_mod = _get_patterns_module()
+    spec = copy.deepcopy(spec)
+
+    detected = pat_mod.detect_patterns(spec)
+    if not detected:
+        raise ValueError("No patterns detected in spec to swap")
+
+    # Pick a detected pattern to replace
+    random.shuffle(detected)
+    target_pname, target_pids, target_prefix = detected[0]
+
+    # Find a compatible replacement (different pattern, overlapping I/O)
+    target_pat = pat_mod.PATTERN_LIBRARY[target_pname]
+    target_outputs = set(target_pat["interface"]["outputs"])
+    target_inputs = set(target_pat["interface"]["inputs"])
+
+    candidates = []
+    for pname in pat_mod.list_patterns():
+        if pname == target_pname:
+            continue
+        candidate = pat_mod.PATTERN_LIBRARY[pname]
+        cand_inputs = set(candidate["interface"]["inputs"])
+        cand_outputs = set(candidate["interface"]["outputs"])
+        # Compatible if inputs overlap and outputs overlap
+        if (not cand_inputs or cand_inputs & target_inputs) and \
+           (not cand_outputs or cand_outputs & target_outputs):
+            candidates.append(pname)
+
+    if not candidates:
+        raise ValueError(f"No compatible replacement for pattern '{target_pname}'")
+
+    replacement_name = random.choice(candidates)
+    replacement = pat_mod.get_pattern(replacement_name)
+
+    # Find flow/branch/loop edges that connect INTO or OUT OF the old pattern
+    # (only to/from processes, not invoke/write edges to entities)
+    incoming_edges = []
+    outgoing_edges = []
+    for edge in spec.get("edges", []):
+        etype = edge.get("type", "")
+        if etype not in ("flow", "branch", "loop"):
+            continue
+        if edge.get("to") in target_pids and edge.get("from") not in target_pids:
+            incoming_edges.append(edge)
+        if edge.get("from") in target_pids and edge.get("to") not in target_pids:
+            outgoing_edges.append(edge)
+
+    # Remove old pattern's processes, entities, edges
+    old_entity_ids = set()
+    for edge in spec.get("edges", []):
+        if edge.get("from") in target_pids and edge.get("type") in ("invoke", "read", "write"):
+            old_entity_ids.add(edge.get("to"))
+
+    spec["processes"] = [p for p in spec["processes"] if p["id"] not in target_pids]
+    spec["edges"] = [e for e in spec["edges"]
+                     if e.get("from") not in target_pids and e.get("to") not in target_pids]
+
+    # Remove orphaned entities (only those uniquely used by old pattern)
+    remaining_edge_refs = set()
+    for e in spec.get("edges", []):
+        remaining_edge_refs.add(e.get("from"))
+        remaining_edge_refs.add(e.get("to"))
+    removed_entity_ids = set()
+    for eid in old_entity_ids:
+        if eid not in remaining_edge_refs:
+            spec["entities"] = [e for e in spec["entities"] if e["id"] != eid]
+            removed_entity_ids.add(eid)
+
+    # Clean up edges that reference removed entities
+    if removed_entity_ids:
+        all_node_ids = {p["id"] for p in spec["processes"]} | {e["id"] for e in spec["entities"]}
+        spec["edges"] = [e for e in spec["edges"]
+                         if e.get("from") in all_node_ids and e.get("to") in all_node_ids]
+
+    # Namespace and insert the replacement
+    prefix = target_prefix or replacement_name[:3]
+    from compose import _namespace_pattern
+    ns_replacement = _namespace_pattern(replacement, prefix)
+
+    spec["processes"].extend(ns_replacement["processes"])
+    # Add entities (avoiding duplicates)
+    existing_eids = {e["id"] for e in spec["entities"]}
+    for ent in ns_replacement["entities"]:
+        if ent["id"] not in existing_eids:
+            spec["entities"].append(ent)
+    spec["edges"].extend(ns_replacement["edges"])
+    # Add schemas (avoiding duplicates)
+    existing_schemas = {s["name"] for s in spec.get("schemas", [])}
+    for schema in ns_replacement["schemas"]:
+        if schema["name"] not in existing_schemas:
+            spec.setdefault("schemas", []).append(schema)
+
+    # Rewire incoming edges to new entry
+    for edge in incoming_edges:
+        edge["to"] = ns_replacement["interface"]["entry"]
+        spec["edges"].append(edge)
+
+    # Rewire outgoing edges from new exits
+    for edge in outgoing_edges:
+        for exit_pid in ns_replacement["interface"]["exits"]:
+            new_edge = copy.deepcopy(edge)
+            new_edge["from"] = exit_pid
+            spec["edges"].append(new_edge)
+
+    _record_mutation(spec, "swap_pattern", {
+        "old_pattern": target_pname,
+        "new_pattern": replacement_name,
+        "prefix": prefix,
+    })
+    return spec
+
+
+def insert_pattern(spec):
+    """Insert a pattern at a random flow edge in the spec.
+
+    Picks a random flow edge, breaks it, and inserts a pattern between
+    the source and target.
+    """
+    pat_mod = _get_patterns_module()
+    spec = copy.deepcopy(spec)
+
+    flow_edges = [e for e in spec.get("edges", []) if e.get("type") == "flow"
+                  and _process_by_id(spec, e.get("from"))
+                  and _process_by_id(spec, e.get("to"))]
+
+    if not flow_edges:
+        raise ValueError("No flow edges between processes to insert a pattern at")
+
+    edge = random.choice(flow_edges)
+    from_pid = edge["from"]
+    to_pid = edge["to"]
+
+    # Pick a pattern to insert
+    pattern_name = random.choice(pat_mod.list_patterns())
+    pattern = pat_mod.get_pattern(pattern_name)
+
+    # Namespace it
+    prefix = f"ins_{_short_id()}"
+    from compose import _namespace_pattern
+    ns_pattern = _namespace_pattern(pattern, prefix)
+
+    # Break the flow edge: from -> pattern_entry ... pattern_exits -> to
+    spec["edges"].remove(edge)
+
+    # Add edge from source to pattern entry
+    spec["edges"].append({
+        "type": "flow",
+        "from": from_pid,
+        "to": ns_pattern["interface"]["entry"],
+        "label": f"To inserted {pattern_name}",
+    })
+
+    # Add edges from pattern exits to target
+    for exit_pid in ns_pattern["interface"]["exits"]:
+        spec["edges"].append({
+            "type": "flow",
+            "from": exit_pid,
+            "to": to_pid,
+            "label": f"From inserted {pattern_name}",
+        })
+
+    # Add pattern components
+    spec["processes"].extend(ns_pattern["processes"])
+    existing_eids = {e["id"] for e in spec["entities"]}
+    for ent in ns_pattern["entities"]:
+        if ent["id"] not in existing_eids:
+            spec["entities"].append(ent)
+    spec["edges"].extend(ns_pattern["edges"])
+    existing_schemas = {s["name"] for s in spec.get("schemas", [])}
+    for schema in ns_pattern["schemas"]:
+        if schema["name"] not in existing_schemas:
+            spec.setdefault("schemas", []).append(schema)
+
+    _record_mutation(spec, "insert_pattern", {
+        "pattern": pattern_name,
+        "after": from_pid,
+        "before": to_pid,
+        "prefix": prefix,
+    })
+    return spec
+
+
+def remove_pattern(spec):
+    """Remove a detected pattern from the spec and rewire around it.
+
+    Detects patterns in the spec, picks a non-entry one, removes its
+    processes/entities/edges, and connects predecessor directly to successor.
+    """
+    pat_mod = _get_patterns_module()
+    spec = copy.deepcopy(spec)
+
+    detected = pat_mod.detect_patterns(spec)
+    if not detected:
+        raise ValueError("No patterns detected in spec to remove")
+
+    # Don't remove the only pattern or the entry-point pattern
+    entry = spec.get("entry_point")
+    removable = [(pn, pids, pfx) for pn, pids, pfx in detected
+                 if entry not in pids]
+
+    if not removable:
+        # Allow removing even the entry pattern if there are multiple
+        if len(detected) > 1:
+            removable = detected[1:]  # Skip first (contains entry point)
+        else:
+            raise ValueError("Cannot remove the only pattern (contains entry point)")
+
+    # Don't remove a pattern if it would leave zero agents
+    if len(detected) <= 1:
+        raise ValueError("Cannot remove the only pattern in the spec")
+
+    target_pname, target_pids, target_prefix = random.choice(removable)
+
+    # Find predecessor and successor
+    predecessors = set()
+    successors = set()
+    for edge in spec.get("edges", []):
+        if edge.get("to") in target_pids and edge.get("from") not in target_pids:
+            predecessors.add(edge.get("from"))
+        if edge.get("from") in target_pids and edge.get("to") not in target_pids:
+            successors.add(edge.get("to"))
+
+    # Remove pattern's internal edges and processes
+    old_entity_ids = set()
+    for edge in spec.get("edges", []):
+        if edge.get("from") in target_pids and edge.get("type") in ("invoke", "read", "write"):
+            old_entity_ids.add(edge.get("to"))
+
+    spec["edges"] = [e for e in spec["edges"]
+                     if e.get("from") not in target_pids and e.get("to") not in target_pids]
+    spec["processes"] = [p for p in spec["processes"] if p["id"] not in target_pids]
+
+    # Remove orphaned entities
+    remaining_refs = set()
+    for e in spec.get("edges", []):
+        remaining_refs.add(e.get("from"))
+        remaining_refs.add(e.get("to"))
+    for eid in old_entity_ids:
+        if eid not in remaining_refs:
+            spec["entities"] = [e for e in spec["entities"] if e["id"] != eid]
+
+    # Clean up edges referencing removed nodes
+    all_node_ids = {p["id"] for p in spec["processes"]} | {e["id"] for e in spec["entities"]}
+    spec["edges"] = [e for e in spec["edges"]
+                     if e.get("from") in all_node_ids and e.get("to") in all_node_ids]
+
+    # Wire predecessors directly to successors
+    for pred in predecessors:
+        for succ in successors:
+            if _process_by_id(spec, succ) or _entity_by_id(spec, succ):
+                spec["edges"].append({
+                    "type": "flow",
+                    "from": pred,
+                    "to": succ,
+                    "label": f"Bypass removed {target_pname}",
+                })
+
+    _record_mutation(spec, "remove_pattern", {
+        "pattern": target_pname,
+        "removed_processes": sorted(target_pids),
+    })
+    return spec
+
+
+def crossover(spec_a, spec_b):
+    """Crossover: take a pattern from spec_a and graft it into spec_b.
+
+    Detects patterns in both specs, finds a shared pattern type,
+    replaces spec_b's version with spec_a's version.
+    Returns a modified copy of spec_b.
+    """
+    pat_mod = _get_patterns_module()
+    detected_a = pat_mod.detect_patterns(spec_a)
+    detected_b = pat_mod.detect_patterns(spec_b)
+
+    if not detected_a or not detected_b:
+        raise ValueError("Both specs must contain detectable patterns for crossover")
+
+    # Find shared pattern types
+    types_a = {pname for pname, _, _ in detected_a}
+    types_b = {pname for pname, _, _ in detected_b}
+    shared = types_a & types_b
+
+    if not shared:
+        # Fall back: insert a random pattern from A into B
+        donor_pname, donor_pids, donor_prefix = random.choice(detected_a)
+        result = copy.deepcopy(spec_b)
+
+        # Get the source pattern from A's spec subgraph
+        donor_pattern = pat_mod.get_pattern(donor_pname)
+        prefix = f"cx_{_short_id()}"
+        from compose import _namespace_pattern
+        ns_pattern = _namespace_pattern(donor_pattern, prefix)
+
+        # Find a flow edge in B to insert at
+        flow_edges = [e for e in result.get("edges", []) if e.get("type") == "flow"
+                      and _process_by_id(result, e.get("from"))
+                      and _process_by_id(result, e.get("to"))]
+        if not flow_edges:
+            raise ValueError("No flow edges in spec_b to insert crossover pattern")
+
+        edge = random.choice(flow_edges)
+        from_pid = edge["from"]
+        to_pid = edge["to"]
+
+        result["edges"].remove(edge)
+        result["edges"].append({
+            "type": "flow", "from": from_pid,
+            "to": ns_pattern["interface"]["entry"],
+            "label": f"Crossover from {donor_pname}",
+        })
+        for exit_pid in ns_pattern["interface"]["exits"]:
+            result["edges"].append({
+                "type": "flow", "from": exit_pid, "to": to_pid,
+                "label": f"After crossover {donor_pname}",
+            })
+
+        result["processes"].extend(ns_pattern["processes"])
+        existing_eids = {e["id"] for e in result["entities"]}
+        for ent in ns_pattern["entities"]:
+            if ent["id"] not in existing_eids:
+                result["entities"].append(ent)
+        result["edges"].extend(ns_pattern["edges"])
+        existing_schemas = {s["name"] for s in result.get("schemas", [])}
+        for schema in ns_pattern["schemas"]:
+            if schema["name"] not in existing_schemas:
+                result.setdefault("schemas", []).append(schema)
+
+        _record_mutation(result, "crossover", {
+            "type": "insert",
+            "donor_pattern": donor_pname,
+            "prefix": prefix,
+        })
+        return result
+
+    # Shared pattern type: swap B's version with A's version
+    shared_type = random.choice(sorted(shared))
+
+    # Get A's version of this pattern (from library, fresh)
+    donor_pattern = pat_mod.get_pattern(shared_type)
+
+    # Remove B's version
+    b_match = [(pn, pids, pfx) for pn, pids, pfx in detected_b if pn == shared_type][0]
+    _, b_pids, b_prefix = b_match
+
+    result = copy.deepcopy(spec_b)
+
+    # Find B's incoming/outgoing connections
+    incoming = []
+    outgoing = []
+    for edge in result.get("edges", []):
+        if edge.get("to") in b_pids and edge.get("from") not in b_pids:
+            incoming.append(edge)
+        if edge.get("from") in b_pids and edge.get("to") not in b_pids:
+            outgoing.append(edge)
+
+    # Remove B's pattern
+    b_entity_ids = set()
+    for edge in result.get("edges", []):
+        if edge.get("from") in b_pids and edge.get("type") in ("invoke", "read", "write"):
+            b_entity_ids.add(edge.get("to"))
+
+    result["edges"] = [e for e in result["edges"]
+                       if e.get("from") not in b_pids and e.get("to") not in b_pids]
+    result["processes"] = [p for p in result["processes"] if p["id"] not in b_pids]
+
+    remaining_refs = set()
+    for e in result.get("edges", []):
+        remaining_refs.add(e.get("from"))
+        remaining_refs.add(e.get("to"))
+    for eid in b_entity_ids:
+        if eid not in remaining_refs:
+            result["entities"] = [e for e in result["entities"] if e["id"] != eid]
+
+    # Insert A's version
+    prefix = b_prefix or f"cx_{_short_id()}"
+    from compose import _namespace_pattern
+    ns_pattern = _namespace_pattern(donor_pattern, prefix)
+
+    result["processes"].extend(ns_pattern["processes"])
+    existing_eids = {e["id"] for e in result["entities"]}
+    for ent in ns_pattern["entities"]:
+        if ent["id"] not in existing_eids:
+            result["entities"].append(ent)
+    result["edges"].extend(ns_pattern["edges"])
+    existing_schemas = {s["name"] for s in result.get("schemas", [])}
+    for schema in ns_pattern["schemas"]:
+        if schema["name"] not in existing_schemas:
+            result.setdefault("schemas", []).append(schema)
+
+    # Rewire
+    for edge in incoming:
+        edge["to"] = ns_pattern["interface"]["entry"]
+        result["edges"].append(edge)
+    for edge in outgoing:
+        for exit_pid in ns_pattern["interface"]["exits"]:
+            new_edge = copy.deepcopy(edge)
+            new_edge["from"] = exit_pid
+            result["edges"].append(new_edge)
+
+    _record_mutation(result, "crossover", {
+        "type": "swap",
+        "pattern": shared_type,
+        "prefix": prefix,
+    })
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════
 # Mutation registry
 # ════════════════════════════════════════════════════════════════════
 
-MUTATIONS = {
+_FIELD_MUTATIONS = {
     "swap_process_order": {
         "fn": swap_process_order,
         "description": "Swap two adjacent non-gate processes in the flow",
@@ -763,6 +1188,25 @@ MUTATIONS = {
     },
 }
 
+# Pattern-level mutations
+_PATTERN_MUTATIONS = {
+    "swap_pattern": {
+        "fn": swap_pattern,
+        "description": "Replace a detected pattern with a compatible alternative",
+    },
+    "insert_pattern": {
+        "fn": insert_pattern,
+        "description": "Insert a pattern at a random flow edge",
+    },
+    "remove_pattern": {
+        "fn": remove_pattern,
+        "description": "Remove a detected pattern and rewire around it",
+    },
+}
+
+# Combined registry
+MUTATIONS = {**_FIELD_MUTATIONS, **_PATTERN_MUTATIONS}
+
 
 def apply_mutation(spec, mutation_name):
     """Apply a named mutation to a spec, returning a new spec."""
@@ -772,13 +1216,40 @@ def apply_mutation(spec, mutation_name):
     return fn(spec)
 
 
-def apply_random_mutation(spec):
-    """Apply a random mutation to a spec, returning (new_spec, mutation_name)."""
-    name = random.choice(list(MUTATIONS.keys()))
-    # Try up to len(MUTATIONS) different mutations in case one fails
-    attempts = list(MUTATIONS.keys())
-    random.shuffle(attempts)
-    for name in attempts:
+def apply_random_mutation(spec, donor_spec=None, pattern_weight=0.4):
+    """Apply a random mutation to a spec, returning (new_spec, mutation_name).
+
+    Args:
+        spec: The spec to mutate
+        donor_spec: Optional second spec for crossover
+        pattern_weight: Probability of choosing a pattern-level mutation (0-1)
+    """
+    # If donor_spec provided, try crossover first
+    if donor_spec:
+        try:
+            result = crossover(spec, donor_spec)
+            return result, "crossover"
+        except ValueError:
+            pass  # Fall through to regular mutations
+
+    # Decide: pattern-level or field-level
+    if random.random() < pattern_weight:
+        pool = list(_PATTERN_MUTATIONS.keys())
+    else:
+        pool = list(_FIELD_MUTATIONS.keys())
+
+    random.shuffle(pool)
+    for name in pool:
+        try:
+            new_spec = apply_mutation(spec, name)
+            return new_spec, name
+        except ValueError:
+            continue
+
+    # Fallback: try all mutations
+    all_mutations = list(MUTATIONS.keys())
+    random.shuffle(all_mutations)
+    for name in all_mutations:
         try:
             new_spec = apply_mutation(spec, name)
             return new_spec, name

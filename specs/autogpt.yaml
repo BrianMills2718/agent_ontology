@@ -110,7 +110,7 @@ processes:
           state.data["current_step"] = plan[idx]
       else:
           state.data["current_step"] = "Review and finalize results"
-      state.data["stored_memories"] = [e.get("text", "") for e in state.memory_store.read() if e.get("text")][-5:]
+      state.data["stored_memories"] = [e.get("text", "") for e in state.data.get("memory_store", []) if e.get("text")][-5:]
       print(f"    Step {idx + 1}/{len(plan)}: {state.data.get('current_step', '')[:100]}")
 
   - id: criticize
@@ -262,6 +262,12 @@ edges:
     from: act
     to: observe
     label: "Observe result"
+
+  - type: read
+    from: think
+    to: memory_store
+    label: "Read memory context"
+    data: MemoryEntry
 
   - type: write
     from: observe

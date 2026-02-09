@@ -706,6 +706,130 @@
             margin-right: 4px;
         }
 
+        /* ── Overview view ── */
+        .ov-canvas {
+            position: relative;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .ov-title-bar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(13,17,23,0.95);
+            padding: 10px 20px;
+            font-size: 0.85em;
+            color: #8b949e;
+            border-bottom: 1px solid #21262d;
+            letter-spacing: 0.5px;
+        }
+        .ov-title-bar strong { color: #e6edf3; font-size: 1.2em; }
+        .ov-svg-layer {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .ov-svg-layer line, .ov-svg-layer path {
+            fill: none;
+            stroke-width: 2;
+        }
+        .ov-edge-flow { stroke: #3498db; }
+        .ov-edge-branch { stroke: #e74c3c; stroke-dasharray: 6 4; }
+        .ov-edge-loop { stroke: #f0883e; stroke-dasharray: 6 4; }
+        .ov-edge-invoke { stroke: #8b949e; stroke-width: 1.5; }
+        .ov-edge-label {
+            font-size: 10px;
+            fill: #8b949e;
+            font-family: 'SF Mono', monospace;
+        }
+        .ov-edge-label-bg {
+            fill: rgba(13,17,23,0.85);
+            rx: 3;
+        }
+        .ov-node {
+            position: absolute;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: box-shadow 0.15s, transform 0.1s;
+            text-align: center;
+            line-height: 1.2;
+            padding: 4px 8px;
+        }
+        .ov-node:hover {
+            transform: scale(1.04);
+            box-shadow: 0 0 12px rgba(88,166,255,0.25);
+        }
+        .ov-node-step {
+            background: #2d333b;
+            border: 2px solid #484f58;
+            color: #e6edf3;
+        }
+        .ov-node-gate {
+            background: #2d333b;
+            border: 2px solid #f1c40f;
+            color: #f1c40f;
+            border-radius: 4px;
+            transform: rotate(0deg);
+            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+            font-size: 0.75em;
+        }
+        .ov-node-gate:hover { transform: scale(1.04); clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+        .ov-node-agent {
+            background: rgba(78,205,196,0.12);
+            border: 2px solid #4ecdc4;
+            color: #4ecdc4;
+        }
+        .ov-node-tool {
+            background: rgba(243,156,18,0.12);
+            border: 2px solid #f39c12;
+            color: #f39c12;
+        }
+        .ov-node-store {
+            background: rgba(149,165,166,0.12);
+            border: 2px solid #95a5a6;
+            color: #95a5a6;
+        }
+        .ov-node-human {
+            background: rgba(126,231,135,0.12);
+            border: 2px solid #7ee787;
+            color: #7ee787;
+        }
+        .ov-node-entry {
+            box-shadow: 0 0 0 3px #7ee787, 0 0 12px rgba(126,231,135,0.3);
+        }
+        .ov-legend {
+            display: flex;
+            gap: 16px;
+            padding: 8px 20px;
+            background: rgba(13,17,23,0.95);
+            border-bottom: 1px solid #21262d;
+            flex-wrap: wrap;
+            align-items: center;
+            font-size: 0.75em;
+            color: #8b949e;
+        }
+        .ov-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .ov-legend-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+        }
+        .ov-legend-line {
+            width: 20px;
+            height: 2px;
+        }
+
         /* Trace file input hidden */
         #trace-file-input { display: none; }
     </style>
@@ -727,9 +851,18 @@
                 <option value="specs/tree_of_thought.yaml">Tree of Thought</option>
                 <option value="specs/plan_and_solve.yaml">Plan and Solve</option>
                 <option value="specs/self_refine.yaml">Self Refine</option>
+                <option value="specs/voyager.yaml">Voyager</option>
+                <option value="specs/lats.yaml">LATS</option>
+                <option value="specs/multi_agent_codegen.yaml">Multi-Agent Codegen</option>
+                <option value="specs/map_reduce.yaml">MapReduce</option>
+                <option value="specs/socratic_tutor.yaml">Socratic Tutor</option>
+                <option value="specs/reflexion.yaml">Reflexion</option>
+                <option value="specs/mixture_of_agents.yaml">Mixture of Agents</option>
+                <option value="specs/meta_prompting.yaml">Meta Prompting</option>
             </select>
             <div class="tab-bar">
                 <button class="tab-btn active" data-view="graph">Graph</button>
+                <button class="tab-btn" data-view="overview">Overview</button>
                 <button class="tab-btn" data-view="sm">State Machine</button>
                 <button class="tab-btn" data-view="schemas">Schemas</button>
                 <button class="tab-btn" data-view="compare">Compare All</button>
@@ -748,6 +881,8 @@
             <div id="tooltip"></div>
             <div id="legend"></div>
         </div>
+        <!-- Overview view -->
+        <div id="overview-view" class="view-container"></div>
         <!-- State Machine view -->
         <div id="sm-view" class="view-container"></div>
         <!-- Schemas view -->
@@ -814,7 +949,7 @@ let traceData = null;
 
 // -- Load spec --
 async function loadSpec(path) {
-    const resp = await fetch(path);
+    const resp = await fetch(path + (path.includes('?') ? '&' : '?') + '_t=' + Date.now());
     const text = await resp.text();
     spec = jsyaml.load(text);
 
@@ -1729,7 +1864,7 @@ function switchView(view) {
     currentView = view;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
     document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
-    const viewIds = { graph: 'graph-view', sm: 'sm-view', schemas: 'schemas-view', compare: 'compare-view' };
+    const viewIds = { graph: 'graph-view', overview: 'overview-view', sm: 'sm-view', schemas: 'schemas-view', compare: 'compare-view' };
     document.getElementById(viewIds[view]).classList.add('active');
 
     const sidebar = document.getElementById('sidebar');
@@ -1747,13 +1882,651 @@ function switchView(view) {
     } else {
         sidebar.style.display = '';
         traceControls.style.display = (view === 'sm') ? 'flex' : 'none';
-        if (view === 'compare') {
+        if (view === 'compare' || view === 'overview') {
             sidebar.style.display = 'none';
         }
+        if (view === 'overview') renderOverview();
         if (view === 'sm') renderStateMachine();
         if (view === 'schemas') renderSchemas();
         if (view === 'compare') renderComparison();
     }
+}
+
+// =====================================================================
+// Overview View (simplified diagram with step+agent collapsing)
+// =====================================================================
+
+function renderOverview() {
+    if (!spec) return;
+    const container = document.getElementById('overview-view');
+    const processes = spec.processes || [];
+    const specEdges = spec.edges || [];
+    const entities = spec.entities || [];
+    const entityMap = {};
+    for (const e of entities) entityMap[e.id] = e;
+
+    // Classify edges by type
+    const flowTo = {};
+    const branchTo = {};
+    const loopsTo = {};
+    const procInvokes = {};   // procId -> [{entityId, label}] (agent/tool invokes)
+    const procWrites = {};    // procId -> [{entityId, label}] (store writes)
+    const procReads = {};     // procId -> [{entityId, label}] (store reads)
+
+    for (const e of specEdges) {
+        const fromProc = processes.find(p => p.id === e.from);
+        const toProc = processes.find(p => p.id === e.to);
+        const toEnt = entityMap[e.to];
+
+        if (e.type === 'flow' && fromProc && toProc) {
+            if (!flowTo[e.from]) flowTo[e.from] = [];
+            flowTo[e.from].push({ target: e.to, label: e.label || '' });
+        }
+        if (e.type === 'branch' && fromProc && toProc) {
+            if (!branchTo[e.from]) branchTo[e.from] = [];
+            branchTo[e.from].push({ target: e.to, label: e.label || '', condition: e.condition || '' });
+        }
+        if (e.type === 'loop' && fromProc && toProc) {
+            loopsTo[e.from] = { target: e.to, label: e.label || '', condition: e.condition || '' };
+        }
+        if (e.type === 'invoke' && fromProc && toEnt) {
+            if (!procInvokes[e.from]) procInvokes[e.from] = [];
+            procInvokes[e.from].push({ entityId: e.to, label: e.label || '', type: toEnt.type, output: e.output || '' });
+        }
+        if (e.type === 'write' && fromProc && toEnt) {
+            if (!procWrites[e.from]) procWrites[e.from] = [];
+            procWrites[e.from].push({ entityId: e.to, label: e.label || '' });
+        }
+        if (e.type === 'read' && fromProc && toEnt) {
+            if (!procReads[e.from]) procReads[e.from] = [];
+            // Return label: use edge's data field, or fall back to the store's schema
+            const returnSchema = e.data || e.query || toEnt.schema || '';
+            procReads[e.from].push({ entityId: e.to, label: e.label || '', returnLabel: returnSchema });
+        }
+    }
+
+    // Determine which steps collapse with their single invoked agent.
+    // Rule: step has NO logic, invokes exactly 1 agent, has no write edges → collapse.
+    // Steps with logic do real work beyond just invoking, so keep them separate.
+    const collapsed = {};  // procId -> entityId (the agent it collapses with)
+    for (const proc of processes) {
+        if (proc.type !== 'step') continue;
+        if (proc.logic) continue;  // has real work, don't collapse
+        const invokes = procInvokes[proc.id] || [];
+        const writes = procWrites[proc.id] || [];
+        const reads = procReads[proc.id] || [];
+        if (invokes.length === 1 && writes.length === 0 && reads.length === 0 && invokes[0].type === 'agent') {
+            collapsed[proc.id] = invokes[0].entityId;
+        }
+    }
+
+    // BFS spine from entry point
+    const entryId = spec.entry_point || (processes[0] && processes[0].id);
+    const spine = [];
+    const visited = new Set();
+    const queue = [entryId];
+    while (queue.length > 0) {
+        const id = queue.shift();
+        if (visited.has(id)) continue;
+        const proc = processes.find(p => p.id === id);
+        if (!proc) continue;
+        visited.add(id);
+        spine.push(proc);
+        const flows = (flowTo[id] || []).map(f => f.target);
+        const branches = (branchTo[id] || []).map(b => b.target);
+        const procBranches = (proc.branches || []).map(b => b.target);
+        for (const t of [...flows, ...branches, ...procBranches]) {
+            if (!visited.has(t)) queue.push(t);
+        }
+    }
+    for (const p of processes) {
+        if (!visited.has(p.id)) { spine.push(p); visited.add(p.id); }
+    }
+
+    // Build the display nodes: collapsed agent nodes replace their step,
+    // uncollapsed steps keep separate entity boxes for multi-invoke/writes.
+    // Each display node: {id, label, type: 'step'|'gate'|'agent'|'checkpoint'|'spawn', procId, entityId?}
+    const displayNodes = [];
+    const collapsedEntities = new Set(Object.values(collapsed));
+
+    for (const proc of spine) {
+        if (collapsed[proc.id]) {
+            const ent = entityMap[collapsed[proc.id]];
+            displayNodes.push({
+                id: proc.id,
+                label: ent ? (ent.label || ent.id) : proc.label || proc.id,
+                type: 'agent',
+                procId: proc.id,
+                entityId: collapsed[proc.id]
+            });
+        } else {
+            displayNodes.push({
+                id: proc.id,
+                label: proc.label || proc.id,
+                type: proc.type || 'step',
+                procId: proc.id
+            });
+        }
+    }
+
+    // Collect uncollapsed entities that need their own box
+    // (entities invoked/written by non-collapsed steps, excluding already-collapsed agents)
+    const sideEntities = {};  // entityId -> {id, label, type, usedBy: [{procId, edgeLabel}]}
+    for (const proc of spine) {
+        if (collapsed[proc.id]) continue;  // collapsed steps don't show separate entities
+        const invokes = (procInvokes[proc.id] || []);
+        const writes = (procWrites[proc.id] || []);
+        const reads = (procReads[proc.id] || []);
+        for (const inv of invokes) {
+            if (collapsedEntities.has(inv.entityId)) continue;
+            if (!sideEntities[inv.entityId]) {
+                const ent = entityMap[inv.entityId];
+                sideEntities[inv.entityId] = {
+                    id: inv.entityId,
+                    label: ent ? (ent.label || inv.entityId) : inv.entityId,
+                    type: ent ? ent.type : 'agent',
+                    usedBy: []
+                };
+            }
+            sideEntities[inv.entityId].usedBy.push({ procId: proc.id, edgeType: 'invoke', edgeLabel: inv.label, returnLabel: inv.output || '' });
+        }
+        for (const wr of writes) {
+            if (!sideEntities[wr.entityId]) {
+                const ent = entityMap[wr.entityId];
+                sideEntities[wr.entityId] = {
+                    id: wr.entityId,
+                    label: ent ? (ent.label || wr.entityId) : wr.entityId,
+                    type: ent ? ent.type : 'store',
+                    usedBy: []
+                };
+            }
+            sideEntities[wr.entityId].usedBy.push({ procId: proc.id, edgeType: 'write', edgeLabel: wr.label });
+        }
+        for (const rd of reads) {
+            if (!sideEntities[rd.entityId]) {
+                const ent = entityMap[rd.entityId];
+                sideEntities[rd.entityId] = {
+                    id: rd.entityId,
+                    label: ent ? (ent.label || rd.entityId) : rd.entityId,
+                    type: ent ? ent.type : 'store',
+                    usedBy: []
+                };
+            }
+            sideEntities[rd.entityId].usedBy.push({ procId: proc.id, edgeType: 'read', edgeLabel: rd.label, returnLabel: rd.returnLabel });
+        }
+    }
+
+    // Layout
+    const NODE_W = 200, NODE_H = 44, GATE_H = 60;
+    const SIDE_W = 150, SIDE_H = 38;
+    const GAP_Y = 80;
+    const SIDE_OFFSET_X = 80;
+    const SPINE_X = 200;
+    const PAD_TOP = 20;
+
+    const nodePos = {};  // displayNode.id -> {x, y, w, h}
+    let curY = PAD_TOP;
+    for (const dn of displayNodes) {
+        const h = dn.type === 'gate' ? GATE_H : NODE_H;
+        nodePos[dn.id] = { x: SPINE_X, y: curY, w: NODE_W, h };
+        curY += h + GAP_Y;
+    }
+
+    // Position side entities: place each once, at the average Y of all processes using it
+    const sidePos = {};  // entityId -> {x, y, w, h}
+    const sideX = SPINE_X + NODE_W + SIDE_OFFSET_X;
+    const usedSlots = {};
+    for (const [eid, se] of Object.entries(sideEntities)) {
+        const procYs = se.usedBy.map(u => nodePos[u.procId]).filter(Boolean).map(p => p.y + p.h / 2);
+        const avgY = procYs.length > 0 ? procYs.reduce((a, b) => a + b, 0) / procYs.length : PAD_TOP;
+        let slotY = Math.round(avgY - SIDE_H / 2);
+        // Avoid overlaps with other side entities
+        while (Object.values(usedSlots).some(sy => Math.abs(sy - slotY) < SIDE_H + 8)) {
+            slotY += SIDE_H + 8;
+        }
+        usedSlots[eid] = slotY;
+        sidePos[eid] = { x: sideX, y: slotY, w: SIDE_W, h: SIDE_H };
+    }
+
+    // Canvas bounds
+    const allPos = [...Object.values(nodePos), ...Object.values(sidePos)];
+    const maxX = allPos.length > 0 ? Math.max(...allPos.map(p => p.x + p.w)) : SPINE_X + NODE_W;
+    const maxY = allPos.length > 0 ? Math.max(...allPos.map(p => p.y + p.h)) : curY;
+    const totalW = maxX + 160;
+    const totalH = maxY + 60;
+
+    // SVG edges
+    let svgEdges = `<defs>
+        <marker id="ov-arrow-flow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#3498db"/>
+        </marker>
+        <marker id="ov-arrow-branch" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#e74c3c"/>
+        </marker>
+        <marker id="ov-arrow-loop" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+        </marker>
+        <marker id="ov-arrow-side" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#8b949e"/>
+        </marker>
+        <marker id="ov-arrow-side-rev" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="8 0, 0 3, 8 6" fill="#8b949e"/>
+        </marker>
+    </defs>`;
+
+    function addLabel(x, y, text, color) {
+        if (!text) return '';
+        const tw = text.length * 5.5 + 8;
+        return `<rect x="${x - tw/2}" y="${y - 11}" width="${tw}" height="15" class="ov-edge-label-bg"/>` +
+               `<text x="${x - tw/2 + 4}" y="${y}" class="ov-edge-label"${color ? ` fill="${color}"` : ''}>${escapeHtml(text)}</text>`;
+    }
+
+    // Flow edges
+    for (const fromId of Object.keys(flowTo)) {
+        const fp = nodePos[fromId];
+        if (!fp) continue;
+        for (const ft of flowTo[fromId]) {
+            const tp = nodePos[ft.target];
+            if (!tp) continue;
+            const x1 = fp.x + fp.w / 2, y1 = fp.y + fp.h;
+            const x2 = tp.x + tp.w / 2, y2 = tp.y;
+            if (Math.abs(x1 - x2) < 5) {
+                svgEdges += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="ov-edge-flow" marker-end="url(#ov-arrow-flow)"/>`;
+            } else {
+                const my = (y1 + y2) / 2;
+                svgEdges += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" class="ov-edge-flow" marker-end="url(#ov-arrow-flow)"/>`;
+            }
+            svgEdges += addLabel((x1 + x2) / 2 + (x1 === x2 ? 8 : 0), (y1 + y2) / 2, ft.label, null);
+        }
+    }
+
+    // Branch edges
+    for (const fromId of Object.keys(branchTo)) {
+        const fp = nodePos[fromId];
+        if (!fp) continue;
+        for (let bi = 0; bi < branchTo[fromId].length; bi++) {
+            const b = branchTo[fromId][bi];
+            const tp = nodePos[b.target];
+            if (!tp) continue;
+            const fCx = fp.x + fp.w / 2, fBot = fp.y + fp.h;
+            const tCx = tp.x + tp.w / 2, tTop = tp.y;
+            const labelText = b.label || b.condition || '';
+
+            if (tp.y > fp.y) {
+                const ox = (bi === 0 ? -60 : 60) * Math.max(bi, 1);
+                const my = (fBot + tTop) / 2;
+                svgEdges += `<path d="M${fCx},${fBot} C${fCx + ox},${my} ${tCx + ox},${my} ${tCx},${tTop}" class="ov-edge-branch" marker-end="url(#ov-arrow-branch)"/>`;
+                svgEdges += addLabel((fCx + tCx) / 2 + (bi === 0 ? -50 : 50), (fBot + tTop) / 2, labelText, '#e74c3c');
+            } else {
+                const ox = maxX + 40 + bi * 30;
+                svgEdges += `<path d="M${fCx + fp.w/2},${fp.y + fp.h/2} C${ox},${fp.y + fp.h/2} ${ox},${tp.y + tp.h/2} ${tCx + tp.w/2},${tp.y + tp.h/2}" class="ov-edge-branch" marker-end="url(#ov-arrow-branch)"/>`;
+                svgEdges += addLabel(ox + 5, (fp.y + tp.y) / 2 + fp.h / 2, labelText, '#e74c3c');
+            }
+        }
+    }
+
+    // Loop edges (right side arc)
+    for (const fromId of Object.keys(loopsTo)) {
+        const loop = loopsTo[fromId];
+        const fp = nodePos[fromId];
+        const tp = nodePos[loop.target];
+        if (!fp || !tp) continue;
+        const fR = fp.x + fp.w, fMy = fp.y + fp.h / 2;
+        const tR = tp.x + tp.w, tMy = tp.y + tp.h / 2;
+        const ox = maxX - SPINE_X + 50;
+        svgEdges += `<path d="M${fR},${fMy} C${fR + ox},${fMy} ${tR + ox},${tMy} ${tR},${tMy}" class="ov-edge-loop" marker-end="url(#ov-arrow-loop)"/>`;
+        svgEdges += addLabel(Math.max(fR, tR) + ox - 5, (fMy + tMy) / 2, loop.label || loop.condition || 'loop', '#f0883e');
+    }
+
+    // Side entity edges: one connection per (proc, entity) pair
+    // Group usages by procId, then draw one line with appropriate arrowheads
+    // Click the line to see full edge details in sidebar
+    const sideEdgePairs = [];  // [{procId, entityId, usages, bidir}]
+    for (const [eid, se] of Object.entries(sideEntities)) {
+        // Group usages by procId
+        const byProc = {};
+        for (const u of se.usedBy) {
+            if (!byProc[u.procId]) byProc[u.procId] = [];
+            byProc[u.procId].push(u);
+        }
+        for (const [pid, usages] of Object.entries(byProc)) {
+            const hasReturn = usages.some(u => u.edgeType === 'invoke' || u.edgeType === 'read');
+            sideEdgePairs.push({ procId: pid, entityId: eid, usages, bidir: hasReturn });
+        }
+    }
+
+    for (const pair of sideEdgePairs) {
+        const fp = nodePos[pair.procId];
+        const ep = sidePos[pair.entityId];
+        if (!fp || !ep) continue;
+        const x1 = fp.x + fp.w, x2 = ep.x;
+        const yProc = fp.y + fp.h / 2;
+        const yEnt = Math.max(ep.y + 4, Math.min(ep.y + ep.h - 4, yProc));
+        const pairKey = `${pair.procId}__${pair.entityId}`;
+        const markers = pair.bidir
+            ? 'marker-start="url(#ov-arrow-side-rev)" marker-end="url(#ov-arrow-side)"'
+            : 'marker-end="url(#ov-arrow-side)"';
+        // Single visible line
+        svgEdges += `<line x1="${x1}" y1="${yProc}" x2="${x2}" y2="${yEnt}" class="ov-edge-invoke" ${markers}/>`;
+        // Fat invisible hit target for clicking
+        svgEdges += `<line x1="${x1}" y1="${yProc}" x2="${x2}" y2="${yEnt}" stroke="transparent" stroke-width="14" data-ov-pair="${pairKey}" style="cursor:pointer;pointer-events:stroke"/>`;
+    }
+
+    // Store pairs for click handler
+    ovSideEdgePairs = sideEdgePairs;
+
+    // Store in module-level for drag interaction
+    ovState = { nodePos, sidePos, displayNodes, sideEntities, flowTo, branchTo, loopsTo, entryId, collapsed };
+
+    // Build HTML
+    let html = '';
+
+    html += `<div class="ov-legend">
+        <div class="ov-legend-item"><div class="ov-legend-swatch" style="background:#2d333b;border:2px solid #484f58;"></div>Step</div>
+        <div class="ov-legend-item"><div class="ov-legend-swatch" style="background:#2d333b;border:2px solid #f1c40f;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);"></div>Gate</div>
+        <div class="ov-legend-item"><div class="ov-legend-swatch" style="background:rgba(78,205,196,0.12);border:2px solid #4ecdc4;"></div>Agent</div>
+        <div class="ov-legend-item"><div class="ov-legend-swatch" style="background:rgba(243,156,18,0.12);border:2px solid #f39c12;"></div>Tool</div>
+        <div class="ov-legend-item"><div class="ov-legend-swatch" style="background:rgba(149,165,166,0.12);border:2px solid #95a5a6;"></div>Store</div>
+        <div class="ov-legend-item"><div class="ov-legend-line" style="background:#3498db;"></div>Flow</div>
+        <div class="ov-legend-item"><div class="ov-legend-line" style="background:repeating-linear-gradient(90deg,#e74c3c 0,#e74c3c 4px,transparent 4px,transparent 7px);"></div>Branch</div>
+        <div class="ov-legend-item"><div class="ov-legend-line" style="background:repeating-linear-gradient(90deg,#f0883e 0,#f0883e 4px,transparent 4px,transparent 7px);"></div>Loop</div>
+    </div>`;
+
+    const collapsedCount = Object.keys(collapsed).length;
+    html += `<div class="ov-title-bar"><strong>${spec.name || 'Agent'}</strong> -- Overview &middot; ${displayNodes.length} nodes${collapsedCount > 0 ? ` (${collapsedCount} collapsed)` : ''} &middot; ${Object.keys(sideEntities).length} entities</div>`;
+
+    html += `<div class="ov-canvas" id="ov-canvas" style="width:${totalW}px;height:${totalH}px;">`;
+    html += `<svg class="ov-svg-layer" id="ov-svg" width="${totalW}" height="${totalH}">${svgEdges}</svg>`;
+
+    // Display nodes (draggable)
+    for (const dn of displayNodes) {
+        const pos = nodePos[dn.id];
+        if (!pos) continue;
+        const isEntry = dn.procId === entryId;
+
+        if (dn.type === 'gate') {
+            html += `<div class="ov-drag" data-ov-id="${dn.id}" data-ov-kind="node" style="position:absolute;left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;z-index:5;cursor:grab;">`;
+            html += `<div style="position:absolute;inset:0;background:#2d333b;border:2px solid #f1c40f;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);"></div>`;
+            html += `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:0.75em;font-weight:600;color:#f1c40f;z-index:6;">${escapeHtml(dn.label)}</div>`;
+            html += `</div>`;
+        } else if (dn.type === 'agent') {
+            let cls = 'ov-node ov-node-agent';
+            if (isEntry) cls += ' ov-node-entry';
+            html += `<div class="${cls} ov-drag" data-ov-id="${dn.id}" data-ov-kind="node" style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;cursor:grab;">${escapeHtml(dn.label)}</div>`;
+        } else {
+            let cls = 'ov-node ov-node-step';
+            if (isEntry) cls += ' ov-node-entry';
+            if (dn.type === 'checkpoint') cls = 'ov-node ov-node-human' + (isEntry ? ' ov-node-entry' : '');
+            html += `<div class="${cls} ov-drag" data-ov-id="${dn.id}" data-ov-kind="node" style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;cursor:grab;">${escapeHtml(dn.label)}</div>`;
+        }
+    }
+
+    // Side entity nodes (draggable)
+    for (const [eid, se] of Object.entries(sideEntities)) {
+        const pos = sidePos[eid];
+        if (!pos) continue;
+        const cls = se.type === 'tool' ? 'ov-node-tool'
+            : se.type === 'store' ? 'ov-node-store'
+            : se.type === 'human' ? 'ov-node-human'
+            : 'ov-node-agent';
+        html += `<div class="ov-node ${cls} ov-drag" data-ov-id="${eid}" data-ov-kind="side" style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;cursor:grab;">${escapeHtml(se.label)}</div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+    ovInitDrag();
+    ovInitEdgeClick();
+}
+
+// Module-level overview state for drag
+let ovState = null;
+let ovSideEdgePairs = [];
+let ovDragTarget = null;
+let ovDragStartX = 0, ovDragStartY = 0;
+
+function ovInitDrag() {
+    const canvas = document.getElementById('ov-canvas');
+    if (!canvas) return;
+
+    canvas.addEventListener('mousedown', (ev) => {
+        const el = ev.target.closest('.ov-drag');
+        if (!el) return;
+        ev.preventDefault();
+        ovDragTarget = el;
+        ovDragStartX = ev.clientX;
+        ovDragStartY = ev.clientY;
+        el.style.cursor = 'grabbing';
+        el.style.zIndex = '20';
+    });
+
+    canvas.addEventListener('mousemove', (ev) => {
+        if (!ovDragTarget || !ovState) return;
+        const dx = ev.clientX - ovDragStartX;
+        const dy = ev.clientY - ovDragStartY;
+        ovDragStartX = ev.clientX;
+        ovDragStartY = ev.clientY;
+
+        const id = ovDragTarget.dataset.ovId;
+        const kind = ovDragTarget.dataset.ovKind;
+        const posMap = kind === 'side' ? ovState.sidePos : ovState.nodePos;
+        const pos = posMap[id];
+        if (!pos) return;
+
+        pos.x += dx;
+        pos.y += dy;
+        ovDragTarget.style.left = pos.x + 'px';
+        ovDragTarget.style.top = pos.y + 'px';
+
+        ovRedrawSVG();
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        if (ovDragTarget) {
+            ovDragTarget.style.cursor = 'grab';
+            ovDragTarget.style.zIndex = '';
+            ovDragTarget = null;
+        }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        if (ovDragTarget) {
+            ovDragTarget.style.cursor = 'grab';
+            ovDragTarget.style.zIndex = '';
+            ovDragTarget = null;
+        }
+    });
+
+    // Click to select (only if not dragged)
+    canvas.addEventListener('click', (ev) => {
+        const el = ev.target.closest('.ov-drag');
+        if (!el) return;
+        const id = el.dataset.ovId;
+        const kind = el.dataset.ovKind;
+        if (kind === 'side') {
+            ovSelectEntity(id);
+        } else {
+            ovSelectProcess(id);
+        }
+    });
+}
+
+function ovRedrawSVG() {
+    if (!ovState) return;
+    const { nodePos, sidePos, displayNodes, sideEntities, flowTo, branchTo, loopsTo, entryId } = ovState;
+
+    // Recompute maxX for loop arcs
+    const allPos = [...Object.values(nodePos), ...Object.values(sidePos)];
+    const maxX = allPos.length > 0 ? Math.max(...allPos.map(p => p.x + p.w)) : 400;
+    const SPINE_X = 200;
+
+    let svgEdges = `<defs>
+        <marker id="ov-arrow-flow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 8 3, 0 6" fill="#3498db"/></marker>
+        <marker id="ov-arrow-branch" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 8 3, 0 6" fill="#e74c3c"/></marker>
+        <marker id="ov-arrow-loop" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 8 3, 0 6" fill="#f0883e"/></marker>
+        <marker id="ov-arrow-side" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 8 3, 0 6" fill="#8b949e"/></marker>
+        <marker id="ov-arrow-side-rev" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="8 0, 0 3, 8 6" fill="#8b949e"/></marker>
+    </defs>`;
+
+    function addLabel(x, y, text, color) {
+        if (!text) return '';
+        const tw = text.length * 5.5 + 8;
+        return `<rect x="${x - tw/2}" y="${y - 11}" width="${tw}" height="15" class="ov-edge-label-bg"/>` +
+               `<text x="${x - tw/2 + 4}" y="${y}" class="ov-edge-label"${color ? ` fill="${color}"` : ''}>${escapeHtml(text)}</text>`;
+    }
+
+    // Flow
+    for (const fromId of Object.keys(flowTo)) {
+        const fp = nodePos[fromId];
+        if (!fp) continue;
+        for (const ft of flowTo[fromId]) {
+            const tp = nodePos[ft.target];
+            if (!tp) continue;
+            const x1 = fp.x + fp.w / 2, y1 = fp.y + fp.h;
+            const x2 = tp.x + tp.w / 2, y2 = tp.y;
+            if (Math.abs(x1 - x2) < 5) {
+                svgEdges += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="ov-edge-flow" marker-end="url(#ov-arrow-flow)"/>`;
+            } else {
+                const my = (y1 + y2) / 2;
+                svgEdges += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" class="ov-edge-flow" marker-end="url(#ov-arrow-flow)"/>`;
+            }
+            svgEdges += addLabel((x1 + x2) / 2 + (Math.abs(x1 - x2) < 5 ? 8 : 0), (y1 + y2) / 2, ft.label, null);
+        }
+    }
+
+    // Branch
+    for (const fromId of Object.keys(branchTo)) {
+        const fp = nodePos[fromId];
+        if (!fp) continue;
+        for (let bi = 0; bi < branchTo[fromId].length; bi++) {
+            const b = branchTo[fromId][bi];
+            const tp = nodePos[b.target];
+            if (!tp) continue;
+            const fCx = fp.x + fp.w / 2, fBot = fp.y + fp.h;
+            const tCx = tp.x + tp.w / 2, tTop = tp.y;
+            const labelText = b.label || b.condition || '';
+            if (tp.y > fp.y) {
+                const ox = (bi === 0 ? -60 : 60) * Math.max(bi, 1);
+                const my = (fBot + tTop) / 2;
+                svgEdges += `<path d="M${fCx},${fBot} C${fCx + ox},${my} ${tCx + ox},${my} ${tCx},${tTop}" class="ov-edge-branch" marker-end="url(#ov-arrow-branch)"/>`;
+                svgEdges += addLabel((fCx + tCx) / 2 + (bi === 0 ? -50 : 50), (fBot + tTop) / 2, labelText, '#e74c3c');
+            } else {
+                const ox = maxX + 40 + bi * 30;
+                svgEdges += `<path d="M${fCx + fp.w/2},${fp.y + fp.h/2} C${ox},${fp.y + fp.h/2} ${ox},${tp.y + tp.h/2} ${tCx + tp.w/2},${tp.y + tp.h/2}" class="ov-edge-branch" marker-end="url(#ov-arrow-branch)"/>`;
+                svgEdges += addLabel(ox + 5, (fp.y + tp.y) / 2 + fp.h / 2, labelText, '#e74c3c');
+            }
+        }
+    }
+
+    // Loop
+    for (const fromId of Object.keys(loopsTo)) {
+        const loop = loopsTo[fromId];
+        const fp = nodePos[fromId];
+        const tp = nodePos[loop.target];
+        if (!fp || !tp) continue;
+        const fR = fp.x + fp.w, fMy = fp.y + fp.h / 2;
+        const tR = tp.x + tp.w, tMy = tp.y + tp.h / 2;
+        const ox = maxX - Math.min(fp.x, tp.x) + 50;
+        svgEdges += `<path d="M${fR},${fMy} C${fR + ox},${fMy} ${tR + ox},${tMy} ${tR},${tMy}" class="ov-edge-loop" marker-end="url(#ov-arrow-loop)"/>`;
+        svgEdges += addLabel(Math.max(fR, tR) + ox - 5, (fMy + tMy) / 2, loop.label || loop.condition || 'loop', '#f0883e');
+    }
+
+    // Side entity edges: one connection per (proc, entity) pair
+    for (const pair of ovSideEdgePairs) {
+        const fp = nodePos[pair.procId];
+        const ep = sidePos[pair.entityId];
+        if (!fp || !ep) continue;
+        const x1 = fp.x + fp.w, x2 = ep.x;
+        const yProc = fp.y + fp.h / 2;
+        const yEnt = Math.max(ep.y + 4, Math.min(ep.y + ep.h - 4, yProc));
+        const pairKey = `${pair.procId}__${pair.entityId}`;
+        const markers = pair.bidir
+            ? 'marker-start="url(#ov-arrow-side-rev)" marker-end="url(#ov-arrow-side)"'
+            : 'marker-end="url(#ov-arrow-side)"';
+        svgEdges += `<line x1="${x1}" y1="${yProc}" x2="${x2}" y2="${yEnt}" class="ov-edge-invoke" ${markers}/>`;
+        svgEdges += `<line x1="${x1}" y1="${yProc}" x2="${x2}" y2="${yEnt}" stroke="transparent" stroke-width="14" data-ov-pair="${pairKey}" style="cursor:pointer;pointer-events:stroke"/>`;
+    }
+
+    const svg = document.getElementById('ov-svg');
+    if (svg) {
+        // Resize SVG to fit
+        const allP = [...Object.values(nodePos), ...Object.values(sidePos)];
+        const newW = Math.max(...allP.map(p => p.x + p.w)) + 160;
+        const newH = Math.max(...allP.map(p => p.y + p.h)) + 60;
+        svg.setAttribute('width', newW);
+        svg.setAttribute('height', newH);
+        svg.innerHTML = svgEdges;
+        // Also resize canvas
+        const canvas = document.getElementById('ov-canvas');
+        if (canvas) {
+            canvas.style.width = newW + 'px';
+            canvas.style.height = newH + 'px';
+        }
+    }
+}
+
+function ovSelectProcess(procId) {
+    const n = nodes.find(n => n.id === procId);
+    if (n) {
+        selectedNode = n;
+        const sidebar = document.getElementById('sidebar');
+        sidebar.style.display = '';
+        renderSidebar();
+    }
+}
+
+function ovSelectEntity(entityId) {
+    const n = nodes.find(n => n.id === entityId);
+    if (n) {
+        selectedNode = n;
+        const sidebar = document.getElementById('sidebar');
+        sidebar.style.display = '';
+        renderSidebar();
+    }
+}
+
+function ovInitEdgeClick() {
+    const svg = document.getElementById('ov-svg');
+    if (!svg) return;
+    svg.addEventListener('click', (e) => {
+        const pairKey = e.target.getAttribute('data-ov-pair');
+        if (!pairKey) return;
+        const pair = ovSideEdgePairs.find(p => `${p.procId}__${p.entityId}` === pairKey);
+        if (!pair) return;
+        ovShowEdgeDetail(pair);
+    });
+}
+
+function ovShowEdgeDetail(pair) {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.display = '';
+    const proc = (spec.processes || []).find(p => p.id === pair.procId);
+    const ent = (spec.entities || []).find(e => e.id === pair.entityId);
+    const procLabel = proc ? (proc.label || proc.id) : pair.procId;
+    const entLabel = ent ? (ent.label || ent.id) : pair.entityId;
+
+    let html = `<h3 style="margin:0 0 8px;font-size:1em;color:#e6edf3;">Connection</h3>`;
+    html += `<div style="margin-bottom:12px;color:#8b949e;font-size:0.85em;">
+        <strong style="color:#c9d1d9;">${escapeHtml(procLabel)}</strong> &harr;
+        <strong style="color:#c9d1d9;">${escapeHtml(entLabel)}</strong>
+    </div>`;
+
+    for (const u of pair.usages) {
+        const arrow = u.edgeType === 'write' ? '&rarr;' : '&harr;';
+        const typeColor = u.edgeType === 'invoke' ? '#4ecdc4'
+            : u.edgeType === 'read' ? '#2ecc71'
+            : '#f39c12';
+        html += `<div style="margin-bottom:10px;padding:8px;background:#161b22;border-radius:6px;border-left:3px solid ${typeColor};">`;
+        html += `<div style="font-weight:600;color:${typeColor};font-size:0.8em;text-transform:uppercase;margin-bottom:4px;">${u.edgeType}</div>`;
+        if (u.edgeLabel) {
+            html += `<div style="color:#c9d1d9;font-size:0.85em;margin-bottom:2px;">${escapeHtml(u.edgeLabel)}</div>`;
+        }
+        if (u.returnLabel) {
+            html += `<div style="color:#8b949e;font-size:0.8em;">Returns: <span style="color:#c9d1d9;">${escapeHtml(u.returnLabel)}</span></div>`;
+        }
+        html += `</div>`;
+    }
+
+    sidebar.innerHTML = html;
 }
 
 // =====================================================================
@@ -2301,7 +3074,10 @@ const ALL_SPEC_PATHS = [
     'specs/claude-code.yaml', 'specs/babyagi.yaml', 'specs/react.yaml',
     'specs/rag.yaml', 'specs/autogpt.yaml', 'specs/crew.yaml',
     'specs/code_reviewer.yaml', 'specs/babyagi_autogen.yaml', 'specs/debate.yaml',
-    'specs/tree_of_thought.yaml', 'specs/plan_and_solve.yaml', 'specs/self_refine.yaml'
+    'specs/tree_of_thought.yaml', 'specs/plan_and_solve.yaml', 'specs/self_refine.yaml',
+    'specs/voyager.yaml', 'specs/lats.yaml', 'specs/multi_agent_codegen.yaml',
+    'specs/map_reduce.yaml', 'specs/socratic_tutor.yaml', 'specs/reflexion.yaml',
+    'specs/mixture_of_agents.yaml', 'specs/meta_prompting.yaml'
 ];
 let allSpecs = null;
 
@@ -2309,7 +3085,7 @@ async function loadAllSpecs() {
     if (allSpecs) return allSpecs;
     const results = await Promise.all(ALL_SPEC_PATHS.map(async path => {
         try {
-            const resp = await fetch(path);
+            const resp = await fetch(path + (path.includes('?') ? '&' : '?') + '_t=' + Date.now());
             const text = await resp.text();
             return jsyaml.load(text);
         } catch { return null; }

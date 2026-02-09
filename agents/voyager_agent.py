@@ -71,6 +71,38 @@ def dump_trace(path="trace.json", iterations=0, clean_exit=True):
 
 # Model override: set OPENCLAW_MODEL env var to override all agent models at runtime
 _MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")
+_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+
+def _openrouter_model_id(model):
+    """Map spec model names to OpenRouter model IDs (provider/model format)."""
+    if "/" in model:
+        return model  # already in provider/model format
+    if model.startswith("gemini"):
+        return f"google/{model}"
+    if model.startswith("claude") or model.startswith("anthropic"):
+        return f"anthropic/{model}"
+    if model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):
+        return f"openai/{model}"
+    return model  # pass through as-is
+
+
+def _call_openrouter(model, system_prompt, user_message, temperature, max_tokens):
+    from openai import OpenAI
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=_OPENROUTER_API_KEY,
+    )
+    response = client.chat.completions.create(
+        model=_openrouter_model_id(model),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
 
 
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
@@ -78,7 +110,9 @@ def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=409
         model = _MODEL_OVERRIDE
     for attempt in range(retries):
         try:
-            if model.startswith("claude") or model.startswith("anthropic"):
+            if _OPENROUTER_API_KEY:
+                return _call_openrouter(model, system_prompt, user_message, temperature, max_tokens)
+            elif model.startswith("claude") or model.startswith("anthropic"):
                 return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
             elif model.startswith("gemini"):
                 return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
@@ -205,7 +239,8 @@ def validate_output(data, schema_name):
 
 def build_input(state, schema_name):
     """Build an input dict for an agent call using schema field names.
-    Pulls matching keys from state.data."""
+    Pulls matching keys from state.data, checking both flat keys and
+    values nested inside dict entries (e.g. state.data["xxx_input"]["field"])."""
     schema = SCHEMAS.get(schema_name)
     if not schema:
         return state.data
@@ -214,6 +249,12 @@ def build_input(state, schema_name):
         fname = field["name"]
         if fname in state.data:
             result[fname] = state.data[fname]
+        else:
+            # Search nested dicts in state.data for the field
+            for _k, _v in state.data.items():
+                if isinstance(_v, dict) and fname in _v:
+                    result[fname] = _v[fname]
+                    break
     return result
 
 
@@ -329,10 +370,7 @@ class _ChromaVectorStore:
                 clean_meta[k] = str(v)
         if self._collection is not None:
             doc_id = key or f"doc_{self._collection.count()}"
-            if clean_meta:
-                self._collection.add(documents=[text], metadatas=[clean_meta], ids=[doc_id])
-            else:
-                self._collection.add(documents=[text], ids=[doc_id])
+            self._collection.add(documents=[text], metadatas=[clean_meta], ids=[doc_id])
         else:
             self._fallback.append(value if isinstance(value, dict) else {"text": text, "metadata": clean_meta})
 
@@ -452,7 +490,7 @@ def process_start_exploration(state):
 
     # Logic from spec
     state.data["iteration_count"] = 0
-    state.data["max_iterations"] = state.data.get("max_iterations", 50)
+    state.data["max_iterations"] = 50
     state.data["env_description"] = "Spawn point in a forest biome near a river."
     state.data["reflection_feedback"] = ""
     state.data["retry_count"] = 0
@@ -477,6 +515,13 @@ def process_propose_objective(state):
     if state.data.get("_done"):
         return state
 
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
+
     # Invoke: curriculum_agent
     curriculum_agent_input = build_input(state, "CurriculumInput")
     curriculum_agent_msg = json.dumps(curriculum_agent_input, default=str)
@@ -498,16 +543,16 @@ def process_retrieve_skills(state):
     """
     print(f"  → Retrieve Relevant Skills")
 
+    # Read: 
+    skill_library_data = state.skill_library.read()
+    state.data["skill_library"] = skill_library_data
+
     # Logic from spec
     # Logic to query the skill_library based on the objective
     objective = state.data.get("objective", "")
     print(f"Retrieving skills for: {objective}")
     if state.data.get("_done"):
         return state
-
-    # Read: 
-    skill_library_data = state.skill_library.read()
-    state.data["skill_library"] = skill_library_data
 
     return state
 
@@ -526,6 +571,13 @@ def process_generate_code(state):
     }
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: coder_agent
     coder_agent_input = build_input(state, "CoderInput")
@@ -553,6 +605,13 @@ def process_execute_skill(state):
     if state.data.get("_done"):
         return state
 
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
+
     # Invoke tool: Minecraft Environment
     _tool_input = str(state.data.get("tool_input", state.data.get("input", "")))
     _tool_result = tool_environment(_tool_input)
@@ -576,6 +635,13 @@ def process_evaluate_result(state):
     }
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: reflector_agent
     reflector_agent_input = build_input(state, "ReflectionInput")
@@ -621,9 +687,7 @@ def process_check_retry_limit(state):
     # Branch: abort → increment_iteration
 
     if (state.data.get("retry_count", 0)) < 3:
-        state.data["retry_count"] = state.data.get("retry_count", 0) + 1
-        state.data["reflection_feedback"] = state.data.get("feedback", "")
-        print(f"    → retry (attempt {state.data['retry_count']}/3)")
+        print(f"    → retry")
         return "generate_code"
     else:
         print(f"    → abort")

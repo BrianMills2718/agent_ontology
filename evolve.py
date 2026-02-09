@@ -4,15 +4,16 @@ Evolutionary Search over Agent Architectures
 
 Connects mutate.py + instantiate.py + test_agents.py into an evolutionary loop:
   1. Start with a base spec
-  2. Generate mutations
-  3. Validate and instantiate surviving specs
-  4. Test each against a fixture
-  5. Score fitness (pass/fail, LLM calls, duration)
-  6. Select top-K, repeat
+  2. Generate mutations (field-level or pattern-level)
+  3. Optionally crossover between parents
+  4. Validate and instantiate surviving specs
+  5. Score fitness (pass/fail, LLM calls, duration, or benchmark)
+  6. Select top-K, repeat with lineage tracking
 
 Usage:
     python3 evolve.py specs/react.yaml --generations 3 --population 5
-    python3 evolve.py specs/self_refine.yaml --generations 2 --population 4 --timeout 45
+    python3 evolve.py specs/react.yaml --generations 5 --population 8 --benchmark gsm8k
+    python3 evolve.py specs/react.yaml --generations 5 --crossover --crossover-rate 0.3
     python3 evolve.py specs/react.yaml --generations 1 --population 3 --json
 """
 
@@ -20,6 +21,8 @@ import argparse
 import copy
 import json
 import os
+import random
+import subprocess
 import sys
 import time
 import tempfile
@@ -39,7 +42,6 @@ def validate_spec_text(yaml_text):
         f.write(yaml_text)
         tmp_path = f.name
     try:
-        import subprocess
         result = subprocess.run(
             [sys.executable, os.path.join(SCRIPT_DIR, "validate.py"), tmp_path],
             capture_output=True, text=True, cwd=SCRIPT_DIR
@@ -52,7 +54,6 @@ def validate_spec_text(yaml_text):
 
 def validate_spec_file(path):
     """Validate a spec file. Returns (ok, output)."""
-    import subprocess
     result = subprocess.run(
         [sys.executable, os.path.join(SCRIPT_DIR, "validate.py"), path],
         capture_output=True, text=True, cwd=SCRIPT_DIR
@@ -63,7 +64,6 @@ def validate_spec_file(path):
 
 def instantiate_spec(spec_path, agent_path):
     """Instantiate a spec to a Python agent file. Returns True on success."""
-    import subprocess
     result = subprocess.run(
         [sys.executable, os.path.join(SCRIPT_DIR, "instantiate.py"), spec_path, "-o", agent_path],
         capture_output=True, text=True, cwd=SCRIPT_DIR
@@ -152,13 +152,113 @@ def compute_fitness(test_result):
     return round(score, 1)
 
 
+def compute_fitness_benchmark(agent_path, suite, examples=5):
+    """Compute fitness via benchmark suite. Returns score 0-200."""
+    agent_name = os.path.basename(agent_path).replace("_agent.py", "")
+    result = subprocess.run(
+        [sys.executable, os.path.join(SCRIPT_DIR, "benchmark.py"),
+         "--suite", suite,
+         "--agent", agent_name,
+         "--examples", str(examples),
+         "--json"],
+        capture_output=True, text=True, cwd=SCRIPT_DIR,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        return 0.0
+
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return 0.0
+
+    # Extract scores — handle both dict and list formats
+    if isinstance(data, list):
+        data = data[0] if data else {}
+
+    em = data.get("avg_em", data.get("exact_match", 0.0))
+    f1 = data.get("avg_f1", data.get("f1", 0.0))
+
+    # Combine: EM weighted higher
+    score = (em * 0.7 + f1 * 0.3) * 200
+
+    # Efficiency bonus: fewer calls = better
+    avg_calls = data.get("avg_calls", 0)
+    if avg_calls > 0:
+        score += max(0, 20 - avg_calls)
+
+    return round(score, 1)
+
+
+# ════════════════════════════════════════════════════════════════════
+# Lineage tracking
+# ════════════════════════════════════════════════════════════════════
+
+def _init_lineage(spec, generation=0):
+    """Initialize lineage metadata on a spec."""
+    spec.setdefault("metadata", {})
+    spec["metadata"]["lineage"] = {
+        "parents": [],
+        "generation": generation,
+        "mutations": [],
+        "patterns": _detect_pattern_names(spec),
+    }
+
+
+def _update_lineage(spec, parent_names, generation, mutation_ops):
+    """Update lineage after mutation/crossover."""
+    spec.setdefault("metadata", {})
+    spec["metadata"]["lineage"] = {
+        "parents": parent_names,
+        "generation": generation,
+        "mutations": mutation_ops,
+        "patterns": _detect_pattern_names(spec),
+    }
+
+
+def _detect_pattern_names(spec):
+    """Detect pattern names in a spec (lazy import to avoid circular)."""
+    try:
+        import patterns as pat_mod
+        detected = pat_mod.detect_patterns(spec)
+        return [pname for pname, _, _ in detected]
+    except Exception:
+        return []
+
+
+def _format_lineage_tree(history):
+    """Format a lineage tree from evolution history."""
+    lines = []
+    for gen_data in history:
+        gen = gen_data["generation"]
+        for entry in gen_data.get("results", []):
+            if entry.get("fitness", 0) > 0:
+                parents = entry.get("lineage", {}).get("parents", [])
+                parent_str = f" <- {', '.join(parents)}" if parents else ""
+                patterns = entry.get("lineage", {}).get("patterns", [])
+                pat_str = f" [{', '.join(patterns)}]" if patterns else ""
+                lines.append(
+                    f"  Gen {gen}: {entry['name']} "
+                    f"(fitness={entry['fitness']:.1f}){parent_str}{pat_str}"
+                )
+    return "\n".join(lines) if lines else "  (no lineage data)"
+
+
+# ════════════════════════════════════════════════════════════════════
+# Evolution loop
+# ════════════════════════════════════════════════════════════════════
+
 def evolve(base_spec_path, test_inputs, generations=3, population=5,
-           timeout_sec=60, verbose=True):
+           timeout_sec=60, verbose=True, benchmark_suite=None,
+           benchmark_examples=5, crossover_enabled=False,
+           crossover_rate=0.3):
     """Run evolutionary search. Returns list of generation results."""
     import yaml
 
     with open(base_spec_path) as f:
         base_spec = yaml.safe_load(f)
+
+    _init_lineage(base_spec, generation=0)
 
     base_name = base_spec.get("name", "agent").lower().replace(" ", "_")
     work_dir = tempfile.mkdtemp(prefix="evolve_")
@@ -171,41 +271,74 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
         if verbose:
             print(f"\n{'='*60}")
             print(f"  Generation {gen + 1}/{generations} — {len(current_population)} parent(s)")
+            if benchmark_suite:
+                print(f"  Fitness: benchmark ({benchmark_suite}, {benchmark_examples} examples)")
+            if crossover_enabled:
+                print(f"  Crossover rate: {crossover_rate:.0%}")
             print(f"{'='*60}")
 
-        # Generate mutations from each parent
+        # Generate mutations and crossovers from parents
         candidates = []
         for parent_name, parent_path, parent_spec in current_population:
             # Keep parent as-is
-            candidates.append((parent_name, parent_path, parent_spec, []))
+            candidates.append((parent_name, parent_path, parent_spec, [], [parent_name]))
 
             # Generate mutations
             mutations_per_parent = max(1, population // len(current_population))
             for i in range(mutations_per_parent):
-                mutated = mutate.apply_random_mutation(parent_spec)
-                if mutated:
-                    mut_name = f"gen{gen+1}_{parent_name}_mut{i+1}"
-                    mut_ops = [m["operator"] for m in mutated.get("mutations", [])]
+                # Decide: crossover or mutation
+                use_crossover = (crossover_enabled and
+                                 len(current_population) >= 2 and
+                                 random.random() < crossover_rate)
+
+                try:
+                    if use_crossover:
+                        # Pick a different parent for crossover
+                        other_parents = [(n, p, s) for n, p, s in current_population
+                                         if n != parent_name]
+                        if other_parents:
+                            other_name, _, other_spec = random.choice(other_parents)
+                            result = mutate.crossover(parent_spec, other_spec)
+                            mut_name = f"gen{gen+1}_{parent_name}_cx_{other_name}_{i+1}"
+                            mut_ops = ["crossover"]
+                            parent_list = [parent_name, other_name]
+                        else:
+                            use_crossover = False
+
+                    if not use_crossover:
+                        result, op_name = mutate.apply_random_mutation(parent_spec)
+                        mut_name = f"gen{gen+1}_{parent_name}_mut{i+1}"
+                        mut_ops = [op_name]
+                        parent_list = [parent_name]
+
+                    # Track lineage
+                    _update_lineage(result, parent_list, gen + 1, mut_ops)
+
                     # Write to temp file
                     mut_path = os.path.join(work_dir, f"{mut_name}.yaml")
                     with open(mut_path, "w") as f:
-                        yaml.dump(mutated, f, default_flow_style=False)
-                    candidates.append((mut_name, mut_path, mutated, mut_ops))
+                        yaml.dump(result, f, default_flow_style=False)
+                    candidates.append((mut_name, mut_path, result, mut_ops, parent_list))
+
+                except (ValueError, Exception) as e:
+                    if verbose:
+                        print(f"  Warning: mutation/crossover failed: {e}")
 
         if verbose:
-            print(f"  {len(candidates)} candidates (parents + mutations)")
+            print(f"  {len(candidates)} candidates (parents + offspring)")
 
         # Validate, instantiate, and test each candidate
         scored = []
-        for name, spec_path, spec, mutations in candidates:
+        for name, spec_path, spec, mutations, parents in candidates:
             # Validate
             ok, output = validate_spec_file(spec_path)
             if not ok:
                 if verbose:
-                    print(f"  {name:30s}  INVALID  (validation failed)")
+                    print(f"  {name:40s}  INVALID")
                 gen_results.append({
                     "name": name, "status": "INVALID", "fitness": 0,
-                    "mutations": mutations
+                    "mutations": mutations,
+                    "lineage": spec.get("metadata", {}).get("lineage", {}),
                 })
                 continue
 
@@ -214,10 +347,11 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             ok = instantiate_spec(spec_path, agent_path)
             if not ok:
                 if verbose:
-                    print(f"  {name:30s}  GEN_FAIL (instantiation failed)")
+                    print(f"  {name:40s}  GEN_FAIL")
                 gen_results.append({
                     "name": name, "status": "GEN_FAIL", "fitness": 0,
-                    "mutations": mutations
+                    "mutations": mutations,
+                    "lineage": spec.get("metadata", {}).get("lineage", {}),
                 })
                 continue
 
@@ -225,19 +359,30 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             if work_dir not in sys.path:
                 sys.path.insert(0, work_dir)
 
-            # Test
-            module_name = f"{name}_agent"
-            test_result = run_agent_test(module_name, test_inputs, timeout_sec)
-            fitness = compute_fitness(test_result)
+            # Score fitness
+            if benchmark_suite:
+                fitness = compute_fitness_benchmark(
+                    agent_path, benchmark_suite, benchmark_examples
+                )
+                test_result = {
+                    "status": "PASS" if fitness > 0 else "BENCH_FAIL",
+                    "llm_calls": 0,
+                    "duration_ms": 0,
+                }
+            else:
+                module_name = f"{name}_agent"
+                test_result = run_agent_test(module_name, test_inputs, timeout_sec)
+                fitness = compute_fitness(test_result)
 
             entry = {
                 "name": name,
                 "status": test_result["status"],
                 "fitness": fitness,
-                "llm_calls": test_result["llm_calls"],
-                "duration_ms": test_result["duration_ms"],
+                "llm_calls": test_result.get("llm_calls", 0),
+                "duration_ms": test_result.get("duration_ms", 0),
                 "mutations": mutations,
                 "error": test_result.get("error"),
+                "lineage": spec.get("metadata", {}).get("lineage", {}),
             }
             gen_results.append(entry)
             scored.append((fitness, name, spec_path, spec))
@@ -245,9 +390,8 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             if verbose:
                 icon = "+" if fitness > 0 else "-"
                 mut_str = f" [{', '.join(mutations)}]" if mutations else " [base]"
-                print(f"  {icon} {name:30s}  {test_result['status']:8s}  "
-                      f"fitness={fitness:5.1f}  calls={test_result['llm_calls']}  "
-                      f"time={test_result['duration_ms']}ms{mut_str}")
+                print(f"  {icon} {name:40s}  {test_result['status']:8s}  "
+                      f"fitness={fitness:6.1f}{mut_str}")
 
         # Select top-K for next generation
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -284,6 +428,10 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
         if current_population:
             print(f"\n  Final best: {current_population[0][0]}")
 
+        # Print lineage tree
+        print(f"\n  Lineage:")
+        print(_format_lineage_tree(history))
+
     # Cleanup
     import shutil
     shutil.rmtree(work_dir, ignore_errors=True)
@@ -314,30 +462,54 @@ def detect_agent_name(spec_path):
 def main():
     parser = argparse.ArgumentParser(
         description="Evolutionary Search over Agent Architectures",
-        epilog="Example: python3 evolve.py specs/react.yaml --generations 3 --population 5"
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python3 evolve.py specs/react.yaml --generations 3 --population 5\n"
+            "  python3 evolve.py specs/react.yaml --generations 5 --benchmark gsm8k\n"
+            "  python3 evolve.py specs/react.yaml --crossover --crossover-rate 0.3\n"
+        ),
     )
     parser.add_argument("spec", help="Base spec YAML file")
-    parser.add_argument("--generations", "-g", type=int, default=3, help="Number of generations")
-    parser.add_argument("--population", "-p", type=int, default=5, help="Population size per generation")
-    parser.add_argument("--timeout", "-t", type=int, default=60, help="Per-agent test timeout (seconds)")
-    parser.add_argument("--json", action="store_true", help="Output results as JSON")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress verbose output")
+    parser.add_argument("--generations", "-g", type=int, default=3,
+                        help="Number of generations")
+    parser.add_argument("--population", "-p", type=int, default=5,
+                        help="Population size per generation")
+    parser.add_argument("--timeout", "-t", type=int, default=60,
+                        help="Per-agent test timeout (seconds)")
+    parser.add_argument("--benchmark", metavar="SUITE",
+                        help="Use benchmark suite for fitness (e.g., gsm8k, hotpotqa)")
+    parser.add_argument("--benchmark-examples", type=int, default=5,
+                        help="Number of benchmark examples per evaluation")
+    parser.add_argument("--crossover", action="store_true",
+                        help="Enable crossover between parents")
+    parser.add_argument("--crossover-rate", type=float, default=0.3,
+                        help="Fraction of offspring produced by crossover (0-1)")
+    parser.add_argument("--json", action="store_true",
+                        help="Output results as JSON")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress verbose output")
     args = parser.parse_args()
 
     agent_name = detect_agent_name(args.spec)
     test_inputs = EVOLVE_INPUTS.get(agent_name)
-    if not test_inputs:
-        print(f"No test inputs defined for '{agent_name}'. Add to EVOLVE_INPUTS in evolve.py.")
+    if not test_inputs and not args.benchmark:
+        print(f"No test inputs defined for '{agent_name}'. "
+              f"Add to EVOLVE_INPUTS or use --benchmark.")
         print(f"Available: {', '.join(EVOLVE_INPUTS.keys())}")
         sys.exit(1)
 
     history = evolve(
         args.spec,
-        test_inputs,
+        test_inputs or {},
         generations=args.generations,
         population=args.population,
         timeout_sec=args.timeout,
         verbose=not args.quiet and not args.json,
+        benchmark_suite=args.benchmark,
+        benchmark_examples=args.benchmark_examples,
+        crossover_enabled=args.crossover,
+        crossover_rate=args.crossover_rate,
     )
 
     if args.json:

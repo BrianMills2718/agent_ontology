@@ -71,6 +71,38 @@ def dump_trace(path="trace.json", iterations=0, clean_exit=True):
 
 # Model override: set OPENCLAW_MODEL env var to override all agent models at runtime
 _MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")
+_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+
+def _openrouter_model_id(model):
+    """Map spec model names to OpenRouter model IDs (provider/model format)."""
+    if "/" in model:
+        return model  # already in provider/model format
+    if model.startswith("gemini"):
+        return f"google/{model}"
+    if model.startswith("claude") or model.startswith("anthropic"):
+        return f"anthropic/{model}"
+    if model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):
+        return f"openai/{model}"
+    return model  # pass through as-is
+
+
+def _call_openrouter(model, system_prompt, user_message, temperature, max_tokens):
+    from openai import OpenAI
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=_OPENROUTER_API_KEY,
+    )
+    response = client.chat.completions.create(
+        model=_openrouter_model_id(model),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
 
 
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
@@ -78,7 +110,9 @@ def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=409
         model = _MODEL_OVERRIDE
     for attempt in range(retries):
         try:
-            if model.startswith("claude") or model.startswith("anthropic"):
+            if _OPENROUTER_API_KEY:
+                return _call_openrouter(model, system_prompt, user_message, temperature, max_tokens)
+            elif model.startswith("claude") or model.startswith("anthropic"):
                 return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
             elif model.startswith("gemini"):
                 return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
@@ -221,7 +255,8 @@ def validate_output(data, schema_name):
 
 def build_input(state, schema_name):
     """Build an input dict for an agent call using schema field names.
-    Pulls matching keys from state.data."""
+    Pulls matching keys from state.data, checking both flat keys and
+    values nested inside dict entries (e.g. state.data["xxx_input"]["field"])."""
     schema = SCHEMAS.get(schema_name)
     if not schema:
         return state.data
@@ -230,6 +265,12 @@ def build_input(state, schema_name):
         fname = field["name"]
         if fname in state.data:
             result[fname] = state.data[fname]
+        else:
+            # Search nested dicts in state.data for the field
+            for _k, _v in state.data.items():
+                if isinstance(_v, dict) and fname in _v:
+                    result[fname] = _v[fname]
+                    break
     return result
 
 
@@ -487,20 +528,24 @@ def process_generate_question(state):
     concepts = plan.get("concepts", [])
     idx = state.data.get("current_concept_index", 0)
     
-    total = state.data.get("total_concepts", len(concepts))
-    if idx >= total:
-        print(f"    → All {total} concepts covered, skipping to summary")
-        state.data["_done"] = True
-        return state
-
     if idx < len(concepts):
         state.data["current_concept"] = concepts[idx]
-
-    # Prepare flat keys for build_input(QuestionGeneratorInput)
-    state.data["concept"] = state.data.get("current_concept")
-    state.data["history"] = state.data.get("transcript", [])
+    
+    # Prepare input for agent
+    state.data["gen_input"] = {
+        "concept": state.data.get("current_concept"),
+        "history": state.data.get("transcript", []),
+        "attempt_count": state.data.get("attempt_count", 0)
+    }
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: question_generator
     question_generator_input = build_input(state, "QuestionGeneratorInput")
@@ -523,16 +568,7 @@ def process_get_student_response(state):
     """
     print(f"  → Wait for Student")
 
-    # Check for pre-loaded responses (for automated testing)
-    canned = state.data.get("_canned_responses", [])
-    if canned:
-        response = canned.pop(0)
-        state.data["answer_text"] = response
-        print(f"    [AUTO] Student response: {response[:80]}")
-    else:
-        response = input("Please answer the tutor's question. [Submit Answer/End Session]: ").strip()
-        state.data["answer_text"] = response
-
+    response = input("Please answer the tutor's question. [Submit Answer/End Session]: ").strip().lower()
     state.data["checkpoint_response"] = response
     return state
 
@@ -549,12 +585,21 @@ def process_evaluate_response(state):
     response_text = state.data.get("answer_text", "")
     state.data["transcript"].append({"role": "student", "content": response_text})
     
-    # Prepare evaluation input (flat keys for build_input)
-    state.data["student_answer"] = response_text
-    state.data["key_points"] = state.data.get("tutor_question_output", {}).get("expected_key_points", [])
-    state.data["concept"] = state.data.get("current_concept")
+    # Prepare evaluation input
+    state.data["eval_input"] = {
+        "student_answer": response_text,
+        "key_points": state.data.get("tutor_question_output", {}).get("expected_key_points", []),
+        "concept": state.data.get("current_concept")
+    }
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: evaluator
     evaluator_input = build_input(state, "EvaluationInput")
@@ -586,15 +631,11 @@ def process_check_progress(state):
     # Branch: correctness_score >= 0.4 → provide_hint
     # Branch: correctness_score < 0.4 → remediate
 
-    score = state.data.get("correctness_score", 0)
-    if score > 0.8:
-        print(f"    → score {score} > 0.8 → advance")
+    if (state.data.get("correctness_score", 0)) > 0.8:
         return "advance_concept"
-    elif score >= 0.4:
-        print(f"    → score {score} >= 0.4 → hint")
+    elif (state.data.get("correctness_score", 0)) >= 0.4:
         return "provide_hint"
     else:
-        print(f"    → score {score} < 0.4 → remediate")
         return "remediate"
 
 
@@ -653,17 +694,15 @@ def process_remediate(state):
 
     # Logic from spec
     state.data["attempt_count"] += 1
-
-    # Termination check: if too many attempts, force advance and mark for review
-    if state.data["attempt_count"] >= 3:
-        concept_name = state.data.get("current_concept", {}).get("concept_name", "Unknown")
-        state.data["needs_review"].append(concept_name)
-        state.data["current_concept_index"] += 1
-        state.data["attempt_count"] = 0
-        print(f"    → Force-advancing past {concept_name} (marked for review)")
-
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: remediation_agent
     remediation_agent_input = build_input(state, "EvaluationOutput")
@@ -713,6 +752,13 @@ def process_summarize_session(state):
     }
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: summary_agent
     summary_agent_input = build_input(state, "SummaryInput")

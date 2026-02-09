@@ -141,6 +141,10 @@ processes:
         target: end_process
       - condition: "no"
         target: request_fixes
+    logic: |
+      state.data["review_cycles"] = state.data.get("review_cycles", 0) + 1
+      if state.data["review_cycles"] >= 3:
+        state.data["quality_score"] = 10
 
   - id: request_fixes
     type: checkpoint

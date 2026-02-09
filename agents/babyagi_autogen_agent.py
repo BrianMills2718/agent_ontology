@@ -71,6 +71,38 @@ def dump_trace(path="trace.json", iterations=0, clean_exit=True):
 
 # Model override: set OPENCLAW_MODEL env var to override all agent models at runtime
 _MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")
+_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+
+def _openrouter_model_id(model):
+    """Map spec model names to OpenRouter model IDs (provider/model format)."""
+    if "/" in model:
+        return model  # already in provider/model format
+    if model.startswith("gemini"):
+        return f"google/{model}"
+    if model.startswith("claude") or model.startswith("anthropic"):
+        return f"anthropic/{model}"
+    if model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):
+        return f"openai/{model}"
+    return model  # pass through as-is
+
+
+def _call_openrouter(model, system_prompt, user_message, temperature, max_tokens):
+    from openai import OpenAI
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=_OPENROUTER_API_KEY,
+    )
+    response = client.chat.completions.create(
+        model=_openrouter_model_id(model),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
 
 
 def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
@@ -78,7 +110,9 @@ def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=409
         model = _MODEL_OVERRIDE
     for attempt in range(retries):
         try:
-            if model.startswith("claude") or model.startswith("anthropic"):
+            if _OPENROUTER_API_KEY:
+                return _call_openrouter(model, system_prompt, user_message, temperature, max_tokens)
+            elif model.startswith("claude") or model.startswith("anthropic"):
                 return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
             elif model.startswith("gemini"):
                 return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
@@ -205,7 +239,8 @@ def validate_output(data, schema_name):
 
 def build_input(state, schema_name):
     """Build an input dict for an agent call using schema field names.
-    Pulls matching keys from state.data."""
+    Pulls matching keys from state.data, checking both flat keys and
+    values nested inside dict entries (e.g. state.data["xxx_input"]["field"])."""
     schema = SCHEMAS.get(schema_name)
     if not schema:
         return state.data
@@ -214,6 +249,12 @@ def build_input(state, schema_name):
         fname = field["name"]
         if fname in state.data:
             result[fname] = state.data[fname]
+        else:
+            # Search nested dicts in state.data for the field
+            for _k, _v in state.data.items():
+                if isinstance(_v, dict) and fname in _v:
+                    result[fname] = _v[fname]
+                    break
     return result
 
 
@@ -448,6 +489,10 @@ def process_pull_task(state):
     """
     print(f"  → Step 1: Pull task")
 
+    # Read: Read prior results
+    vector_db_data = state.vector_db.read()
+    state.data["vector_db"] = vector_db_data
+
     # Logic from spec
     tasks = state.data.get("tasks", [])
     if not tasks:
@@ -465,7 +510,7 @@ def process_pull_task(state):
     state.data["tasks"] = tasks
     state.data["completed_count"] = completed + 1
     # Prepare context from vector_db stored results (top 5)
-    stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+    stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
     state.data["context"] = stored_results[-5:]
     print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
     print(f"    Context from prior results: {len(state.data['context'])} items")
@@ -504,10 +549,14 @@ def process_enrich_and_store(state):
     """
     print(f"  → Step 3: Enrich and store")
 
+    # Read: Read stored results
+    vector_db_data = state.vector_db.read()
+    state.data["vector_db"] = vector_db_data
+
     # Logic from spec
     state.data["query"] = state.data.get("result", "")
     state.data["top_k"] = 5
-    stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+    stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
     state.data["stored_results"] = stored_results
     state.data["text"] = state.data.get("result", "")
     state.data["embedding"] = []  # Placeholder for embedding vector
@@ -529,13 +578,24 @@ def process_retrieve_context(state):
     """
     print(f"  → Step 4: Retrieve context")
 
+    # Read: Read context
+    vector_db_data = state.vector_db.read()
+    state.data["vector_db"] = vector_db_data
+
     # Logic from spec
     state.data["query"] = state.data.get("result", "")
     state.data["top_k"] = 5
-    stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+    stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
     state.data["stored_results"] = stored_results
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: Retrieve context
     context_agent_input = build_input(state, "ContextQuery")
@@ -564,6 +624,13 @@ def process_create_and_reprioritize(state):
     state.data["existing_tasks"] = state.data.get("tasks", [])
     if state.data.get("_done"):
         return state
+
+    # Flatten nested dicts: promote schema fields to top-level state.data
+    for _nested_val in list(state.data.values()):
+        if isinstance(_nested_val, dict):
+            for _nk, _nv in _nested_val.items():
+                if _nk not in state.data:
+                    state.data[_nk] = _nv
 
     # Invoke: Create new tasks
     task_creation_agent_input = build_input(state, "TaskCreationInput")

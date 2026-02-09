@@ -88,7 +88,7 @@ processes:
       state.data["search_query"] = search_query
       top_k = state.data.get("top_k", 5)
       state.data["top_k"] = top_k
-      results = state.vector_store.read(key=search_query)
+      results = state.data.get("vector_store", [])
       stored = [e.get("text", "") for e in (results or []) if e.get("text")]
       state.data["stored_chunks"] = stored
       state.data["passages"] = stored
@@ -211,6 +211,7 @@ edges:
     from: retrieve
     to: vector_store
     label: "Similarity search"
+    query_key: rewritten_query
     data: EmbeddedChunk
 
   - type: flow
@@ -253,11 +254,8 @@ edges:
     to: embed_and_store
     label: "Embed chunks"
 
-  - type: write
-    from: embed_and_store
-    to: vector_store
-    label: "Store embeddings"
-    data: EmbeddedChunk
+  # Note: embed_and_store writes to vector_store via per-chunk loop in logic.
+  # No write edge here — the logic handles the iteration directly.
 
   - type: write
     from: ingest_document

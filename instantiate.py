@@ -145,6 +145,38 @@ def generate_agent(spec):
     w('')
     w('# Model override: set OPENCLAW_MODEL env var to override all agent models at runtime')
     w('_MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")')
+    w('_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")')
+    w('')
+    w('')
+    w('def _openrouter_model_id(model):')
+    w('    """Map spec model names to OpenRouter model IDs (provider/model format)."""')
+    w('    if "/" in model:')
+    w('        return model  # already in provider/model format')
+    w('    if model.startswith("gemini"):')
+    w('        return f"google/{model}"')
+    w('    if model.startswith("claude") or model.startswith("anthropic"):')
+    w('        return f"anthropic/{model}"')
+    w('    if model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):')
+    w('        return f"openai/{model}"')
+    w('    return model  # pass through as-is')
+    w('')
+    w('')
+    w('def _call_openrouter(model, system_prompt, user_message, temperature, max_tokens):')
+    w('    from openai import OpenAI')
+    w('    client = OpenAI(')
+    w('        base_url="https://openrouter.ai/api/v1",')
+    w('        api_key=_OPENROUTER_API_KEY,')
+    w('    )')
+    w('    response = client.chat.completions.create(')
+    w('        model=_openrouter_model_id(model),')
+    w('        messages=[')
+    w('            {"role": "system", "content": system_prompt},')
+    w('            {"role": "user", "content": user_message},')
+    w('        ],')
+    w('        temperature=temperature,')
+    w('        max_tokens=max_tokens,')
+    w('    )')
+    w('    return response.choices[0].message.content')
     w('')
     w('')
     w('def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):')
@@ -152,7 +184,9 @@ def generate_agent(spec):
     w('        model = _MODEL_OVERRIDE')
     w('    for attempt in range(retries):')
     w('        try:')
-    w('            if model.startswith("claude") or model.startswith("anthropic"):')
+    w('            if _OPENROUTER_API_KEY:')
+    w('                return _call_openrouter(model, system_prompt, user_message, temperature, max_tokens)')
+    w('            elif model.startswith("claude") or model.startswith("anthropic"):')
     w('                return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)')
     w('            elif model.startswith("gemini"):')
     w('                return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)')
@@ -528,6 +562,19 @@ def generate_agent(spec):
         w('')
 
         if ptype == "step":
+            # Store reads — BEFORE logic so logic can reference loaded data
+            for (store_id, op, edge) in store_ops:
+                if op == "read":
+                    elabel = edge.get("label", "")
+                    query_key = edge.get("query_key")
+                    w(f'    # Read: {elabel}')
+                    if query_key:
+                        w(f'    {_safe_name(store_id)}_data = state.{_safe_name(store_id)}.read(key=state.data.get("{query_key}", ""))')
+                    else:
+                        w(f'    {_safe_name(store_id)}_data = state.{_safe_name(store_id)}.read()')
+                    w(f'    state.data["{store_id}"] = {_safe_name(store_id)}_data')
+                    w('')
+
             # Inline logic (if specified in spec)
             logic = p.get("logic")
             if logic:
@@ -554,15 +601,6 @@ def generate_agent(spec):
                     w(f'            for _nk, _nv in _nested_val.items():')
                     w(f'                if _nk not in state.data:')
                     w(f'                    state.data[_nk] = _nv')
-                    w('')
-
-            # Store reads
-            for (store_id, op, edge) in store_ops:
-                if op == "read":
-                    elabel = edge.get("label", "")
-                    w(f'    # Read: {elabel}')
-                    w(f'    {_safe_name(store_id)}_data = state.{_safe_name(store_id)}.read()')
-                    w(f'    state.data["{store_id}"] = {_safe_name(store_id)}_data')
                     w('')
 
             # Invoke agents (schema-aware)
@@ -1008,7 +1046,7 @@ def _generate_tool_function(tool, w):
     """Generate a tool implementation function in the output code."""
     tid = tool["id"]
     safe = _safe_name(tid)
-    label = tool.get("label", tid)
+    label = _strip_ns_prefix(tool.get("label", tid))
     desc = tool.get("description", "")
     keywords = (label + " " + desc).lower()
 
@@ -1083,12 +1121,19 @@ def _generate_tool_function(tool, w):
     w('')
 
 
+def _strip_ns_prefix(label):
+    """Strip [prefix] namespace from label for dispatch matching."""
+    if label.startswith("[") and "] " in label:
+        return label.split("] ", 1)[1]
+    return label
+
+
 def _emit_tool_dispatch(tool_invokes, entity_map, w):
     """Emit tool dispatch code for a process that invokes one or more tools."""
     if len(tool_invokes) == 1:
         entity_id, edge = tool_invokes[0]
         entity = entity_map[entity_id]
-        label = entity.get("label", entity_id)
+        label = _strip_ns_prefix(entity.get("label", entity_id))
         w(f'    # Invoke tool: {label}')
         w('    _tool_input = str(state.data.get("tool_input", state.data.get("input", "")))')
         w(f'    _tool_result = tool_{_safe_name(entity_id)}(_tool_input)')
@@ -1096,14 +1141,14 @@ def _emit_tool_dispatch(tool_invokes, entity_map, w):
         w('    print(f"    Observation: {_tool_result[:200]}")')
         w('')
     else:
-        available = ", ".join(entity_map[eid].get("label", eid).lower()
+        available = ", ".join(_strip_ns_prefix(entity_map[eid].get("label", eid)).lower()
                              for eid, _ in tool_invokes)
         w('    # Tool dispatch')
         w('    _tool_name = state.data.get("tool_name", "").lower().strip()')
         w('    _tool_input = str(state.data.get("tool_input", state.data.get("action", "")))')
         for i, (entity_id, edge) in enumerate(tool_invokes):
             entity = entity_map[entity_id]
-            label = entity.get("label", entity_id).lower()
+            label = _strip_ns_prefix(entity.get("label", entity_id)).lower()
             prefix = "if" if i == 0 else "elif"
             w(f'    {prefix} _tool_name == "{label}":')
             w(f'        _tool_result = tool_{_safe_name(entity_id)}(_tool_input)')
@@ -1128,6 +1173,1189 @@ def _camel_to_snake(name):
     s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
     s = re.sub(r'([a-z\d])([A-Z])', r'\1_\2', s)
     return s.lower()
+
+
+def generate_langgraph_agent(spec):
+    """Generate a LangGraph-based Python agent script from a spec.
+
+    Parallel to generate_agent() but outputs code using LangGraph's StateGraph
+    with typed state, add_node/add_edge/add_conditional_edges.
+    """
+    name = spec["name"]
+    entities = spec.get("entities", [])
+    processes = spec.get("processes", [])
+    edges = spec.get("edges", [])
+    schemas = spec.get("schemas", [])
+    entry_point = spec.get("entry_point")
+
+    # Index everything
+    entity_map = {e["id"]: e for e in entities}
+    process_map = {p["id"]: p for p in processes}
+    schema_map = {s["name"]: s for s in schemas}
+
+    # Build adjacency
+    flow_graph = {}
+    for e in edges:
+        if e["type"] in ("flow", "branch"):
+            src = e["from"]
+            flow_graph.setdefault(src, []).append((e["to"], e))
+
+    invoke_map = {}
+    for e in edges:
+        if e["type"] == "invoke":
+            invoke_map.setdefault(e["from"], []).append((e["to"], e))
+
+    store_access = {}
+    for e in edges:
+        if e["type"] in ("read", "write"):
+            store_access.setdefault(e["from"], []).append((e["to"], e["type"], e))
+
+    loop_map = {}
+    for e in edges:
+        if e["type"] == "loop":
+            loop_map[e["from"]] = (e["to"], e)
+
+    # Entity-bridged flow map
+    entity_flow = {}
+    for e in edges:
+        if e["type"] == "flow" and e["from"] in entity_map and e["to"] in process_map:
+            entity_flow.setdefault(e["from"], []).append(e["to"])
+
+    agents = [e for e in entities if e["type"] == "agent"]
+    stores = [e for e in entities if e["type"] == "store"]
+    tools = [e for e in entities if e["type"] == "tool"]
+
+    lines = []
+    w = lines.append
+
+    # ── Section 1: Header / imports ──
+    w('#!/usr/bin/env python3')
+    w(f'"""')
+    w(f'{name} — Generated by OpenClaw Instantiation Engine (LangGraph backend)')
+    w(f'Spec: {spec.get("description", "")}')
+    w(f'"""')
+    w('')
+    w('import json')
+    w('import os')
+    w('import sys')
+    w('import time')
+    w('from datetime import datetime')
+    w('from typing import Any, TypedDict, Annotated')
+    w('')
+    w('from langgraph.graph import StateGraph, END')
+    w('')
+
+    # ── Section 2: Trace log (identical to custom backend) ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Trace Log')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+    w('TRACE = []')
+    w('')
+    w('def trace_call(agent_label, model, system_prompt, user_message, response, duration_ms):')
+    w('    entry = {')
+    w('        "timestamp": datetime.now().isoformat(),')
+    w('        "agent": agent_label,')
+    w('        "model": model,')
+    w('        "system_prompt": system_prompt,')
+    w('        "user_message": user_message,')
+    w('        "response": response,')
+    w('        "duration_ms": duration_ms,')
+    w('    }')
+    w('    TRACE.append(entry)')
+    w('    print(f"    [{agent_label}] ({model}, {duration_ms}ms)")')
+    w('    print(f"      IN:  {user_message[:300]}")')
+    w('    print(f"      OUT: {response[:300]}")')
+    w('')
+    w('')
+    w('def dump_trace(path="trace.json", iterations=0, clean_exit=True):')
+    w('    total_ms = sum(e["duration_ms"] for e in TRACE)')
+    w('    agents_used = list(set(e["agent"] for e in TRACE))')
+    w('    schema_ok = 0')
+    w('    for e in TRACE:')
+    w('        try:')
+    w('            r = e["response"].strip()')
+    w('            if r.startswith("```"): r = "\\n".join(r.split("\\n")[1:-1])')
+    w('            json.loads(r if r.startswith("{") else r[r.find("{"):r.rfind("}")+1])')
+    w('            schema_ok += 1')
+    w('        except (json.JSONDecodeError, ValueError):')
+    w('            pass')
+    w('    est_input_tokens = sum(len(e.get("user_message",""))//4 for e in TRACE)')
+    w('    est_output_tokens = sum(len(e.get("response",""))//4 for e in TRACE)')
+    w('    metrics = {')
+    w('        "total_llm_calls": len(TRACE),')
+    w('        "total_duration_ms": total_ms,')
+    w('        "avg_call_ms": total_ms // max(len(TRACE), 1),')
+    w('        "iterations": iterations,')
+    w('        "clean_exit": clean_exit,')
+    w('        "agents_used": agents_used,')
+    w('        "schema_compliance": f"{schema_ok}/{len(TRACE)}",')
+    w('        "est_input_tokens": est_input_tokens,')
+    w('        "est_output_tokens": est_output_tokens,')
+    w('    }')
+    w('    output = {"metrics": metrics, "trace": TRACE}')
+    w('    with open(path, "w") as f:')
+    w('        json.dump(output, f, indent=2)')
+    w('    print(f"\\nTrace written to {path} ({len(TRACE)} calls, {total_ms}ms total)")')
+    w('    print(f"  Schema compliance: {schema_ok}/{len(TRACE)}, est tokens: ~{est_input_tokens}in/~{est_output_tokens}out")')
+    w('    return metrics')
+    w('')
+
+    # ── Section 3: LLM Call Infrastructure (LangChain ChatModels) ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# LLM Call Infrastructure')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+    w('_MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")')
+    w('_OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")')
+    w('')
+    w('')
+    w('def _openrouter_model_id(model):')
+    w('    """Map spec model names to OpenRouter model IDs (provider/model format)."""')
+    w('    if "/" in model:')
+    w('        return model')
+    w('    if model.startswith("gemini"):')
+    w('        return f"google/{model}"')
+    w('    if model.startswith("claude") or model.startswith("anthropic"):')
+    w('        return f"anthropic/{model}"')
+    w('    if model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):')
+    w('        return f"openai/{model}"')
+    w('    return model')
+    w('')
+    w('')
+    w('def _get_chat_model(model, temperature=0.7, max_tokens=4096):')
+    w('    """Get a LangChain ChatModel instance for the given model name."""')
+    w('    if _OPENROUTER_API_KEY:')
+    w('        from langchain_openai import ChatOpenAI')
+    w('        return ChatOpenAI(')
+    w('            model=_openrouter_model_id(model),')
+    w('            temperature=temperature,')
+    w('            max_tokens=max_tokens,')
+    w('            base_url="https://openrouter.ai/api/v1",')
+    w('            api_key=_OPENROUTER_API_KEY,')
+    w('        )')
+    w('    if model.startswith("gemini"):')
+    w('        from langchain_google_genai import ChatGoogleGenerativeAI')
+    w('        return ChatGoogleGenerativeAI(model=model, temperature=temperature,')
+    w('                                      max_output_tokens=max_tokens,')
+    w('                                      google_api_key=os.environ.get("GEMINI_API_KEY", ""))')
+    w('    elif model.startswith("claude") or model.startswith("anthropic"):')
+    w('        from langchain_anthropic import ChatAnthropic')
+    w('        return ChatAnthropic(model=model, temperature=temperature, max_tokens=max_tokens)')
+    w('    else:')
+    w('        from langchain_openai import ChatOpenAI')
+    w('        return ChatOpenAI(model=model, temperature=temperature, max_tokens=max_tokens)')
+    w('')
+    w('')
+    w('def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):')
+    w('    if _MODEL_OVERRIDE:')
+    w('        model = _MODEL_OVERRIDE')
+    w('    from langchain_core.messages import SystemMessage, HumanMessage')
+    w('    for attempt in range(retries):')
+    w('        try:')
+    w('            chat = _get_chat_model(model, temperature, max_tokens)')
+    w('            messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]')
+    w('            response = chat.invoke(messages)')
+    w('            content = response.content')
+    w('            # LangChain may return content as a list of blocks (e.g. Gemini)')
+    w('            if isinstance(content, list):')
+    w('                content = " ".join(b.get("text", str(b)) if isinstance(b, dict) else str(b) for b in content)')
+    w('            return content')
+    w('        except Exception as e:')
+    w('            if attempt < retries - 1:')
+    w('                wait = 2 ** attempt')
+    w('                print(f"    [RETRY] {type(e).__name__}: {e} — retrying in {wait}s (attempt {attempt+1}/{retries})")')
+    w('                import time as _time; _time.sleep(wait)')
+    w('            else:')
+    w('                print(f"    [FAIL] {type(e).__name__}: {e} after {retries} attempts")')
+    w('                return json.dumps({"stub": True, "model": model, "error": str(e)})')
+    w('')
+
+    # ── Section 4: Schema registry ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Schema Registry')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+    w('SCHEMAS = {')
+    for s in schemas:
+        sname = s["name"]
+        fields = s.get("fields", [])
+        desc = s.get("description", "")
+        field_strs = []
+        for f in fields:
+            field_strs.append(f'{{"name": "{f["name"]}", "type": "{f["type"]}"}}')
+        w(f'    "{sname}": {{')
+        w(f'        "description": """{desc}""",')
+        w(f'        "fields": [{", ".join(field_strs)}],')
+        w(f'    }},')
+    w('}')
+    w('')
+
+    # Schema helpers
+    w('')
+    w('def validate_output(data, schema_name):')
+    w('    schema = SCHEMAS.get(schema_name)')
+    w('    if not schema or "raw" in data:')
+    w('        return []')
+    w('    issues = []')
+    w('    for field in schema["fields"]:')
+    w('        fname = field["name"]')
+    w('        ftype = field["type"]')
+    w('        if fname not in data:')
+    w('            issues.append(f"Missing field \'{fname}\' ({ftype})")')
+    w('            continue')
+    w('        val = data[fname]')
+    w('        if ftype == "string" and not isinstance(val, str):')
+    w('            issues.append(f"Field \'{fname}\' expected string, got {type(val).__name__}")')
+    w('        elif ftype == "integer" and not isinstance(val, (int, float)):')
+    w('            issues.append(f"Field \'{fname}\' expected integer, got {type(val).__name__}")')
+    w('        elif ftype.startswith("list") and not isinstance(val, list):')
+    w('            issues.append(f"Field \'{fname}\' expected list, got {type(val).__name__}")')
+    w('        elif ftype.startswith("enum["):')
+    w('            allowed = [v.strip() for v in ftype[5:-1].split(",")]')
+    w('            if val not in allowed:')
+    w('                issues.append(f"Field \'{fname}\' value \'{val}\' not in {allowed}")')
+    w('    if issues:')
+    w('        print(f"    [SCHEMA] {schema_name}: {len(issues)} issue(s): {issues[0]}")')
+    w('    return issues')
+    w('')
+    w('')
+    w('def build_input(state, schema_name):')
+    w('    """Build an input dict for an agent call using schema field names."""')
+    w('    schema = SCHEMAS.get(schema_name)')
+    w('    if not schema:')
+    w('        return dict(state)')
+    w('    result = {}')
+    w('    for field in schema["fields"]:')
+    w('        fname = field["name"]')
+    w('        if fname in state:')
+    w('            result[fname] = state[fname]')
+    w('        else:')
+    w('            for _k, _v in state.items():')
+    w('                if isinstance(_v, dict) and fname in _v:')
+    w('                    result[fname] = _v[fname]')
+    w('                    break')
+    w('    return result')
+    w('')
+    w('')
+    w('def output_instruction(schema_name):')
+    w('    schema = SCHEMAS.get(schema_name)')
+    w('    if not schema:')
+    w('        return ""')
+    w('    fields = ", ".join(f\'"{f["name"]}": <{f["type"]}>\' for f in schema["fields"])')
+    w('    return f"\\n\\nRespond with ONLY valid JSON matching this schema: {{{fields}}}"')
+    w('')
+    w('')
+    w('def parse_response(response, schema_name):')
+    w('    import re as _re')
+    w('    text = response.strip()')
+    w('    if text.startswith("```"):')
+    w('        lines = text.split("\\n")')
+    w('        lines = lines[1:]')
+    w('        if lines and lines[-1].strip() == "```":')
+    w('            lines = lines[:-1]')
+    w('        text = "\\n".join(lines)')
+    w('    try:')
+    w('        parsed = json.loads(text)')
+    w('        if isinstance(parsed, dict):')
+    w('            return parsed')
+    w('        return {"value": parsed}')
+    w('    except json.JSONDecodeError:')
+    w('        pass')
+    w('    start = text.find("{")')
+    w('    end = text.rfind("}") + 1')
+    w('    if start >= 0 and end > start:')
+    w('        candidate = text[start:end]')
+    w('        try:')
+    w('            return json.loads(candidate)')
+    w('        except json.JSONDecodeError:')
+    w('            pass')
+    w('        fixed = _re.sub(r",\\s*}", "}", candidate)')
+    w('        fixed = _re.sub(r",\\s*]", "]", fixed)')
+    w('        try:')
+    w('            return json.loads(fixed)')
+    w('        except json.JSONDecodeError:')
+    w('            pass')
+    w('        depth = 0')
+    w('        for i, ch in enumerate(text[start:], start):')
+    w('            if ch == "{": depth += 1')
+    w('            elif ch == "}": depth -= 1')
+    w('            if depth == 0:')
+    w('                try:')
+    w('                    return json.loads(text[start:i+1])')
+    w('                except json.JSONDecodeError:')
+    w('                    break')
+    w('    return {"raw": response}')
+    w('')
+
+    # ── Section 5: State TypedDict ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# State TypedDict')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+
+    # Collect all field names across schemas + internal fields
+    all_fields = {}  # name -> python type annotation
+    for s in schemas:
+        for f in s.get("fields", []):
+            fname = f["name"]
+            ftype = f.get("type", "string")
+            if fname in all_fields:
+                continue
+            # Map ontology types to Python
+            if ftype == "string":
+                all_fields[fname] = "str"
+            elif ftype == "integer":
+                all_fields[fname] = "int"
+            elif ftype == "boolean":
+                all_fields[fname] = "bool"
+            elif ftype.startswith("list"):
+                all_fields[fname] = "list"
+            elif ftype.startswith("enum["):
+                all_fields[fname] = "str"
+            else:
+                all_fields[fname] = "Any"
+
+    # Add store fields
+    for s in stores:
+        sid = _safe_name(s["id"])
+        stype = s.get("store_type", "kv")
+        if stype == "queue":
+            all_fields[sid] = "list"
+        elif stype == "vector":
+            all_fields[sid] = "list"
+        else:
+            all_fields[sid] = "dict"
+
+    # Scan logic blocks for state.data["key"] assignments to discover extra fields
+    import re as _re_scan
+    for p in processes:
+        logic = p.get("logic", "")
+        if not logic:
+            continue
+        # Match state.data["key"] = ... patterns
+        for m in _re_scan.finditer(r'state\.data\[(["\'])(\w+)\1\]', logic):
+            fname = m.group(2)
+            if fname not in all_fields:
+                all_fields[fname] = "Any"
+        # Match state.data.get("key" patterns (read-only, but still need in TypedDict)
+        for m in _re_scan.finditer(r'state\.data\.get\((["\'])(\w+)\1', logic):
+            fname = m.group(2)
+            if fname not in all_fields:
+                all_fields[fname] = "Any"
+
+    # Also scan gate conditions for field references
+    for p in processes:
+        if p.get("type") == "gate":
+            cond = p.get("condition", "")
+            for token in _re_scan.findall(r'\b([a-z_]\w*)\b', cond):
+                if token not in ('is', 'not', 'empty', 'true', 'false', 'none',
+                                 'and', 'or', 'in', 'length', 'count') and token not in all_fields:
+                    all_fields[token] = "Any"
+
+    # Internal state fields
+    all_fields["_done"] = "bool"
+    all_fields["_iteration"] = "int"
+    all_fields["_schema_violations"] = "int"
+    all_fields["_canned_responses"] = "list"
+
+    w('class AgentState(TypedDict, total=False):')
+    w(f'    """Typed state for {name}"""')
+    for fname, ftype in sorted(all_fields.items()):
+        w(f'    {fname}: {ftype}')
+    w('')
+
+    # ── Section 6: Stores ──
+    if stores:
+        w('')
+        w('# ═══════════════════════════════════════════════════════════')
+        w('# Stores')
+        w('# ═══════════════════════════════════════════════════════════')
+
+        has_vector = any(s.get("store_type") == "vector" for s in stores)
+        if has_vector:
+            w('')
+            w('try:')
+            w('    import chromadb')
+            w('    _chroma_client = chromadb.Client()')
+            w('    _USE_CHROMA = True')
+            w('except ImportError:')
+            w('    _USE_CHROMA = False')
+            w('')
+            w('')
+            w('class _ChromaVectorStore:')
+            w('    def __init__(self, name):')
+            w('        self._fallback = []')
+            w('        self._collection = None')
+            w('        if _USE_CHROMA:')
+            w('            self._collection = _chroma_client.get_or_create_collection(name)')
+            w('        else:')
+            w('            print(f"    [VectorStore] using in-memory fallback")')
+            w('')
+            w('    def read(self, query=None, top_k=5):')
+            w('        if self._collection is not None:')
+            w('            if query:')
+            w('                results = self._collection.query(query_texts=[query], n_results=min(top_k, max(self._collection.count(), 1)))')
+            w('                docs = results.get("documents", [[]])[0]')
+            w('                metas = results.get("metadatas", [[]])[0]')
+            w('                return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]')
+            w('            else:')
+            w('                if self._collection.count() == 0:')
+            w('                    return []')
+            w('                all_data = self._collection.get()')
+            w('                docs = all_data.get("documents", [])')
+            w('                metas = all_data.get("metadatas", [])')
+            w('                return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]')
+            w('        return self._fallback')
+            w('')
+            w('    def write(self, value, key=None):')
+            w('        text = value.get("text", str(value)) if isinstance(value, dict) else str(value)')
+            w('        metadata = value.get("metadata", {}) if isinstance(value, dict) else {}')
+            w('        clean_meta = {}')
+            w('        for k, v in (metadata or {}).items():')
+            w('            if isinstance(v, (str, int, float, bool)):')
+            w('                clean_meta[k] = v')
+            w('            elif v is not None:')
+            w('                clean_meta[k] = str(v)')
+            w('        if self._collection is not None:')
+            w('            doc_id = key or f"doc_{self._collection.count()}"')
+            w('            self._collection.add(documents=[text], metadatas=[clean_meta], ids=[doc_id])')
+            w('        else:')
+            w('            self._fallback.append(value if isinstance(value, dict) else {"text": text, "metadata": clean_meta})')
+            w('')
+
+        w('')
+        for s in stores:
+            sid = s["id"]
+            stype = s.get("store_type", "kv")
+            label = s.get("label", sid)
+            w(f'class Store_{_safe_name(sid)}:')
+            w(f'    """{label} ({stype})"""')
+            w(f'    def __init__(self):')
+            if stype == "vector":
+                w(f'        self._store = _ChromaVectorStore("{_safe_name(sid)}")')
+            elif stype == "queue":
+                w(f'        self.queue = []')
+            else:
+                w(f'        self.data = {{}}')
+            w('')
+            w(f'    def read(self, key=None):')
+            if stype == "vector":
+                w(f'        return self._store.read(query=key)')
+            elif stype == "queue":
+                w(f'        return self.queue[0] if self.queue else None')
+            else:
+                w(f'        return self.data if key is None else self.data.get(key)')
+            w('')
+            w(f'    def write(self, value, key=None):')
+            if stype == "vector":
+                w(f'        self._store.write(value, key=key)')
+            elif stype == "queue":
+                w(f'        self.queue.append(value)')
+            else:
+                w(f'        if key is not None:')
+                w(f'            self.data[key] = value')
+                w(f'        else:')
+                w(f'            self.data = value')
+            w('')
+            w('')
+
+    # Store instances (module-level singletons)
+    if stores:
+        w('# Store instances')
+        for s in stores:
+            w(f'_store_{_safe_name(s["id"])} = Store_{_safe_name(s["id"])}()')
+        w('')
+
+    # ── Section 7: Agent wrappers ──
+    if agents:
+        w('')
+        w('# ═══════════════════════════════════════════════════════════')
+        w('# Agent Wrappers')
+        w('# ═══════════════════════════════════════════════════════════')
+        w('')
+        for a in agents:
+            aid = a["id"]
+            model = a.get("model", "gpt-4")
+            prompt = a.get("system_prompt", "You are a helpful assistant.")
+            label = a.get("label", aid)
+            config = a.get("config", {})
+            temp = config.get("temperature", 0.7)
+            max_tok = config.get("max_tokens", 4096)
+            w(f'def invoke_{_safe_name(aid)}(user_message, output_schema=None):')
+            w(f'    """{label}"""')
+            w(f'    system = """{_escape_triple(prompt)}"""')
+            w(f'    if output_schema:')
+            w(f'        system += output_instruction(output_schema)')
+            w(f'    t0 = time.time()')
+            w(f'    result = call_llm(')
+            w(f'        model="{model}",')
+            w(f'        system_prompt=system,')
+            w(f'        user_message=user_message,')
+            w(f'        temperature={temp},')
+            w(f'        max_tokens={max_tok},')
+            w(f'    )')
+            w(f'    trace_call("{label}", "{model}", system, user_message, result, int((time.time()-t0)*1000))')
+            w(f'    return result')
+            w('')
+            w('')
+
+    # ── Section 8: Tool implementations ──
+    if tools:
+        w('')
+        w('# ═══════════════════════════════════════════════════════════')
+        w('# Tool Implementations')
+        w('# ═══════════════════════════════════════════════════════════')
+        w('')
+        for t in tools:
+            _generate_tool_function(t, w)
+
+    # ── Section 9: Node functions ──
+    w('')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Node Functions')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+
+    for p in processes:
+        pid = p["id"]
+        ptype = p["type"]
+        label = p.get("label", pid)
+        desc = p.get("description", "")
+        invocations = invoke_map.get(pid, [])
+        store_ops = store_access.get(pid, [])
+
+        if ptype == "gate":
+            # Gates become routing functions, not nodes
+            continue
+
+        w(f'def node_{_safe_name(pid)}(state: AgentState) -> dict:')
+        w(f'    """')
+        w(f'    {label}')
+        if desc:
+            w(f'    {desc}')
+        w(f'    """')
+        w(f'    print(f"  → {label}")')
+        w(f'    updates = {{}}')
+        w('')
+
+        if ptype == "step":
+            # Store reads — BEFORE logic so logic can reference loaded data
+            for (store_id, op, edge) in store_ops:
+                if op == "read":
+                    elabel = edge.get("label", "")
+                    query_key = edge.get("query_key")
+                    w(f'    # Read: {elabel}')
+                    if query_key:
+                        w(f'    {_safe_name(store_id)}_data = _store_{_safe_name(store_id)}.read(key=state.get("{query_key}", ""))')
+                    else:
+                        w(f'    {_safe_name(store_id)}_data = _store_{_safe_name(store_id)}.read()')
+                    w(f'    updates["{store_id}"] = {_safe_name(store_id)}_data')
+                    w('')
+
+            # Logic block: transform state.data["x"] → state["x"], writes → updates["x"]
+            logic = p.get("logic")
+            if logic:
+                w(f'    # Logic from spec')
+                for line in logic.strip().split('\n'):
+                    # Transform state.data references to state dict access
+                    transformed = _transform_logic_line_lg(line, store_names=[_safe_name(s["id"]) for s in stores])
+                    w(f'    {transformed}')
+                w(f'    if updates.get("_done") or state.get("_done"):')
+                w(f'        return updates')
+                w('')
+
+                # After logic: flatten nested dicts
+                invoke_input_schemas = []
+                for (_eid, _edge) in invocations:
+                    _isch = _edge.get("input")
+                    if _isch and _isch in schema_map:
+                        invoke_input_schemas.append(_isch)
+                if invoke_input_schemas:
+                    w(f'    # Flatten nested dicts')
+                    w(f'    _combined = dict(state)')
+                    w(f'    _combined.update(updates)')
+                    w(f'    for _nested_val in list(_combined.values()):')
+                    w(f'        if isinstance(_nested_val, dict):')
+                    w(f'            for _nk, _nv in _nested_val.items():')
+                    w(f'                if _nk not in _combined:')
+                    w(f'                    updates[_nk] = _nv')
+                    w('')
+
+            # Invoke agents
+            for (entity_id, edge) in invocations:
+                entity = entity_map.get(entity_id, {})
+                etype = entity.get("type")
+                if etype != "agent":
+                    continue
+                elabel = edge.get("label", entity_id)
+                input_schema = edge.get("input")
+                output_schema = edge.get("output")
+
+                w(f'    # Invoke: {elabel}')
+                if input_schema and input_schema in schema_map:
+                    w(f'    _cur = dict(state)')
+                    w(f'    _cur.update(updates)')
+                    w(f'    {_safe_name(entity_id)}_input = build_input(_cur, "{input_schema}")')
+                else:
+                    w(f'    {_safe_name(entity_id)}_input = dict(state)')
+                w(f'    {_safe_name(entity_id)}_msg = json.dumps({_safe_name(entity_id)}_input, default=str)')
+
+                if output_schema and output_schema in schema_map:
+                    w(f'    {_safe_name(entity_id)}_raw = invoke_{_safe_name(entity_id)}({_safe_name(entity_id)}_msg, output_schema="{output_schema}")')
+                    w(f'    {_safe_name(entity_id)}_result = parse_response({_safe_name(entity_id)}_raw, "{output_schema}")')
+                    w(f'    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output({_safe_name(entity_id)}_result, "{output_schema}"))')
+                    w(f'    updates.update({_safe_name(entity_id)}_result)')
+                    snake = _camel_to_snake(output_schema)
+                    schema_fields = {f.get("name") for f in schema_map.get(output_schema, {}).get("fields", [])}
+                    if snake in schema_fields:
+                        snake = f"{snake}_schema"
+                    w(f'    updates["{snake}"] = {_safe_name(entity_id)}_result')
+                    w(f'    updates["{pid}_result"] = {_safe_name(entity_id)}_result')
+                    w(f'    print(f"    ← {entity.get("label", entity_id)}: {{{_safe_name(entity_id)}_result}}")')
+                else:
+                    w(f'    {_safe_name(entity_id)}_result = invoke_{_safe_name(entity_id)}({_safe_name(entity_id)}_msg)')
+                    w(f'    updates["{entity_id}_result"] = {_safe_name(entity_id)}_result')
+                    w(f'    print(f"    ← {entity.get("label", entity_id)}: {{{_safe_name(entity_id)}_result[:100]}}...")')
+                w('')
+
+            # Invoke tools
+            tool_invokes = [(eid, edge) for eid, edge in invocations
+                           if entity_map.get(eid, {}).get("type") == "tool"]
+            if tool_invokes:
+                _emit_tool_dispatch_lg(tool_invokes, entity_map, w)
+
+            # Store writes
+            for (store_id, op, edge) in store_ops:
+                if op == "write":
+                    elabel = edge.get("label", "")
+                    data_schema = edge.get("data")
+                    w(f'    # Write: {elabel}')
+                    if data_schema and data_schema in schema_map:
+                        w(f'    _cur = dict(state)')
+                        w(f'    _cur.update(updates)')
+                        w(f'    {_safe_name(store_id)}_write = build_input(_cur, "{data_schema}")')
+                        w(f'    _store_{_safe_name(store_id)}.write({_safe_name(store_id)}_write)')
+                    else:
+                        w(f'    _store_{_safe_name(store_id)}.write(dict(state))')
+                    w('')
+
+            w(f'    return updates')
+
+        elif ptype == "checkpoint":
+            prompt_text = p.get("prompt", "Continue?")
+            options = p.get("options", ["approve", "deny"])
+            w(f'    # Checkpoint (HITL)')
+            w(f'    _canned = state.get("_canned_responses", [])')
+            w(f'    if _canned:')
+            w(f'        response = _canned[0]')
+            w(f'        updates["_canned_responses"] = _canned[1:]')
+            w(f'    else:')
+            w(f'        response = input("{prompt_text} [{"/".join(options)}]: ").strip().lower()')
+            w(f'    updates["checkpoint_response"] = response')
+            w(f'    return updates')
+
+        elif ptype == "spawn":
+            template = p.get("template", "self")
+            w(f'    # Spawn: template={template}')
+            w(f'    print("    [SPAWN] Would create sub-agent from template: {template}")')
+            w(f'    return updates')
+
+        elif ptype == "policy":
+            w(f'    # Policy: cross-cutting concern')
+            w(f'    return updates')
+
+        elif ptype == "protocol":
+            w(f'    # Protocol: multi-agent negotiation')
+            w(f'    print("    [PROTOCOL] Multi-agent negotiation step")')
+            w(f'    return updates')
+
+        elif ptype == "error_handler":
+            w(f'    # Error handler')
+            w(f'    print("    [ERROR_HANDLER] handling error")')
+            w(f'    return updates')
+
+        else:
+            w(f'    return updates')
+
+        w('')
+        w('')
+
+    # ── Section 10: Routing functions for gates ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Gate Routing Functions')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+
+    for p in processes:
+        if p["type"] != "gate":
+            continue
+        pid = p["id"]
+        label = p.get("label", pid)
+        condition = p.get("condition", "True")
+        branches = p.get("branches", [])
+
+        w(f'def route_{_safe_name(pid)}(state: AgentState) -> str:')
+        w(f'    """Gate: {label} — {condition}"""')
+
+        check_expr = _generate_gate_check_lg(condition)
+        if len(branches) == 2:
+            true_idx = _true_branch_index(condition, branches)
+            false_idx = 1 - true_idx
+            true_target = branches[true_idx]["target"]
+            false_target = branches[false_idx]["target"]
+            # Resolve target — if target is a gate, we need its routing
+            w(f'    if {check_expr}:')
+            w(f'        print(f"    → {branches[true_idx].get("condition", "yes")}")')
+            w(f'        return "{_safe_name(true_target)}"')
+            w(f'    else:')
+            w(f'        print(f"    → {branches[false_idx].get("condition", "no")}")')
+            w(f'        return "{_safe_name(false_target)}"')
+        else:
+            for i, branch in enumerate(branches[:-1]):
+                branch_cond = branch.get("condition", "")
+                branch_check = _generate_gate_check_lg(branch_cond) if branch_cond else check_expr
+                prefix = "if" if i == 0 else "elif"
+                w(f'    {prefix} {branch_check}:')
+                w(f'        return "{_safe_name(branch["target"])}"')
+            w(f'    else:')
+            w(f'        return "{_safe_name(branches[-1]["target"])}"')
+        w('')
+        w('')
+
+    # ── Section 11: Graph construction ──
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Graph Construction')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+    w('def build_graph():')
+    w('    graph = StateGraph(AgentState)')
+    w('')
+
+    # Add nodes (non-gate processes only)
+    for p in processes:
+        if p["type"] == "gate":
+            continue
+        pid = p["id"]
+        w(f'    graph.add_node("{_safe_name(pid)}", node_{_safe_name(pid)})')
+
+    w('')
+
+    # Set entry point
+    if entry_point:
+        w(f'    graph.set_entry_point("{_safe_name(entry_point)}")')
+    w('')
+
+    # Build edges: for each non-gate process, determine outgoing edges
+    # Gates are handled via add_conditional_edges on the *preceding* node
+
+    # First, build a map of which process leads to which gate
+    # and which process leads to which non-gate process
+    for p in processes:
+        pid = p["id"]
+        if p["type"] == "gate":
+            continue
+
+        outflows = flow_graph.get(pid, [])
+        proc_targets = [(t, e) for t, e in outflows if t in process_map]
+
+        # If no direct process targets, check entity-bridged flows
+        if not proc_targets:
+            invoked = invoke_map.get(pid, [])
+            for inv_target, inv_edge in invoked:
+                bridged = entity_flow.get(inv_target, [])
+                for bt in bridged:
+                    proc_targets.append((bt, inv_edge))
+
+        # Check if any target is a gate
+        gate_targets = [(t, e) for t, e in proc_targets if process_map.get(t, {}).get("type") == "gate"]
+        non_gate_targets = [(t, e) for t, e in proc_targets if process_map.get(t, {}).get("type") != "gate"]
+
+        # Handle loop edges
+        if pid in loop_map:
+            loop_target, loop_edge = loop_map[pid]
+            # This process has a loop — it means it can either go to its normal flow
+            # target or loop back. But the loop is typically controlled by a gate.
+            # If there's a direct flow target + loop, add the flow edge
+            if non_gate_targets:
+                for (t, e) in non_gate_targets:
+                    w(f'    graph.add_edge("{_safe_name(pid)}", "{_safe_name(t)}")')
+
+        elif gate_targets:
+            # This node feeds into a gate — use conditional edges
+            for (gate_id, _) in gate_targets:
+                gate_proc = process_map[gate_id]
+                gate_branches = gate_proc.get("branches", [])
+                # Build the branch map for conditional edges
+                branch_targets = {}
+                for branch in gate_branches:
+                    target = branch["target"]
+                    # If target is itself a gate, resolve it
+                    if process_map.get(target, {}).get("type") == "gate":
+                        # Chain gates: use a compound routing function
+                        # For now, add as-is; the routing function handles the chain
+                        branch_targets[_safe_name(target)] = _safe_name(target)
+                    else:
+                        branch_targets[_safe_name(target)] = _safe_name(target)
+
+                w(f'    graph.add_conditional_edges(')
+                w(f'        "{_safe_name(pid)}",')
+                w(f'        route_{_safe_name(gate_id)},')
+                w(f'        {{')
+                for bname, btarget in branch_targets.items():
+                    # Check if target is END (terminal)
+                    w(f'            "{bname}": "{btarget}",')
+                w(f'        }}')
+                w(f'    )')
+        elif non_gate_targets:
+            if len(non_gate_targets) == 1:
+                w(f'    graph.add_edge("{_safe_name(pid)}", "{_safe_name(non_gate_targets[0][0])}")')
+            elif len(non_gate_targets) > 1:
+                # Fan-out: add edges to all targets
+                # LangGraph handles fan-out differently; we'll use the first as primary
+                # and note the fan-out pattern
+                for (t, e) in non_gate_targets:
+                    w(f'    graph.add_edge("{_safe_name(pid)}", "{_safe_name(t)}")')
+        else:
+            # Terminal node
+            w(f'    graph.add_edge("{_safe_name(pid)}", END)')
+
+    # Handle gate-to-gate chains: if a gate branch targets another gate,
+    # we need a "pass-through" node or compound routing.
+    # Check for gate targets that are gates themselves
+    gate_to_gate = set()
+    for p in processes:
+        if p["type"] == "gate":
+            for branch in p.get("branches", []):
+                target = branch.get("target")
+                if target and process_map.get(target, {}).get("type") == "gate":
+                    gate_to_gate.add(target)
+
+    # For chained gates, add them as pass-through nodes with conditional edges
+    for gate_id in gate_to_gate:
+        gate_proc = process_map[gate_id]
+        # Add a pass-through node
+        w(f'')
+        w(f'    # Pass-through node for chained gate: {gate_id}')
+        w(f'    graph.add_node("{_safe_name(gate_id)}", lambda state: {{}})')
+
+        gate_branches = gate_proc.get("branches", [])
+        branch_targets = {}
+        for branch in gate_branches:
+            target = branch["target"]
+            branch_targets[_safe_name(target)] = _safe_name(target)
+
+        w(f'    graph.add_conditional_edges(')
+        w(f'        "{_safe_name(gate_id)}",')
+        w(f'        route_{_safe_name(gate_id)},')
+        w(f'        {{')
+        for bname, btarget in branch_targets.items():
+            w(f'            "{bname}": "{btarget}",')
+        w(f'        }}')
+        w(f'    )')
+
+    w('')
+    w('    return graph.compile()')
+    w('')
+
+    # ── Section 12: StateCompat wrapper + entry point ──
+    w('')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('# Entry Point')
+    w('# ═══════════════════════════════════════════════════════════')
+    w('')
+    w('class _StateCompat:')
+    w('    """Wrapper to make LangGraph state compatible with test harness."""')
+    w('    def __init__(self, state_dict):')
+    w('        self.data = {k: v for k, v in state_dict.items() if not k.startswith("_")}')
+    w('        self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})')
+    w('        self.iteration = state_dict.get("_iteration", 0)')
+    w('        self.schema_violations = state_dict.get("_schema_violations", 0)')
+    w('')
+    w('')
+    w(f'MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))')
+    w('')
+    w('')
+    w(f'def run(initial_data=None):')
+    w(f'    """{name} — LangGraph execution"""')
+    w(f'    app = build_graph()')
+    w(f'')
+    w(f'    # Build initial state')
+    w('    state = {}')
+    w(f'    if initial_data:')
+    w(f'        state.update(initial_data)')
+    w(f'    state["_iteration"] = 0')
+    w(f'    state["_schema_violations"] = 0')
+    w(f'    state["_done"] = False')
+    w(f'')
+    w(f'    print(f"\\n{"═" * 60}")')
+    w(f'    print(f"  {name} (LangGraph)")')
+    w(f'    print(f"  {spec.get("description", "")}")')
+    w(f'    print(f"{"═" * 60}\\n")')
+    w(f'')
+    w(f'    # LangGraph recursion limit maps roughly to our MAX_ITERATIONS')
+    w(f'    try:')
+    w(f'        final_state = app.invoke(state, {{"recursion_limit": MAX_ITERATIONS * 3}})')
+    w(f'    except Exception as e:')
+    w(f'        print(f"\\n  [ERROR] {{type(e).__name__}}: {{e}}")')
+    w(f'        final_state = state')
+    w(f'')
+    w(f'    _clean_exit = True')
+    w(f'    dump_trace(iterations=final_state.get("_iteration", 0), clean_exit=_clean_exit)')
+    w(f'    print(f"\\nFinal state keys: {{list(final_state.keys())}}")')
+    w(f'    return _StateCompat(final_state)')
+    w('')
+    w('')
+    w('if __name__ == "__main__":')
+
+    # Detect user input
+    human_entities = [e for e in entities if e.get("type") == "human"]
+    user_input_schema = None
+    for edge in edges:
+        if edge["type"] == "flow" and edge["from"] in [h["id"] for h in human_entities]:
+            if edge.get("data"):
+                user_input_schema = edge["data"]
+                break
+
+    if user_input_schema and user_input_schema in schema_map:
+        schema = schema_map[user_input_schema]
+        fields = schema.get("fields", [])
+        if fields:
+            w('    initial = {}')
+            for field in fields:
+                fname = field["name"]
+                w(f'    initial["{fname}"] = input("Enter {fname}: ")')
+            w('    run(initial)')
+        else:
+            w('    run()')
+    else:
+        w('    run()')
+
+    return "\n".join(lines)
+
+
+def _transform_logic_line_lg(line, store_names=None):
+    """Transform a logic line from custom backend format to LangGraph format.
+
+    state.data["x"] = val    →  updates["x"] = val
+    state.data["x"] += val   →  updates["x"] = state.get("x", 0) + val
+    state.data.get("x")      →  state.get("x")
+    state.data["x"]          →  state.get("x", ...) for reads
+    state.{store_name}        →  _store_{store_name}  (module-level singletons)
+    """
+    import re
+
+    # Store references: state.{store_name} → _store_{store_name}
+    if store_names:
+        for sname in store_names:
+            line = re.sub(rf'\bstate\.{re.escape(sname)}\b', f'_store_{sname}', line)
+
+    # Augmented assignment: state.data["key"] += value (or -=, *=, etc.)
+    aug_match = re.match(r'^(\s*)state\.data\[(["\'][^"\']+["\'])\]\s*(\+=|-=|\*=|/=)\s*(.+)$', line)
+    if aug_match:
+        indent = aug_match.group(1)
+        key = aug_match.group(2)
+        op = aug_match.group(3)  # e.g., +=
+        value = aug_match.group(4)
+        base_op = op[0]  # +, -, *, /
+        value = _transform_logic_rhs_lg(value)
+        return f'{indent}updates[{key}] = state.get({key}, 0) {base_op} {value}'
+
+    # Simple assignment: state.data["key"] = value
+    assign_match = re.match(r'^(\s*)state\.data\[(["\'][^"\']+["\'])\]\s*=\s*(.+)$', line)
+    if assign_match:
+        indent = assign_match.group(1)
+        key = assign_match.group(2)
+        value = assign_match.group(3)
+        value = _transform_logic_rhs_lg(value)
+        return f'{indent}updates[{key}] = {value}'
+
+    # Method calls on state.data["key"] like .append(v): state.data["x"].append(y)
+    method_match = re.match(r'^(\s*)state\.data\[(["\'][^"\']+["\'])\]\.(append|extend|insert|pop|remove)\((.+)\)\s*$', line)
+    if method_match:
+        indent = method_match.group(1)
+        key = method_match.group(2)
+        method = method_match.group(3)
+        args = method_match.group(4)
+        args = _transform_logic_rhs_lg(args)
+        if method == "append":
+            return f'{indent}_list = list(state.get({key}, []) or []); _list.append({args}); updates[{key}] = _list'
+        elif method == "extend":
+            return f'{indent}_list = list(state.get({key}, []) or []); _list.extend({args}); updates[{key}] = _list'
+        else:
+            return f'{indent}_tmp = list(state.get({key}, []) or []); _tmp.{method}({args}); updates[{key}] = _tmp'
+
+    # state.data.get("key", default) → state.get("key", default)
+    line = re.sub(r'state\.data\.get\(', 'state.get(', line)
+
+    # state.data["key"] in read context → state.get("key", "")
+    line = re.sub(r'state\.data\[(["\'][^"\']+["\'])\]', r'state.get(\1, "")', line)
+
+    # state.data (bare reference) → dict(state)
+    line = re.sub(r'\bstate\.data\b', 'dict(state)', line)
+
+    return line
+
+
+def _transform_logic_rhs_lg(value):
+    """Transform the right-hand side of an assignment for LangGraph."""
+    import re
+    value = re.sub(r'state\.data\.get\(', 'state.get(', value)
+    value = re.sub(r'state\.data\[(["\'][^"\']+["\'])\]', r'state.get(\1, "")', value)
+    value = re.sub(r'\bstate\.data\b', 'dict(state)', value)
+    return value
+
+
+def _generate_gate_check_lg(condition):
+    """Generate a Python expression for a gate condition in LangGraph context.
+    Uses state["x"] instead of state.data.get("x")."""
+    import re
+    c = condition.lower()
+
+    field_match = re.match(r'([\w]+(?:\.[\w]+)*)', condition)
+    field_path = field_match.group(1) if field_match else None
+
+    def accessor(path):
+        parts = path.split('.')
+        if len(parts) == 1:
+            return f'state.get("{parts[0]}")'
+        expr = 'state'
+        for p in parts[:-1]:
+            expr = f'{expr}.get("{p}", {{}})'
+        expr = f'{expr}.get("{parts[-1]}")'
+        return expr
+
+    def num_accessor(path):
+        parts = path.split('.')
+        if len(parts) == 1:
+            return f'state.get("{parts[0]}", 0)'
+        expr = 'state'
+        for p in parts[:-1]:
+            expr = f'{expr}.get("{p}", {{}})'
+        expr = f'{expr}.get("{parts[-1]}", 0)'
+        return expr
+
+    if '.length' in c and '> 0' in c:
+        base = field_path.rsplit('.', 1)[0] if '.' in field_path else field_path
+        return f'len({accessor(base)} or [])'
+
+    if 'approaching' in c or 'capacity' in c:
+        return f'(state.get("_context_token_count", 0) > state.get("_context_capacity", 100000) * 0.8)'
+
+    if 'matches' in c or 'match' in c:
+        return f'state.get("_permission_granted", True)'
+
+    if 'is not empty' in c or 'not empty' in c:
+        if field_path:
+            return f'bool({accessor(field_path)})'
+
+    if 'is empty' in c and 'not' not in c:
+        if field_path:
+            return f'not bool({accessor(field_path)})'
+
+    def _is_numeric(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    gte_match = re.search(r'([\w.]+)\s*>=\s*([\w.]+)', condition)
+    if gte_match:
+        lhs, rhs = gte_match.group(1), gte_match.group(2)
+        if _is_numeric(rhs):
+            return f'({num_accessor(lhs)}) >= {rhs}'
+        elif '.' in rhs and rhs.split('.')[-1] == 'length':
+            base = rhs.rsplit('.', 1)[0]
+            return f'({num_accessor(lhs)}) >= len({accessor(base)} or [])'
+        else:
+            return f'({num_accessor(lhs)}) >= ({num_accessor(rhs)})'
+
+    lte_match = re.search(r'([\w.]+)\s*<=\s*([\w.]+)', condition)
+    if lte_match:
+        lhs, rhs = lte_match.group(1), lte_match.group(2)
+        if _is_numeric(rhs):
+            return f'({num_accessor(lhs)}) <= {rhs}'
+        elif '.' in rhs and rhs.split('.')[-1] == 'length':
+            base = rhs.rsplit('.', 1)[0]
+            return f'({num_accessor(lhs)}) <= len({accessor(base)} or [])'
+        else:
+            return f'({num_accessor(lhs)}) <= ({num_accessor(rhs)})'
+
+    gt_match = re.search(r'([\w.]+)\s*>\s*([\w.]+)', condition)
+    if gt_match:
+        lhs, rhs = gt_match.group(1), gt_match.group(2)
+        if _is_numeric(rhs):
+            return f'({num_accessor(lhs)}) > {rhs}'
+        elif '.' in rhs and rhs.split('.')[-1] == 'length':
+            base = rhs.rsplit('.', 1)[0]
+            return f'({num_accessor(lhs)}) > len({accessor(base)} or [])'
+        else:
+            return f'({num_accessor(lhs)}) > ({num_accessor(rhs)})'
+
+    lt_match = re.search(r'([\w.]+)\s*<\s*([\w.]+)', condition)
+    if lt_match:
+        lhs, rhs = lt_match.group(1), lt_match.group(2)
+        if _is_numeric(rhs):
+            return f'({num_accessor(lhs)}) < {rhs}'
+        elif '.' in rhs and rhs.split('.')[-1] == 'length':
+            base = rhs.rsplit('.', 1)[0]
+            return f'({num_accessor(lhs)}) < len({accessor(base)} or [])'
+        else:
+            return f'({num_accessor(lhs)}) < ({num_accessor(rhs)})'
+
+    eq_match = re.search(r'([\w.]+)\s*==?\s*["\']?(\w+)["\']?', condition)
+    if eq_match:
+        lhs, rhs = eq_match.group(1), eq_match.group(2)
+        if rhs.isdigit():
+            return f'{num_accessor(lhs)} == {rhs}'
+        if rhs in ('True', 'true'):
+            return f'{accessor(lhs)} == True'
+        if rhs in ('False', 'false'):
+            return f'{accessor(lhs)} == False'
+        if rhs in ('None', 'none', 'null'):
+            return f'{accessor(lhs)} is None'
+        return f'{accessor(lhs)} == "{rhs}"'
+
+    if field_path:
+        return f'bool({accessor(field_path)})'
+
+    return 'True  # could not parse condition'
+
+
+def _emit_tool_dispatch_lg(tool_invokes, entity_map, w):
+    """Emit tool dispatch code for LangGraph node functions."""
+    if len(tool_invokes) == 1:
+        entity_id, edge = tool_invokes[0]
+        entity = entity_map[entity_id]
+        label = _strip_ns_prefix(entity.get("label", entity_id))
+        w(f'    # Invoke tool: {label}')
+        w(f'    _cur = dict(state)')
+        w(f'    _cur.update(updates)')
+        w('    _tool_input = str(_cur.get("tool_input", _cur.get("input", "")))')
+        w(f'    _tool_result = tool_{_safe_name(entity_id)}(_tool_input)')
+        w('    updates["observation"] = _tool_result')
+        w('    print(f"    Observation: {_tool_result[:200]}")')
+        w('')
+    else:
+        available = ", ".join(_strip_ns_prefix(entity_map[eid].get("label", eid)).lower()
+                             for eid, _ in tool_invokes)
+        w('    # Tool dispatch')
+        w(f'    _cur = dict(state)')
+        w(f'    _cur.update(updates)')
+        w('    _tool_name = _cur.get("tool_name", "").lower().strip()')
+        w('    _tool_input = str(_cur.get("tool_input", _cur.get("action", "")))')
+        for i, (entity_id, edge) in enumerate(tool_invokes):
+            entity = entity_map[entity_id]
+            label = _strip_ns_prefix(entity.get("label", entity_id)).lower()
+            prefix = "if" if i == 0 else "elif"
+            w(f'    {prefix} _tool_name == "{label}":')
+            w(f'        _tool_result = tool_{_safe_name(entity_id)}(_tool_input)')
+        w(f'    else:')
+        w(f'        _tool_result = f"Unknown tool: {{_tool_name}}. Available: {available}"')
+        w('    updates["observation"] = _tool_result')
+        w('    print(f"    Observation: {_tool_result[:200]}")')
+        w('')
 
 
 def spec_stats(spec):
@@ -1161,7 +2389,7 @@ def run_validation(spec_path):
     return not has_errors, output.strip()
 
 
-def instantiate_one(spec_path, output_path, dry_run=False, validate=False):
+def instantiate_one(spec_path, output_path, dry_run=False, validate=False, backend="custom"):
     """Instantiate a single spec. Returns True on success."""
     spec = load_yaml(spec_path)
     name = spec.get("name", os.path.basename(spec_path))
@@ -1179,7 +2407,10 @@ def instantiate_one(spec_path, output_path, dry_run=False, validate=False):
             if "WARNING" in line:
                 print(f"  {line.strip()}")
 
-    code = generate_agent(spec)
+    if backend == "langgraph":
+        code = generate_langgraph_agent(spec)
+    else:
+        code = generate_agent(spec)
 
     if dry_run or not output_path:
         print(code)
@@ -1188,7 +2419,8 @@ def instantiate_one(spec_path, output_path, dry_run=False, validate=False):
         with open(output_path, "w") as f:
             f.write(code)
         os.chmod(output_path, 0o755)
-        print(f"  {name}: {output_path} ({spec_stats(spec)})")
+        tag = " [langgraph]" if backend == "langgraph" else ""
+        print(f"  {name}{tag}: {output_path} ({spec_stats(spec)})")
     return True
 
 
@@ -1207,6 +2439,8 @@ def main():
     parser.add_argument("--validate", action="store_true", help="Validate spec before generating")
     parser.add_argument("--all", action="store_true", help="Process all *.yaml files in directory")
     parser.add_argument("--stats", action="store_true", help="Show spec stats without generating")
+    parser.add_argument("--backend", choices=["custom", "langgraph"], default="custom",
+                        help="Code generation backend (default: custom)")
     args = parser.parse_args()
 
     if args.stats:
@@ -1229,17 +2463,20 @@ def main():
             print(f"Error: {spec_dir} is not a directory (use --all with a directory)")
             sys.exit(1)
 
-        out_dir = args.output or "agents"
+        out_dir = args.output or ("agents_lg" if args.backend == "langgraph" else "agents")
         os.makedirs(out_dir, exist_ok=True)
         files = sorted(f for f in os.listdir(spec_dir) if f.endswith(".yaml"))
         success, fail = 0, 0
 
-        print(f"Instantiating {len(files)} specs from {spec_dir}/ -> {out_dir}/")
+        backend_label = f" [{args.backend}]" if args.backend != "custom" else ""
+        print(f"Instantiating {len(files)} specs{backend_label} from {spec_dir}/ -> {out_dir}/")
         for fname in files:
             spec_path = os.path.join(spec_dir, fname)
-            out_name = fname.replace(".yaml", "_agent.py").replace("-", "_")
+            suffix = "_agent_lg.py" if args.backend == "langgraph" else "_agent.py"
+            out_name = fname.replace(".yaml", suffix).replace("-", "_")
             out_path = os.path.join(out_dir, out_name)
-            ok = instantiate_one(spec_path, out_path, args.dry_run, args.validate)
+            ok = instantiate_one(spec_path, out_path, args.dry_run, args.validate,
+                                 backend=args.backend)
             if ok:
                 success += 1
             else:
@@ -1249,7 +2486,10 @@ def main():
     else:
         # Single spec mode
         spec = load_yaml(args.spec)
-        code = generate_agent(spec)
+        if args.backend == "langgraph":
+            code = generate_langgraph_agent(spec)
+        else:
+            code = generate_agent(spec)
 
         if args.validate:
             ok, msg = run_validation(args.spec)
@@ -1269,7 +2509,8 @@ def main():
                 f.write(code)
             os.chmod(args.output, 0o755)
             name = spec.get("name", args.spec)
-            print(f"Generated: {args.output}")
+            backend_label = f" [{args.backend}]" if args.backend != "custom" else ""
+            print(f"Generated{backend_label}: {args.output}")
             print(f"  {spec_stats(spec)}")
             print(f"Run with:  python3 {args.output}")
 

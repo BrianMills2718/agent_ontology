@@ -21,7 +21,7 @@ ONTOLOGY_PATH = os.path.join(SCRIPT_DIR, "ONTOLOGY.yaml")
 # Import validate_spec from validate.py
 sys.path.insert(0, SCRIPT_DIR)
 from validate import validate_spec, load_yaml
-from instantiate import generate_agent
+from instantiate import generate_agent, generate_langgraph_agent
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +466,32 @@ def test_store_access():
 
 
 # ---------------------------------------------------------------------------
+# Property 8: LangGraph code generation syntax
+# For every spec (except claude_code), generate_langgraph_agent() produces
+# syntactically valid Python.
+# ---------------------------------------------------------------------------
+
+def test_langgraph_code_generation_syntax():
+    """Generated LangGraph Python code must be syntactically valid (ast.parse)."""
+    test_name = "langgraph code generation syntax"
+    skip = {"claude-code.yaml"}
+    for path in all_spec_paths():
+        name = spec_name(path)
+        if name in skip:
+            continue
+        try:
+            spec = load_yaml(path)
+            code = generate_langgraph_agent(spec)
+            ast.parse(code)
+            results.ok(test_name, name)
+        except SyntaxError as e:
+            results.fail(test_name, name,
+                         f"SyntaxError at line {e.lineno}: {e.msg}")
+        except Exception as e:
+            results.fail(test_name, name, f"Exception: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -503,6 +529,10 @@ def main():
     print("\nProperty 7: Store access")
     print("-" * 40)
     test_store_access()
+
+    print("\nProperty 8: LangGraph code generation syntax")
+    print("-" * 40)
+    test_langgraph_code_generation_syntax()
 
     success = results.summary()
     sys.exit(0 if success else 1)

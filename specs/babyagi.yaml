@@ -80,7 +80,7 @@ processes:
       state.data["task"] = task
       state.data["tasks"] = tasks
       state.data["completed_count"] = completed + 1
-      state.data["context"] = [e.get("text", "") for e in state.vector_db.read() if e.get("text")][-5:]
+      state.data["context"] = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")][-5:]
       print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
       print(f"    Context from prior results: {len(state.data['context'])} items")
 
@@ -93,7 +93,7 @@ processes:
     logic: |
       state.data["query"] = state.data.get("result", "")
       state.data["top_k"] = 5
-      state.data["stored_results"] = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+      state.data["stored_results"] = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
       state.data["text"] = state.data.get("result", "")
       state.data["embedding"] = []
       state.data["metadata"] = {"task_id": state.data.get("task_id"), "objective": state.data.get("objective", "")}
@@ -134,6 +134,18 @@ edges:
     label: "Retrieve context"
     input: ContextQuery
     output: ContextResult
+
+  - type: read
+    from: pull_task
+    to: vector_db
+    label: "Read prior results"
+    data: EmbeddedResult
+
+  - type: read
+    from: enrich
+    to: vector_db
+    label: "Read stored results"
+    data: EmbeddedResult
 
   - type: write
     from: enrich

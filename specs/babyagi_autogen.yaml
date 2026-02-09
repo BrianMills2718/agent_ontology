@@ -71,7 +71,7 @@ processes:
       state.data["tasks"] = tasks
       state.data["completed_count"] = completed + 1
       # Prepare context from vector_db stored results (top 5)
-      stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+      stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
       state.data["context"] = stored_results[-5:]
       print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
       print(f"    Context from prior results: {len(state.data['context'])} items")
@@ -92,7 +92,7 @@ processes:
     logic: |
       state.data["query"] = state.data.get("result", "")
       state.data["top_k"] = 5
-      stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+      stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
       state.data["stored_results"] = stored_results
       state.data["text"] = state.data.get("result", "")
       state.data["embedding"] = []  # Placeholder for embedding vector
@@ -107,7 +107,7 @@ processes:
     logic: |
       state.data["query"] = state.data.get("result", "")
       state.data["top_k"] = 5
-      stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+      stored_results = [e.get("text", "") for e in state.data.get("vector_db", []) if e.get("text")]
       state.data["stored_results"] = stored_results
 
   - id: create_and_reprioritize
@@ -142,6 +142,24 @@ edges:
     label: "Execution result"
 
   # Step 3 → Vector DB write → Step 4
+  - type: read
+    from: pull_task
+    to: vector_db
+    label: "Read prior results"
+    data: EmbeddedResult
+
+  - type: read
+    from: enrich_and_store
+    to: vector_db
+    label: "Read stored results"
+    data: EmbeddedResult
+
+  - type: read
+    from: retrieve_context
+    to: vector_db
+    label: "Read context"
+    data: EmbeddedResult
+
   - type: write
     from: enrich_and_store
     to: vector_db
