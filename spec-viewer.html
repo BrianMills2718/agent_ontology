@@ -353,6 +353,39 @@
         .sm-invoke-chip-agent { border-color: rgba(78,205,196,0.4); color: #4ecdc4; }
         .sm-invoke-chip-tool { border-color: rgba(243,156,18,0.3); color: #f39c12; background: rgba(243,156,18,0.06); }
 
+        /* Data flow tags on processes */
+        .sm-data-flow {
+            position: absolute;
+            left: -140px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            max-width: 130px;
+        }
+        .sm-data-tag {
+            font-size: 0.65em;
+            padding: 1px 5px;
+            border-radius: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+        }
+        .sm-data-tag-in {
+            background: rgba(88,166,255,0.1);
+            border: 1px solid rgba(88,166,255,0.25);
+            color: #58a6ff;
+        }
+        .sm-data-tag-out {
+            background: rgba(126,231,135,0.1);
+            border: 1px solid rgba(126,231,135,0.25);
+            color: #7ee787;
+        }
+        .sm-data-tag-in::before { content: '→ '; font-size: 0.9em; }
+        .sm-data-tag-out::before { content: '← '; font-size: 0.9em; }
+
         /* SVG overlay for edges */
         .sm-svg-layer {
             position: absolute;
@@ -2013,6 +2046,28 @@ function renderStateMachine() {
         html += traceHtml;
         html += `<div class="sm-proc-name">${proc.label || proc.id}</div>`;
         html += `<div class="sm-proc-type">${proc.type}${proc.id !== (proc.label || '').toLowerCase().replace(/\s+/g, '_') ? ' : ' + proc.id : ''}</div>`;
+
+        // Data flow tags (left side) — from process or invoke edges
+        let dataIn = proc.data_in || proc.input_schema || '';
+        let dataOut = proc.data_out || proc.output_schema || '';
+        // Fall back to invoke edge schemas if process doesn't define them
+        if (!dataIn || !dataOut) {
+            const invEdges = invokedBy[proc.id] || [];
+            if (invEdges.length > 0) {
+                if (!dataIn && invEdges[0].input) dataIn = invEdges[0].input;
+                if (!dataOut && invEdges[0].output) dataOut = invEdges[0].output;
+            }
+        }
+        if (dataIn || dataOut) {
+            html += `<div class="sm-data-flow">`;
+            if (dataIn) {
+                html += `<div class="sm-data-tag sm-data-tag-in" title="Input: ${dataIn}" onclick="scrollToSchema('${dataIn}')">${dataIn}</div>`;
+            }
+            if (dataOut) {
+                html += `<div class="sm-data-tag sm-data-tag-out" title="Output: ${dataOut}" onclick="scrollToSchema('${dataOut}')">${dataOut}</div>`;
+            }
+            html += `</div>`;
+        }
 
         // Invoke badges on the side
         const invokes = invokedBy[proc.id] || [];

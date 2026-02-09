@@ -130,9 +130,9 @@ Generates a complete Python agent with:
 | `babyagi_autogen` | Task-driven | 5 | 3 | 9 | 58.4 (moderate) | Working |
 | `debate` | Multi-agent debate | 6 | 13 | 7 | 57.7 (moderate) | Working |
 | `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
-| `tree_of_thought` | Tree search | 3 | 7 | — | — | Working |
-| `plan_and_solve` | Decompose+verify | 4 | 9 | — | — | Working |
-| `self_refine` | Generate-critique | 2 | 7 | — | — | Working |
+| `tree_of_thought` | Tree search | 3 | 7 | 7 | 55.4 (moderate) | Working |
+| `plan_and_solve` | Decompose+verify | 4 | 9 | 9 | 65.7 (complex) | Working |
+| `self_refine` | Generate-critique | 2 | 7 | 7 | 55.0 (moderate) | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
