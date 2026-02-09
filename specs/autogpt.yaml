@@ -1,0 +1,364 @@
+# ═══════════════════════════════════════════════════════════════
+# AutoGPT — Agent Spec (OpenClaw Ontology v0.1)
+# ═══════════════════════════════════════════════════════════════
+# Goal-driven autonomous agent with self-criticism loop.
+# Think → Criticize → Decide → Act → Observe → loop.
+
+name: "AutoGPT"
+version: "1.0"
+description: "Goal-driven autonomous agent with planning, self-criticism, and iterative execution"
+entry_point: set_goal
+
+# ── Entities ─────────────────────────────────────────────────
+
+entities:
+
+  - id: planner
+    type: agent
+    label: "Planner"
+    model: gpt-4.1-mini
+    system_prompt: |
+      You are an autonomous AI agent planner. Given an objective, break it down into
+      a concrete plan of 3-7 actionable steps. Each step should be specific enough to execute.
+      Consider dependencies between steps. Return the plan as a JSON list of steps.
+    input_schema: PlanInput
+    output_schema: Plan
+
+  - id: thinker
+    type: agent
+    label: "Thinker"
+    model: gpt-4.1-mini
+    system_prompt: |
+      You are the reasoning component of an autonomous agent. Given the current goal,
+      plan, completed results, and current step, reason about what specific action to take.
+      Consider what information you have, what you need, and the best approach.
+      Output your thought process and a proposed action.
+    input_schema: ThinkInput
+    output_schema: Thought
+
+  - id: critic
+    type: agent
+    label: "Critic"
+    model: gpt-4.1-mini
+    system_prompt: |
+      You are a self-critic for an autonomous agent. Review the proposed thought and action.
+      Check for: logical errors, missing information, better alternatives, potential risks.
+      Rate the proposal 1-10 and suggest improvements. If rating >= 7, approve. Otherwise, reject
+      with specific feedback.
+    input_schema: CriticInput
+    output_schema: Criticism
+
+  - id: executor
+    type: agent
+    label: "Executor"
+    model: gpt-4.1-mini
+    system_prompt: |
+      You execute a specific action. You receive the action description and any context.
+      Perform the action to the best of your ability and return the result.
+    input_schema: ActionInput
+    output_schema: ActionResult
+
+  - id: memory_store
+    type: store
+    label: "Agent Memory"
+    store_type: vector
+    schema: MemoryEntry
+    retention: session
+
+  - id: workspace
+    type: store
+    label: "Workspace"
+    store_type: kv
+    schema: WorkspaceEntry
+    retention: session
+
+# ── Processes ────────────────────────────────────────────────
+
+processes:
+
+  - id: set_goal
+    type: step
+    label: "Set Goal"
+    description: "Accept the user's objective and initialize the agent"
+    data_out: PlanInput
+    logic: |
+      state.data["completed_steps"] = []
+      state.data["current_step_idx"] = 0
+      state.data["criticism_count"] = 0
+      state.data["max_criticism_retries"] = 3
+      state.data["results"] = []
+      print(f"    Goal: {state.data.get('objective', '')}")
+
+  - id: decompose
+    type: step
+    label: "Decompose"
+    description: "Break the objective into a plan of concrete steps"
+    data_in: PlanInput
+    data_out: Plan
+
+  - id: think
+    type: step
+    label: "Think"
+    description: "Reason about the current step and propose an action"
+    data_in: ThinkInput
+    data_out: Thought
+    logic: |
+      plan = state.data.get("plan", [])
+      state.data["total_steps"] = len(plan)
+      idx = state.data.get("current_step_idx", 0)
+      if idx < len(plan):
+          state.data["current_step"] = plan[idx]
+      else:
+          state.data["current_step"] = "Review and finalize results"
+      state.data["stored_memories"] = [e.get("text", "") for e in state.memory_store.read() if e.get("text")][-5:]
+      print(f"    Step {idx + 1}/{len(plan)}: {state.data.get('current_step', '')[:100]}")
+
+  - id: criticize
+    type: step
+    label: "Criticize"
+    description: "Self-critique the proposed thought and action"
+    data_in: CriticInput
+    data_out: Criticism
+
+  - id: critic_gate
+    type: gate
+    label: "Critic approved?"
+    condition: "rating >= 7"
+    branches:
+      - condition: "rejected (rating < 7)"
+        target: handle_rejection
+      - condition: "approved (rating >= 7)"
+        target: act
+
+  - id: handle_rejection
+    type: step
+    label: "Handle Rejection"
+    description: "Process critic feedback and retry or skip"
+    logic: |
+      count = state.data.get("criticism_count", 0) + 1
+      state.data["criticism_count"] = count
+      max_retries = state.data.get("max_criticism_retries", 3)
+      if count >= max_retries:
+          print(f"    Max retries ({max_retries}) reached, proceeding anyway")
+          state.data["criticism_count"] = 0
+      else:
+          state.data["feedback"] = state.data.get("improvements", "Try a different approach")
+          print(f"    Retry {count}/{max_retries}: {state.data.get('improvements', '')[:100]}")
+
+  - id: retry_or_proceed
+    type: gate
+    label: "Retry or proceed?"
+    condition: "criticism_count >= max_criticism_retries"
+    branches:
+      - condition: "under retry limit"
+        target: think
+      - condition: "at retry limit"
+        target: act
+
+  - id: act
+    type: step
+    label: "Act"
+    description: "Execute the approved action"
+    data_in: ActionInput
+    data_out: ActionResult
+    logic: |
+      action = state.data.get("proposed_action", "")
+      print(f"    Executing: {action[:100]}")
+
+  - id: observe
+    type: step
+    label: "Observe"
+    description: "Process the action result and update memory"
+    data_in: ActionResult
+    logic: |
+      result = state.data.get("action_result", "")
+      results = state.data.get("results", [])
+      results.append(result)
+      state.data["results"] = results
+      state.data["text"] = result
+      state.data["embedding"] = []
+      state.data["metadata"] = {"step": state.data.get("current_step_idx", 0), "action": state.data.get("proposed_action", "")}
+      state.data["current_step_idx"] = state.data.get("current_step_idx", 0) + 1
+      state.data["criticism_count"] = 0
+      print(f"    Result recorded. Completed {state.data['current_step_idx']} steps.")
+
+  - id: check_done
+    type: gate
+    label: "All steps done?"
+    condition: "current_step_idx >= total_steps"
+    branches:
+      - condition: "not done"
+        target: think
+      - condition: "all done"
+        target: synthesize
+
+  - id: synthesize
+    type: step
+    label: "Synthesize"
+    description: "Combine all results into a final output"
+    logic: |
+      results = state.data.get("results", [])
+      print(f"    Synthesizing {len(results)} results")
+      state.data["_done"] = True
+
+# ── Edges ────────────────────────────────────────────────────
+
+edges:
+
+  - type: flow
+    from: set_goal
+    to: decompose
+    label: "Plan"
+
+  - type: invoke
+    from: decompose
+    to: planner
+    label: "Create plan"
+    input: PlanInput
+    output: Plan
+
+  - type: flow
+    from: decompose
+    to: think
+    label: "Start execution"
+
+  - type: invoke
+    from: think
+    to: thinker
+    label: "Reason about step"
+    input: ThinkInput
+    output: Thought
+
+  - type: flow
+    from: think
+    to: criticize
+    label: "Self-critique"
+
+  - type: invoke
+    from: criticize
+    to: critic
+    label: "Evaluate proposal"
+    input: CriticInput
+    output: Criticism
+
+  - type: flow
+    from: criticize
+    to: critic_gate
+    label: "Check approval"
+
+  - type: flow
+    from: handle_rejection
+    to: retry_or_proceed
+    label: "Check retry limit"
+
+  - type: invoke
+    from: act
+    to: executor
+    label: "Execute action"
+    input: ActionInput
+    output: ActionResult
+
+  - type: flow
+    from: act
+    to: observe
+    label: "Observe result"
+
+  - type: write
+    from: observe
+    to: memory_store
+    label: "Store memory"
+    data: MemoryEntry
+
+  - type: write
+    from: observe
+    to: workspace
+    label: "Update workspace"
+    data: WorkspaceEntry
+
+  - type: flow
+    from: observe
+    to: check_done
+    label: "Check progress"
+
+  - type: flow
+    from: check_done
+    to: synthesize
+    label: "All done"
+
+  - type: loop
+    from: check_done
+    to: think
+    label: "Next step"
+    condition: "current_step_idx < plan.length"
+
+# ── Schemas ──────────────────────────────────────────────────
+
+schemas:
+
+  - name: PlanInput
+    description: "Input to the planner"
+    fields:
+      - { name: objective, type: string }
+      - { name: constraints, type: "list<string>" }
+
+  - name: Plan
+    description: "A plan of action steps"
+    fields:
+      - { name: plan, type: "list<string>" }
+      - { name: objective, type: string }
+
+  - name: ThinkInput
+    description: "Input to the thinker"
+    fields:
+      - { name: objective, type: string }
+      - { name: current_step, type: string }
+      - { name: results, type: "list<string>" }
+      - { name: stored_memories, type: "list<string>" }
+      - { name: feedback, type: string }
+
+  - name: Thought
+    description: "Reasoning output"
+    fields:
+      - { name: reasoning, type: string }
+      - { name: proposed_action, type: string }
+
+  - name: CriticInput
+    description: "Input to the critic"
+    fields:
+      - { name: objective, type: string }
+      - { name: current_step, type: string }
+      - { name: reasoning, type: string }
+      - { name: proposed_action, type: string }
+
+  - name: Criticism
+    description: "Critic evaluation"
+    fields:
+      - { name: rating, type: integer }
+      - { name: approved, type: boolean }
+      - { name: improvements, type: string }
+
+  - name: ActionInput
+    description: "Input to executor"
+    fields:
+      - { name: proposed_action, type: string }
+      - { name: current_step, type: string }
+      - { name: objective, type: string }
+
+  - name: ActionResult
+    description: "Result of action execution"
+    fields:
+      - { name: action_result, type: string }
+      - { name: success, type: boolean }
+
+  - name: MemoryEntry
+    description: "Memory entry for vector store"
+    fields:
+      - { name: text, type: string }
+      - { name: embedding, type: "list<float>" }
+      - { name: metadata, type: object }
+
+  - name: WorkspaceEntry
+    description: "Workspace key-value entry"
+    fields:
+      - { name: key, type: string }
+      - { name: value, type: string }

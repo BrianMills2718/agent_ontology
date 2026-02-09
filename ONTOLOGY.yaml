@@ -1,0 +1,585 @@
+# ═══════════════════════════════════════════════════════════════
+# OpenClaw Agent Ontology v0.1
+# ═══════════════════════════════════════════════════════════════
+#
+# A reified hypergraph ontology for describing agent architectures.
+#
+# Design principles:
+#   1. The hypergraph is the substrate — anything can be a node,
+#      any relationship can be reified into a node.
+#   2. The ontology constrains the hypergraph — defines what node
+#      types, relationship types, and properties are valid.
+#   3. Binary relationships use from/to shorthand.
+#      N-ary relationships use participants[] with roles.
+#   4. Every type has required + optional properties.
+#   5. An agent spec that conforms to this ontology should be
+#      sufficient to: (a) render a diagram, (b) generate code.
+#
+# Inspired by OWL (class hierarchy) + SHACL (validation shapes).
+# ═══════════════════════════════════════════════════════════════
+
+meta:
+  name: "OpenClaw Agent Ontology"
+  version: "0.1"
+  purpose: "Constrain a reified hypergraph to express any agent architecture"
+
+# ─────────────────────────────────────────────────────────────
+# ENTITY TYPES — things that exist
+# ─────────────────────────────────────────────────────────────
+# Entities are the "nouns" of the architecture. They persist
+# between relationships. In the BabyAGI diagram, these are
+# the cyan boxes (agents) and any stores.
+
+entity_types:
+
+  agent:
+    description: "An LLM-based reasoning unit that takes input and produces output"
+    # This is the core building block. Every agent architecture
+    # has at least one of these.
+    required:
+      id:           { type: string, description: "Unique identifier" }
+      label:        { type: string, description: "Human-readable name" }
+      model:        { type: string, description: "LLM model identifier (e.g. gpt-4, claude-opus-4-6)" }
+    optional:
+      system_prompt:  { type: string, description: "System prompt or reference to one" }
+      tools:          { type: "list<tool_ref>", description: "Tools this agent can invoke" }
+      input_schema:   { type: schema_ref, description: "Expected input shape" }
+      output_schema:  { type: schema_ref, description: "Expected output shape" }
+      config:
+        description: "LLM configuration"
+        properties:
+          temperature:  { type: float, range: [0, 2] }
+          max_tokens:   { type: integer }
+          thinking:     { type: "enum[none, low, high, extended]" }
+          stop:         { type: "list<string>" }
+      subgraph:       { type: spec_ref, description: "If this agent is itself a full agent spec (recursive composition)" }
+    visual:
+      shape: rounded_rect
+      default_color: "#4ecdc4"  # cyan, like BabyAGI diagram
+      layer: entity
+
+  store:
+    description: "A persistence layer — database, file, vector store, queue, blackboard"
+    required:
+      id:         { type: string }
+      label:      { type: string }
+      store_type: { type: "enum[vector, file, kv, queue, relational, blackboard]" }
+    optional:
+      schema:     { type: schema_ref, description: "Data schema for stored items" }
+      retention:  { type: "enum[ephemeral, session, persistent]", default: persistent }
+      access:     { type: "enum[read, write, readwrite]", default: readwrite }
+      config:     { type: object, description: "Store-specific configuration (connection string, etc.)" }
+    visual:
+      shape: cylinder
+      default_color: "#95a5a6"
+      layer: entity
+
+  tool:
+    description: "A capability an agent can invoke — API, function, browser, shell"
+    required:
+      id:         { type: string }
+      label:      { type: string }
+      tool_type:  { type: "enum[api, function, browser, shell, mcp, composite]" }
+    optional:
+      input_schema:   { type: schema_ref }
+      output_schema:  { type: schema_ref }
+      side_effects:   { type: "list<string>", description: "What external state this tool modifies" }
+      idempotent:     { type: boolean, default: false }
+      auth_required:  { type: boolean, default: false }
+    visual:
+      shape: hexagon
+      default_color: "#f39c12"
+      layer: entity
+
+  human:
+    description: "A human participant — user, reviewer, admin"
+    required:
+      id:    { type: string }
+      label: { type: string }
+    optional:
+      role:  { type: "enum[user, reviewer, admin, operator]" }
+    visual:
+      shape: person  # stick figure or special icon
+      default_color: "#e6edf3"
+      layer: entity
+
+  config:
+    description: "A configuration/environment object that parameterizes the system"
+    required:
+      id:     { type: string }
+      label:  { type: string }
+    optional:
+      values: { type: object, description: "Key-value configuration" }
+    visual:
+      shape: document
+      default_color: "#34495e"
+      layer: entity
+
+# ─────────────────────────────────────────────────────────────
+# PROCESS TYPES — reified relationships (things that happen)
+# ─────────────────────────────────────────────────────────────
+# Processes are the "verbs" of the architecture. They connect
+# entities and/or other processes. In the BabyAGI diagram,
+# these are the gray boxes (steps). In a reified hypergraph,
+# these ARE the hyperedges promoted to first-class nodes.
+
+process_types:
+
+  step:
+    description: "A deterministic orchestration point — transforms data, coordinates entities"
+    # The gray boxes in BabyAGI. These are NOT LLM calls.
+    # They represent fixed logic: data transformation, routing,
+    # assembly, validation.
+    required:
+      id:          { type: string }
+      label:       { type: string }
+    optional:
+      description: { type: string }
+      logic:       { type: string, description: "What this step does (human-readable or code reference)" }
+      data_in:     { type: schema_ref }
+      data_out:    { type: schema_ref }
+    visual:
+      shape: rect
+      default_color: "#c0c0c0"  # gray, like BabyAGI diagram
+      layer: process
+
+  gate:
+    description: "A decision/branch point — evaluates a condition and routes to different paths"
+    required:
+      id:        { type: string }
+      label:     { type: string }
+      condition: { type: string, description: "The condition being evaluated" }
+      branches:
+        type: "list<branch>"
+        description: "Possible outcomes"
+        item_schema:
+          condition: { type: string, description: "When this branch is taken (e.g. 'yes', 'no', 'tool_calls > 0')" }
+          target:    { type: node_ref, description: "Where this branch goes" }
+    optional:
+      default:   { type: node_ref, description: "Fallback if no branch matches" }
+    visual:
+      shape: diamond
+      default_color: "#e74c3c"
+      layer: process
+
+  checkpoint:
+    description: "A human-in-the-loop pause — waits for human input or approval"
+    required:
+      id:     { type: string }
+      label:  { type: string }
+      prompt: { type: string, description: "What to show the human" }
+    optional:
+      timeout:        { type: duration, description: "How long to wait" }
+      default_action: { type: "enum[approve, deny, skip]", description: "What happens on timeout" }
+      options:        { type: "list<string>", description: "Choices presented to human" }
+    visual:
+      shape: octagon  # stop sign
+      default_color: "#e6edf3"
+      layer: process
+
+  spawn:
+    description: "Dynamic instantiation — creates agent(s) at runtime from a template"
+    # This is how orchestrator-workers works. The orchestrator
+    # hits a spawn process that creates N workers.
+    # Supports recursive composition: a spawned agent can itself
+    # contain spawn processes (self-referential specs).
+    required:
+      id:       { type: string }
+      label:    { type: string }
+      template: { type: "agent | spec_ref | 'self'", description: "What to instantiate. 'self' = recursive (spawn same agent architecture)" }
+    optional:
+      cardinality: { type: "integer | 'dynamic'", default: 1, description: "How many to create" }
+      determined_by: { type: node_ref, description: "Which node decides cardinality (if dynamic)" }
+      aggregation: { type: "enum[collect, merge, vote, first, race]", description: "How results combine" }
+      recursive: { type: boolean, default: false, description: "Whether spawned agents can themselves spawn (true = recursive composition)" }
+      max_depth: { type: "integer | 'unbounded'", default: "unbounded", description: "Maximum recursion depth. In practice bounded by context/cost." }
+    visual:
+      shape: double_rect  # nested rectangles
+      default_color: "#9b59b6"
+      layer: process
+
+  protocol:
+    description: "A multi-party interaction pattern — negotiation, consensus, auction"
+    # This is the genuinely N-ary case where reification shines.
+    # A protocol connects 3+ entities in a structured interaction.
+    required:
+      id:     { type: string }
+      label:  { type: string }
+      participants:
+        type: "list<participant>"
+        min_count: 2
+        item_schema:
+          entity: { type: node_ref }
+          role:   { type: string, description: "Role in the protocol (proposer, voter, mediator, etc.)" }
+      termination: { type: string, description: "When the protocol ends (consensus, timeout, rounds)" }
+    optional:
+      rules:    { type: "list<string>", description: "Protocol rules in order" }
+      state:    { type: schema_ref, description: "Shared state schema" }
+      max_rounds: { type: integer }
+    visual:
+      shape: rounded_rect_dashed
+      default_color: "#3498db"
+      layer: process
+
+  policy:
+    description: "A cross-cutting rule that modifies behavior of other nodes"
+    # Guardrails, rate limits, safety filters, logging.
+    # Attaches to other nodes/edges and modifies their behavior.
+    required:
+      id:      { type: string }
+      label:   { type: string }
+      targets: { type: "list<node_ref>", description: "What this policy applies to" }
+      effect:  { type: "enum[block, warn, modify, log, retry]" }
+    optional:
+      condition:   { type: string, description: "When the policy activates" }
+      rules:       { type: "list<string>" }
+      enforcement: { type: "enum[strict, advisory]", default: strict }
+    visual:
+      shape: shield
+      default_color: "#e67e22"
+      layer: meta
+
+# ─────────────────────────────────────────────────────────────
+# EDGE TYPES — connections between nodes
+# ─────────────────────────────────────────────────────────────
+# Edges are the arrows in the diagram. In a reified hypergraph,
+# simple binary relationships are edges; complex N-ary
+# relationships get promoted to process nodes (above).
+#
+# Binary edges use from/to. If you need to reify an edge
+# (give it properties, connect other things to it), promote
+# it to a process node instead.
+
+edge_types:
+
+  flow:
+    description: "Data or control moves from A to B"
+    # The most common edge. "Return result", "Execute task", etc.
+    required:
+      from:  { type: node_ref }
+      to:    { type: node_ref }
+    optional:
+      label: { type: string, description: "What flows (shown on arrow)" }
+      data:  { type: schema_ref, description: "Shape of data on this edge" }
+    visual:
+      style: solid
+      color: "#3498db"
+      arrow: true
+
+  invoke:
+    description: "A process calls an entity and expects a response"
+    # The callout pattern: Step → Agent (call) ... Agent → Step (return).
+    # Rendered as a sideways branch in the diagram.
+    required:
+      from:   { type: "step | gate | spawn", description: "The caller (must be a process)" }
+      to:     { type: "agent | tool", description: "The callee (must be an entity)" }
+    optional:
+      label:      { type: string }
+      input:      { type: schema_ref, description: "Data sent to callee" }
+      output:     { type: schema_ref, description: "Data returned from callee" }
+      return_to:  { type: node_ref, description: "Where the result goes (defaults to 'from')" }
+      async:      { type: boolean, default: false }
+    visual:
+      style: solid
+      color: "#4ecdc4"
+      arrow: true
+      # Renderer should show this as a sideways callout, not inline
+
+  loop:
+    description: "Returns execution to an earlier node"
+    required:
+      from:  { type: node_ref, description: "Where the loop starts" }
+      to:    { type: node_ref, description: "Where it loops back to" }
+    optional:
+      label:     { type: string }
+      condition: { type: string, description: "When to loop (vs exit)" }
+      max_iterations: { type: integer }
+    visual:
+      style: dashed
+      color: "#f0883e"
+      arrow: true
+      # Renderer should draw this as an arcing arrow back up
+
+  branch:
+    description: "Conditional path from a gate to a target"
+    required:
+      from:      { type: gate, description: "The decision point" }
+      to:        { type: node_ref, description: "Where this branch goes" }
+      condition: { type: string, description: "When this branch is taken" }
+    optional:
+      label:     { type: string }
+      data:      { type: schema_ref }
+      priority:  { type: integer, description: "Evaluation order" }
+    visual:
+      style: dashed
+      color: "#e74c3c"
+      arrow: true
+
+  read:
+    description: "A process reads from a store"
+    required:
+      from:  { type: "step | agent", description: "The reader" }
+      to:    { type: store, description: "The store" }
+    optional:
+      label: { type: string }
+      query: { type: schema_ref, description: "Query/filter schema" }
+    visual:
+      style: dotted
+      color: "#2ecc71"
+      arrow: true
+
+  write:
+    description: "A process writes to a store"
+    required:
+      from:  { type: "step | agent", description: "The writer" }
+      to:    { type: store, description: "The store" }
+    optional:
+      label: { type: string }
+      data:  { type: schema_ref, description: "What gets written" }
+    visual:
+      style: dotted
+      color: "#e74c3c"
+      arrow: true
+
+  modify:
+    description: "A policy or config changes the behavior of a target"
+    required:
+      from:   { type: "policy | config" }
+      to:     { type: node_ref }
+    optional:
+      label:  { type: string }
+      effect: { type: string, description: "What changes" }
+    visual:
+      style: dashed
+      color: "#e67e22"
+      arrow: true
+
+  observe:
+    description: "A node monitors another without affecting it"
+    # Logging, tracing, meta-cognition
+    required:
+      from: { type: node_ref, description: "The observer" }
+      to:   { type: node_ref, description: "The observed" }
+    optional:
+      label: { type: string }
+    visual:
+      style: dotted
+      color: "#95a5a6"
+      arrow: false  # no arrowhead, just a connection
+
+# ─────────────────────────────────────────────────────────────
+# SCHEMA TYPES — data shapes referenced by nodes and edges
+# ─────────────────────────────────────────────────────────────
+# Schemas define the shape of data flowing through the system.
+# Referenced by schema_ref in node/edge properties.
+
+schema_definition:
+  description: "A named data shape"
+  required:
+    name:   { type: string }
+    fields:
+      type: "list<field>"
+      item_schema:
+        name: { type: string }
+        type: { type: string, description: "Primitive or reference to another schema" }
+  optional:
+    description: { type: string }
+    example:     { type: object, description: "Example instance" }
+
+# ─────────────────────────────────────────────────────────────
+# SPEC STRUCTURE — what an agent spec file looks like
+# ─────────────────────────────────────────────────────────────
+# An agent spec conforming to this ontology has this shape:
+
+spec_shape:
+  required:
+    name:      { type: string }
+    version:   { type: string }
+    entities:  { type: "list<entity>", description: "All entity nodes" }
+    processes: { type: "list<process>", description: "All process nodes (reified relationships)" }
+    edges:     { type: "list<edge>", description: "All binary relationships" }
+  optional:
+    description: { type: string }
+    schemas:     { type: "list<schema_definition>", description: "Data shapes used in the spec" }
+    entry_point: { type: node_ref, description: "Where execution starts" }
+    metadata:    { type: object }
+
+# ─────────────────────────────────────────────────────────────
+# VISUAL RENDERING RULES
+# ─────────────────────────────────────────────────────────────
+# How the ontology maps to diagrams.
+
+rendering:
+  layout:
+    primary_flow: "top-to-bottom"  # main process chain runs vertically
+    callouts: "sideways"           # invoke edges branch left/right
+    loops: "arcing_arrow"          # loop edges arc back to earlier node
+    stores: "offset"               # stores float to the side, connected by dotted lines
+
+  layers:
+    # Visual grouping in hierarchical layouts
+    meta:    { position: top, description: "Policies, configs" }
+    entity:  { position: sides, description: "Agents, stores, tools — called out from main flow" }
+    process: { position: center, description: "Steps, gates — the main flow spine" }
+
+  node_shapes:
+    rect:               "Rectangle (process steps)"
+    rounded_rect:       "Rounded rectangle (agents)"
+    diamond:            "Diamond (decision gates)"
+    cylinder:           "Cylinder (stores/databases)"
+    hexagon:            "Hexagon (tools)"
+    octagon:            "Octagon (human checkpoints)"
+    double_rect:        "Double rectangle (spawn/template)"
+    person:             "Person icon (humans)"
+    shield:             "Shield icon (policies)"
+    document:           "Document icon (configs)"
+    rounded_rect_dashed: "Dashed rounded rectangle (protocols)"
+
+  edge_styles:
+    solid:  "Normal arrow"
+    dashed: "Dashed arrow (control flow, branches, policies)"
+    dotted: "Dotted arrow (data access, observation)"
+
+# ─────────────────────────────────────────────────────────────
+# VALIDATION RULES (SHACL-inspired)
+# ─────────────────────────────────────────────────────────────
+# Constraints that a valid spec must satisfy.
+
+validation:
+  - rule: "Every spec must have at least one agent entity"
+    severity: error
+
+  - rule: "Every spec must have an entry_point or exactly one node with no incoming flow/invoke edges"
+    severity: error
+
+  - rule: "Every invoke edge must have a matching return (explicit return_to or implicit back to caller)"
+    severity: warning
+
+  - rule: "Every gate must have at least 2 branches"
+    severity: error
+
+  - rule: "Every loop must target a node that appears earlier in the flow"
+    severity: error
+
+  - rule: "Every schema_ref must resolve to a defined schema"
+    severity: error
+
+  - rule: "No orphan nodes — every node must have at least one edge"
+    severity: warning
+
+  - rule: "Agent nodes with tools[] must have those tools defined as tool entities"
+    severity: warning
+
+  - rule: "Spawn templates must reference a valid agent entity, spec_ref, or 'self' (recursive)"
+    severity: error
+
+  - rule: "Recursive spawns (template: 'self' or recursive: true) should specify max_depth or document natural bounds"
+    severity: warning
+
+  - rule: "Protocol participants must reference valid entity nodes"
+    severity: error
+
+# ─────────────────────────────────────────────────────────────
+# COMPATIBILITY MAPPINGS
+# ─────────────────────────────────────────────────────────────
+# Formal relationship: Oracle Agent Spec ⊂ BPMN ⊂ This Ontology
+#
+# This ontology is strictly more expressive than both BPMN and
+# Oracle Agent Spec. Specs can be projected to either format
+# for ecosystem interoperability (with information loss for
+# features the target format doesn't support).
+
+compatibility:
+
+  formal_hierarchy: "Oracle Agent Spec ⊂ BPMN 2.0 ⊂ OpenClaw (RH+O)"
+
+  bpmn_projection:
+    description: "Map OpenClaw specs to BPMN 2.0 XML for tooling interop"
+    mappings:
+      # Entities
+      agent:       { bpmn: "Service Task", notes: "Model/prompt/tools in extensionElements" }
+      store:       { bpmn: "Data Store Reference" }
+      tool:        { bpmn: "Service Task", notes: "Tool config in extensionElements" }
+      human:       { bpmn: "Participant (Pool/Lane)" }
+      config:      { bpmn: "Not expressible", notes: "Dropped or metadata annotation" }
+      # Processes
+      step:        { bpmn: "Script Task or Service Task" }
+      gate:        { bpmn: "Exclusive Gateway", notes: "Expression conditions simplified to XOR" }
+      checkpoint:  { bpmn: "User Task" }
+      spawn:       { bpmn: "Call Activity (subprocess)", notes: "Dynamic cardinality lost" }
+      protocol:    { bpmn: "Choreography", notes: "Lossy — BPMN choreography is limited" }
+      policy:      { bpmn: "Not expressible", notes: "No cross-cutting concept in BPMN" }
+      # Edges
+      flow:        { bpmn: "Sequence Flow" }
+      invoke:      { bpmn: "Sequence Flow (call) + Sequence Flow (return)" }
+      loop:        { bpmn: "Backward Sequence Flow", notes: "Condition/max_iterations lost" }
+      branch:      { bpmn: "Conditional Sequence Flow from Gateway" }
+      read:        { bpmn: "Data Input Association" }
+      write:       { bpmn: "Data Output Association" }
+      modify:      { bpmn: "Not expressible" }
+      observe:     { bpmn: "Not expressible" }
+    information_loss:
+      - "Policy nodes dropped entirely"
+      - "Config nodes dropped entirely"
+      - "Modify and observe edges dropped"
+      - "Protocol simplified to choreography (loses rules, state, termination)"
+      - "Spawn loses dynamic cardinality"
+      - "Loop loses condition expression and max_iterations"
+      - "Gate expression conditions simplified to value-mapping"
+
+  oracle_agent_spec_projection:
+    description: "Map OpenClaw specs to Oracle Agent Spec JSON for execution"
+    mappings:
+      # Entities
+      agent:       { oracle: "Agent component" }
+      store:       { oracle: "Datastore component", notes: "Not graph-integrated" }
+      tool:        { oracle: "Tool (Server/Client/Remote/MCP)" }
+      human:       { oracle: "InputMessageNode", notes: "Partial — only input prompts" }
+      config:      { oracle: "metadata dict on components" }
+      # Processes
+      step:        { oracle: "ToolNode + ServerTool", notes: "No generic compute step exists" }
+      gate:        { oracle: "BranchingNode", notes: "Value-mapping only, no expressions" }
+      checkpoint:  { oracle: "InputMessageNode" }
+      spawn:       { oracle: "ParallelFlowNode", notes: "Only if fixed cardinality" }
+      protocol:    { oracle: "Not expressible" }
+      policy:      { oracle: "Not expressible" }
+      # Edges
+      flow:        { oracle: "ControlFlowEdge + DataFlowEdge" }
+      invoke:      { oracle: "AgentNode", notes: "Invoke/return folded into node" }
+      loop:        { oracle: "Backward ControlFlowEdge", notes: "Condition lost" }
+      branch:      { oracle: "ControlFlowEdge with from_branch" }
+      read:        { oracle: "Tool on agent", notes: "Store access via tools, not edges" }
+      write:       { oracle: "Tool on agent", notes: "Store access via tools, not edges" }
+      modify:      { oracle: "Not expressible" }
+      observe:     { oracle: "Not expressible" }
+    information_loss:
+      - "Protocol and policy nodes not expressible"
+      - "Spawn with dynamic cardinality not expressible"
+      - "Store read/write converted to tool calls (graph structure lost)"
+      - "Invoke/return edges collapsed into AgentNode (not visible in graph)"
+      - "Semantic edge labels lost (only property names survive)"
+      - "Loop conditions and max_iterations lost"
+      - "Gate expression conditions simplified to value-mapping"
+      - "Visual rendering rules not transferable"
+
+  oracle_import:
+    description: "Import Oracle Agent Spec JSON into OpenClaw (lossless)"
+    mappings:
+      Agent:           { openclaw: "agent entity" }
+      Flow:            { openclaw: "set of processes + edges" }
+      AgentNode:       { openclaw: "step process + invoke edge to agent entity", notes: "Enrichment: implicit invoke made explicit" }
+      ToolNode:        { openclaw: "step process + invoke edge to tool entity" }
+      LlmNode:         { openclaw: "agent entity (inline)", notes: "Single-round LLM call" }
+      BranchingNode:   { openclaw: "gate process + branch edges" }
+      StartNode:       { openclaw: "entry_point reference" }
+      EndNode:         { openclaw: "terminal step process" }
+      ControlFlowEdge: { openclaw: "flow edge" }
+      DataFlowEdge:    { openclaw: "flow edge with data schema" }
+      Datastore:       { openclaw: "store entity + read/write edges", notes: "Enrichment: tool-based access promoted to graph edges" }
+      MapNode:         { openclaw: "spawn process with fixed cardinality" }
+      ParallelFlowNode: { openclaw: "spawn process with fixed cardinality" }
+      CatchExceptionNode: { openclaw: "step process + policy with effect: retry" }
+    enrichment_notes:
+      - "Import is lossless — OpenClaw is strictly more expressive"
+      - "Implicit relationships (invoke/return, store access) are made explicit as edges"
+      - "This enrichment improves diagram clarity without changing semantics"

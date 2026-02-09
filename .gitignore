@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.local
+.env.production
+*.key
+credentials.*
+
+# Runtime artifacts
+trace.json
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ChromaDB data
+chroma_data/
+
+# Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/

@@ -1,0 +1,2001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenClaw Spec Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ── Main canvas area ── */
+        #canvas-wrap {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            cursor: default;
+        }
+        #tooltip {
+            display: none;
+            position: absolute;
+            pointer-events: none;
+            background: #1c2028;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 0.75em;
+            max-width: 360px;
+            z-index: 20;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            line-height: 1.5;
+        }
+
+        /* ── Header bar ── */
+        #header {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 44px;
+            background: rgba(13,17,23,0.92);
+            border-bottom: 1px solid #21262d;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 16px;
+            z-index: 10;
+            backdrop-filter: blur(8px);
+        }
+        #header h1 {
+            font-size: 0.95em;
+            color: #e6edf3;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        #header h1 span { color: #7ee787; }
+        #header select {
+            background: #161b22;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        #header .stats {
+            font-size: 0.7em;
+            color: #484f58;
+            margin-left: auto;
+        }
+
+        /* ── Sidebar ── */
+        #sidebar {
+            width: 380px;
+            background: #161b22;
+            border-left: 1px solid #21262d;
+            overflow-y: auto;
+            padding: 60px 16px 16px;
+        }
+        #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; }
+        .sb-title {
+            font-size: 1.05em;
+            font-weight: 600;
+            color: #e6edf3;
+            margin-bottom: 4px;
+        }
+        .sb-type {
+            font-size: 0.7em;
+            color: #484f58;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .sb-desc {
+            font-size: 0.8em;
+            color: #8b949e;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .sb-section {
+            font-size: 0.75em;
+            font-weight: 600;
+            color: #58a6ff;
+            margin: 16px 0 8px;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 4px;
+        }
+        .sb-field {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 0.75em;
+            border-bottom: 1px solid rgba(33,38,45,0.5);
+        }
+        .sb-field .key { color: #8b949e; }
+        .sb-field .val { color: #c9d1d9; text-align: right; max-width: 220px; word-break: break-word; }
+        .sb-edge {
+            padding: 6px 8px;
+            margin: 4px 0;
+            border-radius: 4px;
+            font-size: 0.75em;
+            cursor: pointer;
+            border-left: 3px solid;
+        }
+        .sb-edge:hover { background: #1c2028; }
+        .sb-edge .edge-label { color: #c9d1d9; font-weight: 600; }
+        .sb-edge .edge-detail { color: #484f58; font-size: 0.9em; }
+        .sb-schema {
+            background: #0d1117;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin: 4px 0;
+            font-size: 0.72em;
+        }
+        .sb-schema .field-name { color: #7ee787; }
+        .sb-schema .field-type { color: #d2a8ff; }
+
+        /* ── Legend ── */
+        #legend {
+            position: absolute;
+            bottom: 12px; left: 12px;
+            background: rgba(22,27,34,0.92);
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 0.65em;
+            display: flex;
+            gap: 14px;
+            z-index: 10;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #484f58;
+        }
+        .legend-swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        /* ── Tabs ── */
+        .tab-bar {
+            display: flex;
+            gap: 2px;
+            margin-left: 8px;
+        }
+        .tab-btn {
+            background: transparent;
+            color: #484f58;
+            border: 1px solid transparent;
+            border-bottom: none;
+            padding: 4px 14px;
+            font-family: inherit;
+            font-size: 0.75em;
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+            transition: color 0.15s, background 0.15s;
+        }
+        .tab-btn:hover { color: #c9d1d9; }
+        .tab-btn.active {
+            color: #e6edf3;
+            background: #161b22;
+            border-color: #30363d;
+        }
+        .view-container { display: none; }
+        .view-container.active { display: block; }
+
+        /* ── State Machine View ── */
+        #sm-view {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            overflow-y: auto;
+            padding: 60px 32px 32px;
+            background: #0d1117;
+        }
+        .sm-flow {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .sm-node {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin: 0 auto;
+            max-width: 500px;
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            position: relative;
+        }
+        .sm-node:hover {
+            border-color: #58a6ff;
+            box-shadow: 0 0 8px rgba(88,166,255,0.2);
+        }
+        .sm-node-label {
+            font-weight: 600;
+            font-size: 0.9em;
+            color: #e6edf3;
+        }
+        .sm-node-type {
+            font-size: 0.7em;
+            color: #484f58;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 2px;
+        }
+        .sm-node-desc {
+            font-size: 0.75em;
+            color: #8b949e;
+            margin-top: 6px;
+            line-height: 1.5;
+        }
+        .sm-node-io {
+            display: flex;
+            gap: 12px;
+            margin-top: 6px;
+        }
+        .sm-io-tag {
+            font-size: 0.65em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: rgba(88,166,255,0.1);
+            color: #58a6ff;
+        }
+        .sm-node[data-type="gate"] {
+            background: rgba(231,76,60,0.08);
+            border-color: #e74c3c;
+            max-width: 460px;
+        }
+        .sm-node[data-type="gate"] .sm-node-label { color: #e74c3c; }
+        .sm-arrow {
+            text-align: center;
+            padding: 6px 0;
+            color: #30363d;
+            font-size: 1.2em;
+            position: relative;
+        }
+        .sm-arrow-label {
+            font-size: 0.6em;
+            color: #484f58;
+            position: absolute;
+            left: calc(50% + 20px);
+            top: 50%;
+            transform: translateY(-50%);
+            white-space: nowrap;
+        }
+        .sm-branch-row {
+            display: flex;
+            gap: 16px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .sm-branch {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            border-radius: 4px;
+            background: rgba(231,76,60,0.06);
+            border: 1px dashed #e74c3c40;
+            font-size: 0.72em;
+        }
+        .sm-branch-cond {
+            color: #e74c3c;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .sm-branch-target {
+            color: #58a6ff;
+            cursor: pointer;
+        }
+        .sm-branch-target:hover { text-decoration: underline; }
+        .sm-invoke-badge {
+            display: inline-block;
+            margin-top: 6px;
+            font-size: 0.65em;
+            padding: 2px 8px;
+            border-radius: 3px;
+            background: rgba(78,205,196,0.1);
+            color: #4ecdc4;
+            border: 1px solid rgba(78,205,196,0.2);
+        }
+        .sm-loop-marker {
+            text-align: center;
+            padding: 8px;
+            margin: 4px auto;
+            max-width: 400px;
+            border-radius: 4px;
+            background: rgba(240,136,62,0.08);
+            border: 1px dashed #f0883e60;
+            font-size: 0.72em;
+            color: #f0883e;
+        }
+        .sm-section-title {
+            text-align: center;
+            font-size: 0.7em;
+            color: #484f58;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 20px 0 8px;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 4px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* ── Schemas View ── */
+        #schemas-view {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            overflow-y: auto;
+            padding: 60px 32px 32px;
+            background: #0d1117;
+        }
+        .schemas-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .schema-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            transition: border-color 0.15s;
+        }
+        .schema-card:hover { border-color: #58a6ff; }
+        .schema-card-name {
+            font-weight: 600;
+            color: #58a6ff;
+            font-size: 0.95em;
+            margin-bottom: 4px;
+        }
+        .schema-card-desc {
+            font-size: 0.72em;
+            color: #484f58;
+            margin-bottom: 10px;
+        }
+        .schema-field-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(33,38,45,0.5);
+            font-size: 0.78em;
+        }
+        .schema-field-row:last-child { border-bottom: none; }
+        .schema-field-name { color: #7ee787; }
+        .schema-field-type { color: #d2a8ff; }
+        .schema-field-default { color: #484f58; font-size: 0.9em; }
+        .schema-refs {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #21262d;
+        }
+        .schema-ref-tag {
+            display: inline-block;
+            font-size: 0.65em;
+            padding: 2px 6px;
+            margin: 2px;
+            border-radius: 3px;
+            color: #8b949e;
+            border: 1px solid #30363d;
+        }
+        .schemas-summary {
+            text-align: center;
+            color: #484f58;
+            font-size: 0.75em;
+            margin-bottom: 16px;
+        }
+
+        /* ── Compare View ── */
+        #compare-view {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            overflow: auto;
+            padding: 60px 24px 32px;
+            background: #0d1117;
+        }
+        .compare-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75em;
+            table-layout: fixed;
+        }
+        .compare-table th, .compare-table td {
+            padding: 8px 10px;
+            border: 1px solid #21262d;
+            text-align: center;
+            vertical-align: top;
+        }
+        .compare-table th {
+            background: #161b22;
+            color: #e6edf3;
+            font-weight: 600;
+            position: sticky;
+            top: 44px;
+            z-index: 2;
+        }
+        .compare-table th:first-child {
+            text-align: left;
+            width: 140px;
+            color: #8b949e;
+        }
+        .compare-table td:first-child {
+            text-align: left;
+            font-weight: 600;
+            color: #8b949e;
+            background: #161b22;
+        }
+        .compare-table tr:hover td { background: #1c2028; }
+        .compare-table tr:hover td:first-child { background: #1e2430; }
+        .cmp-count {
+            display: inline-block;
+            min-width: 20px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        .cmp-yes { color: #7ee787; }
+        .cmp-no { color: #484f58; }
+        .cmp-tag {
+            display: inline-block;
+            font-size: 0.85em;
+            padding: 1px 5px;
+            margin: 1px;
+            border-radius: 3px;
+            background: rgba(88,166,255,0.08);
+            color: #58a6ff;
+            border: 1px solid rgba(88,166,255,0.15);
+        }
+        .compare-header {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .compare-header h2 {
+            color: #e6edf3;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+        .compare-header p {
+            color: #484f58;
+            font-size: 0.75em;
+            margin-top: 4px;
+        }
+        .cmp-bar {
+            display: inline-block;
+            height: 12px;
+            border-radius: 2px;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-wrap">
+        <div id="header">
+            <h1>Open<span>Claw</span> Spec Viewer</h1>
+            <select id="spec-select">
+                <option value="specs/claude-code.yaml">Claude Code</option>
+                <option value="specs/babyagi.yaml">BabyAGI</option>
+                <option value="specs/react.yaml">ReAct</option>
+                <option value="specs/rag.yaml">RAG</option>
+                <option value="specs/autogpt.yaml">AutoGPT</option>
+                <option value="specs/crew.yaml">CrewAI</option>
+                <option value="specs/code_reviewer.yaml">Code Reviewer</option>
+                <option value="specs/babyagi_autogen.yaml">BabyAGI (auto)</option>
+                <option value="specs/debate.yaml">Debate</option>
+            </select>
+            <div class="tab-bar">
+                <button class="tab-btn active" data-view="graph">Graph</button>
+                <button class="tab-btn" data-view="sm">State Machine</button>
+                <button class="tab-btn" data-view="schemas">Schemas</button>
+                <button class="tab-btn" data-view="compare">Compare All</button>
+            </div>
+            <span class="stats" id="stats"></span>
+        </div>
+        <!-- Graph view (existing) -->
+        <div id="graph-view" class="view-container active" style="position:absolute;top:0;left:0;right:0;bottom:0;">
+            <canvas id="canvas"></canvas>
+            <div id="tooltip"></div>
+            <div id="legend"></div>
+        </div>
+        <!-- State Machine view -->
+        <div id="sm-view" class="view-container"></div>
+        <!-- Schemas view -->
+        <div id="schemas-view" class="view-container"></div>
+        <!-- Compare view -->
+        <div id="compare-view" class="view-container"></div>
+    </div>
+    <div id="sidebar">
+        <div style="color:#484f58;font-size:0.8em;padding-top:20px;">Click a node or edge to inspect</div>
+    </div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// OpenClaw Spec Viewer — renders agent specs as flowchart diagrams
+// ═══════════════════════════════════════════════════════════════
+
+// ── Visual constants from ontology ──
+const NODE_COLORS = {
+    // Entity types
+    agent:  '#4ecdc4',
+    store:  '#95a5a6',
+    tool:   '#f39c12',
+    human:  '#e6edf3',
+    config: '#34495e',
+    // Process types
+    step:       '#c0c0c0',
+    gate:       '#e74c3c',
+    checkpoint: '#e6edf3',
+    spawn:      '#9b59b6',
+    protocol:   '#3498db',
+    policy:     '#e67e22',
+};
+
+const EDGE_COLORS = {
+    flow:    '#3498db',
+    invoke:  '#4ecdc4',
+    loop:    '#f0883e',
+    branch:  '#e74c3c',
+    read:    '#2ecc71',
+    write:   '#e74c3c',
+    modify:  '#e67e22',
+    observe: '#95a5a6',
+};
+
+const EDGE_STYLES = {
+    flow:    'solid',
+    invoke:  'solid',
+    loop:    'dashed',
+    branch:  'dashed',
+    read:    'dotted',
+    write:   'dotted',
+    modify:  'dashed',
+    observe: 'dotted',
+};
+
+// ── State ──
+let spec = null;
+let nodes = [];      // { id, label, type, category, data, x, y, w, h }
+let edges = [];      // { from, to, type, label, data, fromNode, toNode }
+let hoverNode = null;
+let hoverEdge = null;
+let selectedNode = null;
+let panX = 0, panY = 0, zoom = 1;
+let dragPan = false, dragNodeTarget = null, didDrag = false, lastMX = 0, lastMY = 0;
+
+// ── Load spec ──
+async function loadSpec(path) {
+    const resp = await fetch(path);
+    const text = await resp.text();
+    spec = jsyaml.load(text);
+
+    buildGraph();
+    layoutGraph();
+    drawLegend();
+    updateStats();
+    selectedNode = null;
+    renderSidebar();
+    draw();
+
+    // Render non-graph views if active
+    if (currentView === 'sm') renderStateMachine();
+    if (currentView === 'schemas') renderSchemas();
+}
+
+// ── Build graph from spec ──
+function buildGraph() {
+    nodes = [];
+    edges = [];
+    const idMap = {};
+
+    // Entities
+    (spec.entities || []).forEach(e => {
+        const n = {
+            id: e.id,
+            label: e.label || e.id,
+            type: e.type,
+            category: 'entity',
+            data: e,
+            x: 0, y: 0, w: 0, h: 0
+        };
+        nodes.push(n);
+        idMap[e.id] = n;
+    });
+
+    // Processes
+    (spec.processes || []).forEach(p => {
+        const n = {
+            id: p.id,
+            label: p.label || p.id,
+            type: p.type,
+            category: 'process',
+            data: p,
+            x: 0, y: 0, w: 0, h: 0
+        };
+        nodes.push(n);
+        idMap[p.id] = n;
+    });
+
+    // Edges
+    (spec.edges || []).forEach(e => {
+        const fromNode = idMap[e.from];
+        const toNode = idMap[e.to];
+        if (!fromNode || !toNode) return;
+        edges.push({
+            from: e.from,
+            to: e.to,
+            type: e.type,
+            label: e.label || '',
+            data: e,
+            fromNode,
+            toNode
+        });
+    });
+}
+
+// ── Layout algorithm ──
+function layoutGraph() {
+    const canvas = document.getElementById('canvas');
+    const W = canvas.width, H = canvas.height;
+
+    // Step 1: Find the main flow spine via BFS from entry_point
+    const spine = [];
+    const visited = new Set();
+    const spineSet = new Set();
+
+    function walkSpine(startId) {
+        const queue = [startId];
+        while (queue.length > 0) {
+            const id = queue.shift();
+            if (visited.has(id)) continue;
+            const node = nodes.find(n => n.id === id);
+            if (!node || node.category !== 'process') continue;
+            visited.add(id);
+            spine.push(node);
+            spineSet.add(id);
+
+            // Follow flow and branch edges to other processes
+            const outgoing = edges.filter(e =>
+                e.from === id && (e.type === 'flow' || e.type === 'branch') && e.toNode.category === 'process'
+            );
+            // Prioritize 'flow' over 'branch', and avoid loops for layout
+            outgoing.sort((a, b) => {
+                if (a.type === 'flow' && b.type === 'branch') return -1;
+                if (a.type === 'branch' && b.type === 'flow') return 1;
+                return 0;
+            });
+            for (const e of outgoing) {
+                if (!visited.has(e.to)) queue.push(e.to);
+            }
+        }
+    }
+
+    walkSpine(spec.entry_point || (spec.processes && spec.processes[0]?.id));
+
+    // Any processes not in spine (shouldn't happen but safety)
+    nodes.filter(n => n.category === 'process' && !spineSet.has(n.id)).forEach(n => {
+        spine.push(n);
+        spineSet.add(n.id);
+    });
+
+    // Step 2: Measure nodes
+    const ctx = canvas.getContext('2d');
+    ctx.font = '12px monospace';
+
+    for (const n of nodes) {
+        const textW = ctx.measureText(n.label).width;
+        if (n.type === 'gate') {
+            n.w = Math.max(textW + 40, 120);
+            n.h = 50;
+        } else if (n.category === 'entity') {
+            n.w = Math.max(textW + 24, 100);
+            n.h = 34;
+        } else {
+            n.w = Math.max(textW + 30, 130);
+            n.h = 40;
+        }
+    }
+
+    // Step 3: Position spine (center column)
+    const spineX = 500;
+    const startY = 80;
+    const gapY = 62;
+    spine.forEach((n, i) => {
+        n.x = spineX;
+        n.y = startY + i * gapY;
+    });
+
+    // Step 4: Position entity callouts
+    // Group entities by what connects to them
+    const entityPlaced = new Set();
+
+    // Stores: left side
+    const stores = nodes.filter(n => n.type === 'store');
+    const storeX = 120;
+    let storeY = startY;
+    stores.forEach(n => {
+        // Find which process reads/writes to this store
+        const connEdges = edges.filter(e => (e.to === n.id || e.from === n.id) && (e.type === 'read' || e.type === 'write'));
+        if (connEdges.length > 0) {
+            const procIds = connEdges.map(e => e.from === n.id ? e.to : e.from);
+            const procNodes = procIds.map(id => nodes.find(nn => nn.id === id)).filter(Boolean);
+            if (procNodes.length > 0) {
+                const avgY = procNodes.reduce((s, p) => s + p.y, 0) / procNodes.length;
+                n.y = avgY;
+            } else {
+                n.y = storeY;
+            }
+        } else {
+            n.y = storeY;
+        }
+        n.x = storeX;
+        storeY = Math.max(storeY, n.y + 50);
+        entityPlaced.add(n.id);
+    });
+
+    // De-overlap stores vertically
+    stores.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < stores.length; i++) {
+        if (stores[i].y - stores[i-1].y < 42) {
+            stores[i].y = stores[i-1].y + 42;
+        }
+    }
+
+    // Tools: right side, grouped
+    const tools = nodes.filter(n => n.type === 'tool');
+    const toolX = 880;
+    // Find which process invokes tools
+    const toolInvokeProc = edges.filter(e => e.type === 'invoke' && tools.some(t => t.id === e.to));
+    const execNode = nodes.find(n => n.id === 'execute');
+    const toolBaseY = execNode ? execNode.y - (tools.length * 18) : startY + 200;
+    tools.forEach((n, i) => {
+        n.x = toolX;
+        n.y = toolBaseY + i * 36;
+        entityPlaced.add(n.id);
+    });
+
+    // Agents: right side, near their invoke
+    const agents = nodes.filter(n => n.type === 'agent');
+    agents.forEach(n => {
+        const invokeEdge = edges.find(e => e.type === 'invoke' && e.to === n.id);
+        if (invokeEdge && invokeEdge.fromNode) {
+            n.x = invokeEdge.fromNode.x + 280;
+            n.y = invokeEdge.fromNode.y;
+        } else {
+            n.x = toolX + 150;
+            n.y = startY;
+        }
+        entityPlaced.add(n.id);
+    });
+
+    // Human: far left
+    const humans = nodes.filter(n => n.type === 'human');
+    humans.forEach(n => {
+        n.x = 30;
+        n.y = startY + 60;
+        entityPlaced.add(n.id);
+    });
+
+    // Configs: far left, below stores
+    const configs = nodes.filter(n => n.type === 'config');
+    configs.forEach((n, i) => {
+        n.x = 40;
+        n.y = storeY + 60 + i * 50;
+        entityPlaced.add(n.id);
+    });
+
+    // Policies: left of spine, near their targets
+    const policies = nodes.filter(n => n.type === 'policy');
+    policies.forEach((n, i) => {
+        const modEdge = edges.find(e => e.from === n.id && (e.type === 'modify' || e.type === 'observe'));
+        if (modEdge && modEdge.toNode) {
+            n.x = modEdge.toNode.x - 220;
+            n.y = modEdge.toNode.y + i * 44;
+        } else {
+            n.x = 280;
+            n.y = startY + 400 + i * 50;
+        }
+    });
+
+    // Spawn: right of spine, near execute
+    const spawns = nodes.filter(n => n.type === 'spawn');
+    spawns.forEach(n => {
+        const execN = nodes.find(nn => nn.id === 'execute');
+        n.x = (execN ? execN.x : spineX) + 200;
+        n.y = (execN ? execN.y : startY) + 50;
+    });
+
+    // Step 5: Adjust panX/panY so the diagram is visible
+    const allX = nodes.map(n => n.x);
+    const allY = nodes.map(n => n.y);
+    const minX = Math.min(...allX) - 80;
+    const maxX = Math.max(...allX) + 200;
+    const maxY = Math.max(...allY) + 80;
+    const minY = Math.min(...allY) - 60;
+
+    // Center horizontally, start near top
+    panX = (W / 2) - ((minX + maxX) / 2);
+    panY = 20 - minY;
+
+    // If the diagram is taller than viewport, zoom to fit
+    const diagramH = maxY - minY + 100;
+    const diagramW = maxX - minX + 100;
+    if (diagramH > H - 60 || diagramW > W) {
+        zoom = Math.min((H - 60) / diagramH, W / diagramW, 1);
+        panX = (W / 2) - ((minX + maxX) / 2) * zoom;
+        panY = (60 - minY * zoom);
+    }
+}
+
+// ── Drawing ──
+function draw() {
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(panX, panY);
+    ctx.scale(zoom, zoom);
+
+    // Draw edges
+    for (const e of edges) {
+        drawEdge(ctx, e);
+    }
+
+    // Draw nodes
+    for (const n of nodes) {
+        drawNode(ctx, n);
+    }
+
+    ctx.restore();
+}
+
+function drawNode(ctx, n) {
+    const x = n.x, y = n.y, w = n.w, h = n.h;
+    const isSel = selectedNode === n;
+    const isHov = hoverNode === n;
+    const connected = hoverNode && edges.some(e =>
+        (e.fromNode === hoverNode && e.toNode === n) || (e.toNode === hoverNode && e.fromNode === n)
+    );
+    const dimmed = hoverNode && !isHov && !connected;
+    const alpha = dimmed ? 0.2 : 1;
+
+    ctx.globalAlpha = alpha;
+
+    // Glow
+    if (isSel || isHov) {
+        ctx.shadowColor = isSel ? '#58a6ff' : 'rgba(88,166,255,0.4)';
+        ctx.shadowBlur = isSel ? 12 : 8;
+    }
+
+    const color = NODE_COLORS[n.type] || '#484f58';
+
+    // Shape
+    ctx.beginPath();
+    if (n.type === 'gate') {
+        // Diamond
+        ctx.moveTo(x, y - h/2);
+        ctx.lineTo(x + w/2, y);
+        ctx.lineTo(x, y + h/2);
+        ctx.lineTo(x - w/2, y);
+        ctx.closePath();
+    } else if (n.type === 'checkpoint') {
+        // Octagon
+        const s = Math.min(w, h) / 2;
+        const d = s * 0.38;
+        ctx.moveTo(x - s + d, y - s);
+        ctx.lineTo(x + s - d, y - s);
+        ctx.lineTo(x + s, y - s + d);
+        ctx.lineTo(x + s, y + s - d);
+        ctx.lineTo(x + s - d, y + s);
+        ctx.lineTo(x - s + d, y + s);
+        ctx.lineTo(x - s, y + s - d);
+        ctx.lineTo(x - s, y - s + d);
+        ctx.closePath();
+    } else if (n.type === 'store') {
+        // Cylinder
+        const rx = w/2, ry = 6;
+        ctx.moveTo(x - rx, y - h/2 + ry);
+        ctx.ellipse(x, y - h/2 + ry, rx, ry, 0, Math.PI, 0);
+        ctx.lineTo(x + rx, y + h/2 - ry);
+        ctx.ellipse(x, y + h/2 - ry, rx, ry, 0, 0, Math.PI);
+        ctx.closePath();
+    } else if (n.type === 'spawn') {
+        // Double rect
+        const r = 4;
+        roundRect(ctx, x - w/2 + 3, y - h/2 + 3, w - 6, h - 6, r);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // If recursive (template: "self"), draw a small recursive loop icon
+        if (n.data.template === 'self' || n.data.recursive) {
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            const ix = x + w/2 - 14, iy = y - h/2 + 12;
+            ctx.arc(ix, iy, 5, -Math.PI * 0.3, Math.PI * 1.3);
+            ctx.stroke();
+            // arrowhead on the loop
+            const ax = ix + 5 * Math.cos(-Math.PI * 0.3);
+            const ay = iy + 5 * Math.sin(-Math.PI * 0.3);
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + 3, ay - 3);
+            ctx.lineTo(ax - 1, ay - 4);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.beginPath();
+        roundRect(ctx, x - w/2, y - h/2, w, h, r);
+    } else if (n.type === 'policy') {
+        // Shield shape
+        ctx.moveTo(x, y - h/2);
+        ctx.lineTo(x + w/2, y - h/2 + 8);
+        ctx.lineTo(x + w/2, y + h/4);
+        ctx.quadraticCurveTo(x, y + h/2 + 4, x, y + h/2);
+        ctx.quadraticCurveTo(x, y + h/2 + 4, x - w/2, y + h/4);
+        ctx.lineTo(x - w/2, y - h/2 + 8);
+        ctx.closePath();
+    } else if (n.type === 'tool') {
+        // Small rounded rect
+        roundRect(ctx, x - w/2, y - h/2, w, h, 4);
+    } else if (n.category === 'entity') {
+        // Rounded rect for agents, humans, etc
+        roundRect(ctx, x - w/2, y - h/2, w, h, 8);
+    } else {
+        // Process: rectangle with slight rounding
+        roundRect(ctx, x - w/2, y - h/2, w, h, 4);
+    }
+
+    // Fill
+    if (n.category === 'process') {
+        ctx.fillStyle = isSel ? '#2d333b' : '#1c2028';
+    } else {
+        ctx.fillStyle = isSel ? color : adjustAlpha(color, 0.15);
+    }
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = isSel ? '#58a6ff' : color;
+    ctx.lineWidth = isSel ? 2 : (n.category === 'process' ? 1.5 : 1);
+    ctx.stroke();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    // Cylinder top ellipse for stores
+    if (n.type === 'store') {
+        const rx = w/2, ry = 6;
+        ctx.beginPath();
+        ctx.ellipse(x, y - h/2 + ry, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fillStyle = isSel ? '#2d333b' : '#1c2028';
+        ctx.fill();
+        ctx.strokeStyle = isSel ? '#58a6ff' : color;
+        ctx.lineWidth = isSel ? 2 : 1;
+        ctx.stroke();
+    }
+
+    // Label
+    ctx.font = (isHov || isSel) ? 'bold 11px monospace' : '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = n.category === 'process' ? color : (isSel ? '#fff' : color);
+    const maxLabelW = w - 12;
+    let label = n.label;
+    if (ctx.measureText(label).width > maxLabelW) {
+        while (label.length > 3 && ctx.measureText(label + '...').width > maxLabelW) {
+            label = label.slice(0, -1);
+        }
+        label += '...';
+    }
+    ctx.fillText(label, x, y);
+
+    ctx.globalAlpha = 1;
+}
+
+function drawEdge(ctx, e) {
+    const from = e.fromNode, to = e.toNode;
+    const isHighlighted = hoverNode && (from === hoverNode || to === hoverNode);
+    const isHovered = hoverEdge === e;
+    const dimmed = hoverNode && !isHighlighted;
+
+    const color = (isHighlighted || isHovered) ? '#58a6ff' : (EDGE_COLORS[e.type] || '#21262d');
+    const style = EDGE_STYLES[e.type] || 'solid';
+
+    ctx.globalAlpha = dimmed ? 0.08 : (isHighlighted || isHovered ? 1 : 0.6);
+
+    // Compute connection points
+    const [x1, y1] = getEdgeAnchor(from, to);
+    const [x2, y2] = getEdgeAnchor(to, from);
+
+    // Loop edges: draw as arc
+    if (e.type === 'loop') {
+        drawLoopEdge(ctx, e, x1, y1, x2, y2, color);
+        ctx.globalAlpha = 1;
+        return;
+    }
+
+    // Set line style
+    ctx.strokeStyle = color;
+    ctx.lineWidth = (isHighlighted || isHovered) ? 2 : 1;
+    setLineDash(ctx, style);
+
+    // Curve slightly for non-straight edges
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    let cx = (x1+x2)/2, cy = (y1+y2)/2;
+
+    // Offset perpendicular for curve (more for longer edges between same column)
+    if (from.x !== to.x || dist > 200) {
+        cx -= dy * 0.08;
+        cy += dx * 0.08;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.quadraticCurveTo(cx, cy, x2, y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrowhead
+    const angle = Math.atan2(y2 - cy, x2 - cx);
+    drawArrowhead(ctx, x2, y2, angle, color);
+
+    // Label
+    if ((isHighlighted || isHovered) && e.label) {
+        const lx = (x1 + cx + x2) / 3;
+        const ly = (y1 + cy + y2) / 3 - 8;
+        ctx.font = '9px monospace';
+        ctx.fillStyle = '#8b949e';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+
+        // Background
+        const tw = ctx.measureText(e.label).width + 8;
+        ctx.fillStyle = 'rgba(13,17,23,0.85)';
+        ctx.fillRect(lx - tw/2, ly - 10, tw, 13);
+        ctx.fillStyle = (isHighlighted || isHovered) ? '#c9d1d9' : '#8b949e';
+        ctx.fillText(e.label, lx, ly);
+    }
+
+    ctx.globalAlpha = 1;
+}
+
+function drawLoopEdge(ctx, e, x1, y1, x2, y2, color) {
+    // Draw a wide arc on the right side (or left if crossing)
+    const from = e.fromNode, to = e.toNode;
+    const isRight = from.x >= to.x;
+    const offsetX = isRight ? 100 : -100;
+
+    const midY = (y1 + y2) / 2;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    setLineDash(ctx, 'dashed');
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.bezierCurveTo(
+        x1 + offsetX, y1,
+        x2 + offsetX, y2,
+        x2, y2
+    );
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrowhead
+    const angle = Math.atan2(y2 - (y2 - 30), x2 - (x2 + offsetX * 0.3));
+    drawArrowhead(ctx, x2, y2, angle, color);
+
+    // Label
+    if (e.label) {
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, Math.max(x1, x2) + offsetX * 0.6, midY);
+    }
+}
+
+function drawArrowhead(ctx, x, y, angle, color) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - Math.cos(angle - 0.4) * 8, y - Math.sin(angle - 0.4) * 8);
+    ctx.lineTo(x - Math.cos(angle + 0.4) * 8, y - Math.sin(angle + 0.4) * 8);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+}
+
+function getEdgeAnchor(from, to) {
+    // Find the point on from's border closest to to's center
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const angle = Math.atan2(dy, dx);
+
+    if (from.type === 'gate') {
+        // Diamond: intersect with diamond edges
+        const hw = from.w / 2, hh = from.h / 2;
+        const absA = Math.abs(angle);
+        if (absA < Math.atan2(hh, hw) || absA > Math.PI - Math.atan2(hh, hw)) {
+            // Left or right
+            const sx = Math.sign(dx);
+            return [from.x + sx * hw, from.y + (dy/Math.abs(dx)) * hw * Math.sign(dx) * 0.5];
+        } else {
+            // Top or bottom
+            const sy = Math.sign(dy);
+            return [from.x + (dx/Math.abs(dy)) * hh * Math.sign(dy) * 0.5, from.y + sy * hh];
+        }
+    }
+
+    // Rectangle: intersect with edges
+    const hw = from.w / 2 + 1, hh = from.h / 2 + 1;
+    const tanA = Math.abs(dy / (dx || 0.001));
+    if (tanA < hh / hw) {
+        // Exit through left or right
+        const sx = Math.sign(dx) || 1;
+        return [from.x + sx * hw, from.y + (dy * hw / Math.abs(dx || 0.001)) * sx * 0.5];
+    } else {
+        // Exit through top or bottom
+        const sy = Math.sign(dy) || 1;
+        return [from.x + (dx * hh / Math.abs(dy || 0.001)) * sy * 0.5, from.y + sy * hh];
+    }
+}
+
+function setLineDash(ctx, style) {
+    if (style === 'dashed') ctx.setLineDash([6, 4]);
+    else if (style === 'dotted') ctx.setLineDash([2, 3]);
+    else ctx.setLineDash([]);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function adjustAlpha(hex, alpha) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// ── Interaction ──
+function initInteraction() {
+    const canvas = document.getElementById('canvas');
+    const wrap = document.getElementById('canvas-wrap');
+
+    function resize() {
+        canvas.width = wrap.clientWidth;
+        canvas.height = wrap.clientHeight;
+        if (spec && currentView === 'graph') {
+            layoutGraph();
+            draw();
+        }
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    canvas.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const factor = ev.deltaY > 0 ? 0.92 : 1.08;
+        const rect = canvas.getBoundingClientRect();
+        const mx = (ev.clientX - rect.left);
+        const my = (ev.clientY - rect.top);
+
+        // Zoom toward mouse
+        panX = mx - (mx - panX) * factor;
+        panY = my - (my - panY) * factor;
+        zoom *= factor;
+        zoom = Math.max(0.15, Math.min(3, zoom));
+        draw();
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        lastMX = ev.clientX;
+        lastMY = ev.clientY;
+        didDrag = false;
+
+        // Check if clicking on a node (for node dragging)
+        const [mx, my] = canvasToGraph(ev);
+        const hitNode = findNodeAt(mx, my);
+        if (hitNode) {
+            dragNodeTarget = hitNode;
+            canvas.style.cursor = 'grabbing';
+        } else {
+            dragPan = true;
+            canvas.style.cursor = 'grabbing';
+        }
+    });
+
+    canvas.addEventListener('mousemove', (ev) => {
+        const dxScreen = ev.clientX - lastMX;
+        const dyScreen = ev.clientY - lastMY;
+
+        if (dragNodeTarget) {
+            // Drag individual node in graph space
+            dragNodeTarget.x += dxScreen / zoom;
+            dragNodeTarget.y += dyScreen / zoom;
+            lastMX = ev.clientX;
+            lastMY = ev.clientY;
+            if (Math.abs(dxScreen) > 2 || Math.abs(dyScreen) > 2) didDrag = true;
+            document.getElementById('tooltip').style.display = 'none';
+            draw();
+            return;
+        }
+
+        if (dragPan) {
+            panX += dxScreen;
+            panY += dyScreen;
+            lastMX = ev.clientX;
+            lastMY = ev.clientY;
+            if (Math.abs(dxScreen) > 2 || Math.abs(dyScreen) > 2) didDrag = true;
+            draw();
+            return;
+        }
+
+        const [mx, my] = canvasToGraph(ev);
+        const prevHover = hoverNode;
+        hoverNode = findNodeAt(mx, my);
+        hoverEdge = !hoverNode ? findEdgeAt(mx, my) : null;
+
+        canvas.style.cursor = hoverNode ? 'grab' : (hoverEdge ? 'pointer' : 'default');
+        if (hoverNode !== prevHover || hoverEdge) {
+            draw();
+        }
+        if (!hoverNode && !hoverEdge) {
+            document.getElementById('tooltip').style.display = 'none';
+        } else {
+            showTooltip(ev, hoverNode, hoverEdge);
+        }
+    });
+
+    canvas.addEventListener('mouseup', (ev) => {
+        const wasDraggingNode = !!dragNodeTarget;
+        dragPan = false;
+        dragNodeTarget = null;
+
+        // If it was a click (not a drag), handle selection
+        if (!didDrag) {
+            const [mx, my] = canvasToGraph(ev);
+            const clicked = findNodeAt(mx, my);
+            if (clicked) {
+                selectedNode = clicked;
+                renderSidebar();
+                draw();
+            } else {
+                const clickedEdge = findEdgeAt(mx, my);
+                if (clickedEdge) {
+                    selectedNode = null;
+                    renderEdgeSidebar(clickedEdge);
+                    draw();
+                }
+            }
+        }
+
+        canvas.style.cursor = (hoverNode) ? 'grab' : (hoverEdge ? 'pointer' : 'default');
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        dragPan = false;
+        dragNodeTarget = null;
+        hoverNode = null;
+        hoverEdge = null;
+        document.getElementById('tooltip').style.display = 'none';
+        draw();
+    });
+}
+
+function canvasToGraph(ev) {
+    const canvas = document.getElementById('canvas');
+    const rect = canvas.getBoundingClientRect();
+    const cx = (ev.clientX - rect.left);
+    const cy = (ev.clientY - rect.top);
+    return [(cx - panX) / zoom, (cy - panY) / zoom];
+}
+
+function findNodeAt(mx, my) {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        if (mx >= n.x - n.w/2 && mx <= n.x + n.w/2 && my >= n.y - n.h/2 && my <= n.y + n.h/2) {
+            return n;
+        }
+    }
+    return null;
+}
+
+function findEdgeAt(mx, my) {
+    for (const e of edges) {
+        const [x1, y1] = getEdgeAnchor(e.fromNode, e.toNode);
+        const [x2, y2] = getEdgeAnchor(e.toNode, e.fromNode);
+        const dx = x2 - x1, dy = y2 - y1;
+        const len2 = dx*dx + dy*dy;
+        if (len2 === 0) continue;
+        let t = ((mx - x1) * dx + (my - y1) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const px = x1 + t * dx, py = y1 + t * dy;
+        const dist = Math.sqrt((mx - px)**2 + (my - py)**2);
+        if (dist < 10) return e;
+    }
+    return null;
+}
+
+function showTooltip(ev, node, edge) {
+    const tt = document.getElementById('tooltip');
+    const wrap = document.getElementById('canvas-wrap');
+    const rect = wrap.getBoundingClientRect();
+
+    if (node) {
+        const color = NODE_COLORS[node.type] || '#484f58';
+        const edgeCount = edges.filter(e => e.fromNode === node || e.toNode === node).length;
+        const desc = node.data.description || '';
+        tt.innerHTML = `
+            <div style="color:${color};font-weight:600;font-size:1.1em;margin-bottom:4px;">${node.label}</div>
+            <div style="color:#484f58;font-size:0.85em;margin-bottom:4px;">${node.type} (${node.category}) &middot; ${edgeCount} edges</div>
+            ${desc ? `<div style="color:#8b949e;line-height:1.4;">${desc.substring(0, 200)}${desc.length > 200 ? '...' : ''}</div>` : ''}
+            <div style="color:#484f58;font-size:0.85em;margin-top:6px;">Click for details</div>
+        `;
+    } else if (edge) {
+        const color = EDGE_COLORS[edge.type] || '#484f58';
+        tt.innerHTML = `
+            <div style="color:${color};font-weight:600;font-size:1.05em;margin-bottom:4px;">${edge.label || edge.type}</div>
+            <div style="color:#484f58;font-size:0.85em;">${edge.type.toUpperCase()}</div>
+            <div style="color:#8b949e;margin-top:4px;">
+                ${edge.fromNode.label} <span style="color:#484f58;">&rarr;</span> ${edge.toNode.label}
+            </div>
+        `;
+    }
+
+    tt.style.display = 'block';
+    tt.style.left = Math.min(ev.clientX - rect.left + 14, rect.width - 370) + 'px';
+    tt.style.top = (ev.clientY - rect.top + 14) + 'px';
+}
+
+// ── Sidebar ──
+function renderSidebar() {
+    const sb = document.getElementById('sidebar');
+    if (!selectedNode) {
+        sb.innerHTML = '<div style="color:#484f58;font-size:0.8em;padding-top:70px;">Click a node or edge to inspect</div>';
+        return;
+    }
+
+    const n = selectedNode;
+    const d = n.data;
+    const color = NODE_COLORS[n.type] || '#484f58';
+
+    let html = `
+        <div class="sb-title" style="color:${color}">${n.label}</div>
+        <div class="sb-type">${n.type} &middot; ${n.category}</div>
+    `;
+
+    if (d.description) {
+        html += `<div class="sb-desc">${d.description}</div>`;
+    }
+
+    // Recursion callout
+    if (d.subgraph === 'self' || d.template === 'self' || d.recursive) {
+        html += `<div style="background:rgba(155,89,182,0.15);border:1px solid #9b59b6;border-radius:4px;padding:8px;margin-bottom:12px;font-size:0.8em;">
+            <span style="color:#9b59b6;font-weight:600;">&#x21bb; Recursive</span>
+            <span style="color:#8b949e;"> — this ${d.subgraph === 'self' ? 'agent runs the same architecture' : 'spawns instances of the parent spec'}.
+            Depth bounded by ${d.max_depth && d.max_depth !== 'unbounded' ? 'max_depth=' + d.max_depth : 'context window / cost'}.</span>
+        </div>`;
+    }
+
+    // Properties
+    const skip = new Set(['id', 'type', 'label', 'description']);
+    const props = Object.entries(d).filter(([k]) => !skip.has(k));
+    if (props.length > 0) {
+        html += `<div class="sb-section">Properties</div>`;
+        for (const [key, val] of props) {
+            if (key === 'branches' && Array.isArray(val)) {
+                html += `<div class="sb-section">Branches</div>`;
+                for (const b of val) {
+                    const tgt = nodes.find(nn => nn.id === b.target);
+                    html += `<div class="sb-field"><span class="key">${b.condition}</span><span class="val">${tgt ? tgt.label : b.target}</span></div>`;
+                }
+            } else {
+                const display = typeof val === 'object' ? JSON.stringify(val, null, 1).substring(0, 200) : String(val);
+                html += `<div class="sb-field"><span class="key">${key}</span><span class="val">${display}</span></div>`;
+            }
+        }
+    }
+
+    // Connected edges
+    const outgoing = edges.filter(e => e.fromNode === n);
+    const incoming = edges.filter(e => e.toNode === n);
+
+    if (outgoing.length > 0) {
+        html += `<div class="sb-section">Outgoing Edges (${outgoing.length})</div>`;
+        for (const e of outgoing) {
+            html += `<div class="sb-edge" style="border-color:${EDGE_COLORS[e.type]}" onclick="selectEdgeTarget('${e.to}')">
+                <div class="edge-label">${e.label || e.type}</div>
+                <div class="edge-detail">${e.type} &rarr; ${e.toNode.label}</div>
+            </div>`;
+        }
+    }
+
+    if (incoming.length > 0) {
+        html += `<div class="sb-section">Incoming Edges (${incoming.length})</div>`;
+        for (const e of incoming) {
+            html += `<div class="sb-edge" style="border-color:${EDGE_COLORS[e.type]}" onclick="selectEdgeTarget('${e.from}')">
+                <div class="edge-label">${e.label || e.type}</div>
+                <div class="edge-detail">${e.fromNode.label} &rarr; ${e.type}</div>
+            </div>`;
+        }
+    }
+
+    // Schema (if referenced)
+    const schemaRefs = new Set();
+    if (d.input_schema) schemaRefs.add(d.input_schema);
+    if (d.output_schema) schemaRefs.add(d.output_schema);
+    if (d.data_in) schemaRefs.add(d.data_in);
+    if (d.data_out) schemaRefs.add(d.data_out);
+    if (d.schema) schemaRefs.add(d.schema);
+
+    if (schemaRefs.size > 0 && spec.schemas) {
+        html += `<div class="sb-section">Schemas</div>`;
+        for (const ref of schemaRefs) {
+            const schema = spec.schemas.find(s => s.name === ref);
+            if (schema) {
+                html += `<div class="sb-schema">
+                    <div style="color:#58a6ff;font-weight:600;margin-bottom:4px;">${schema.name}</div>
+                    ${schema.description ? `<div style="color:#484f58;margin-bottom:4px;">${schema.description}</div>` : ''}
+                    ${(schema.fields || []).map(f =>
+                        `<div><span class="field-name">${f.name}</span>: <span class="field-type">${f.type}</span></div>`
+                    ).join('')}
+                </div>`;
+            }
+        }
+    }
+
+    sb.innerHTML = html;
+}
+
+function renderEdgeSidebar(e) {
+    const sb = document.getElementById('sidebar');
+    const color = EDGE_COLORS[e.type] || '#484f58';
+
+    let html = `
+        <div class="sb-title" style="color:${color}">${e.label || e.type}</div>
+        <div class="sb-type">${e.type} edge</div>
+        <div class="sb-section">Connection</div>
+        <div class="sb-field"><span class="key">From</span><span class="val" style="cursor:pointer;color:${NODE_COLORS[e.fromNode.type]}" onclick="selectEdgeTarget('${e.from}')">${e.fromNode.label}</span></div>
+        <div class="sb-field"><span class="key">To</span><span class="val" style="cursor:pointer;color:${NODE_COLORS[e.toNode.type]}" onclick="selectEdgeTarget('${e.to}')">${e.toNode.label}</span></div>
+    `;
+
+    // Edge data
+    const skip = new Set(['from', 'to', 'type', 'label']);
+    const props = Object.entries(e.data).filter(([k]) => !skip.has(k));
+    if (props.length > 0) {
+        html += `<div class="sb-section">Properties</div>`;
+        for (const [key, val] of props) {
+            const display = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            html += `<div class="sb-field"><span class="key">${key}</span><span class="val">${display}</span></div>`;
+        }
+    }
+
+    // Schema
+    const schemaRef = e.data.data || e.data.input || e.data.output;
+    if (schemaRef && spec.schemas) {
+        const schema = spec.schemas.find(s => s.name === schemaRef);
+        if (schema) {
+            html += `<div class="sb-section">Data Schema</div>
+                <div class="sb-schema">
+                    <div style="color:#58a6ff;font-weight:600;margin-bottom:4px;">${schema.name}</div>
+                    ${(schema.fields || []).map(f =>
+                        `<div><span class="field-name">${f.name}</span>: <span class="field-type">${f.type}</span></div>`
+                    ).join('')}
+                </div>`;
+        }
+    }
+
+    sb.innerHTML = html;
+}
+
+function selectEdgeTarget(id) {
+    const n = nodes.find(n => n.id === id);
+    if (n) {
+        selectedNode = n;
+        renderSidebar();
+        draw();
+    }
+}
+
+// ── Legend ──
+function drawLegend() {
+    const leg = document.getElementById('legend');
+    const types = [
+        ['Step', NODE_COLORS.step], ['Gate', NODE_COLORS.gate],
+        ['Checkpoint', NODE_COLORS.checkpoint], ['Agent', NODE_COLORS.agent],
+        ['Store', NODE_COLORS.store], ['Tool', NODE_COLORS.tool],
+        ['Policy', NODE_COLORS.policy], ['Spawn', NODE_COLORS.spawn],
+    ];
+    leg.innerHTML = types.map(([name, color]) =>
+        `<div class="legend-item"><div class="legend-swatch" style="background:${color}"></div>${name}</div>`
+    ).join('');
+}
+
+function updateStats() {
+    const el = document.getElementById('stats');
+    el.textContent = `${nodes.filter(n => n.category === 'entity').length} entities · ${nodes.filter(n => n.category === 'process').length} processes · ${edges.length} edges · ${(spec.schemas||[]).length} schemas`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// View switching
+// ═══════════════════════════════════════════════════════════════
+
+let currentView = 'graph';
+
+function switchView(view) {
+    currentView = view;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+    const viewIds = { graph: 'graph-view', sm: 'sm-view', schemas: 'schemas-view', compare: 'compare-view' };
+    document.getElementById(viewIds[view]).classList.add('active');
+
+    const sidebar = document.getElementById('sidebar');
+    if (view === 'graph') {
+        sidebar.style.display = '';
+        // Re-measure canvas after it becomes visible again
+        const canvas = document.getElementById('canvas');
+        const wrap = document.getElementById('canvas-wrap');
+        canvas.width = wrap.clientWidth;
+        canvas.height = wrap.clientHeight;
+        layoutGraph();
+        draw();
+    } else {
+        sidebar.style.display = '';
+        if (view === 'compare') {
+            sidebar.style.display = 'none';
+        }
+        if (view === 'sm') renderStateMachine();
+        if (view === 'schemas') renderSchemas();
+        if (view === 'compare') renderComparison();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// State Machine View
+// ═══════════════════════════════════════════════════════════════
+
+function renderStateMachine() {
+    if (!spec) return;
+    const container = document.getElementById('sm-view');
+    const processes = spec.processes || [];
+    const specEdges = spec.edges || [];
+
+    // Build adjacency: which process flows to which
+    const flowTo = {};  // processId -> [{target, label, type}]
+    const invokedBy = {};  // processId -> [{agentId, input, output}]
+    const loopsTo = {};  // processId -> {target, label, condition}
+
+    for (const e of specEdges) {
+        if (e.type === 'flow') {
+            // Only process-to-process flows
+            const fromProc = processes.find(p => p.id === e.from);
+            const toProc = processes.find(p => p.id === e.to);
+            if (fromProc && toProc) {
+                if (!flowTo[e.from]) flowTo[e.from] = [];
+                flowTo[e.from].push({ target: e.to, label: e.label || '' });
+            }
+        }
+        if (e.type === 'invoke') {
+            // Process invokes agent
+            const fromProc = processes.find(p => p.id === e.from);
+            const toEntity = (spec.entities || []).find(en => en.id === e.to);
+            if (fromProc && toEntity) {
+                if (!invokedBy[e.from]) invokedBy[e.from] = [];
+                invokedBy[e.from].push({ agentId: e.to, agentLabel: toEntity.label || e.to, input: e.input, output: e.output });
+            }
+        }
+        if (e.type === 'loop') {
+            loopsTo[e.from] = { target: e.to, label: e.label || '', condition: e.condition || '' };
+        }
+    }
+
+    // Walk the flow spine (BFS from entry_point)
+    const entryId = spec.entry_point || (processes[0] && processes[0].id);
+    const spine = [];
+    const visited = new Set();
+
+    function walkFlow(startId) {
+        const queue = [startId];
+        while (queue.length > 0) {
+            const id = queue.shift();
+            if (visited.has(id)) continue;
+            const proc = processes.find(p => p.id === id);
+            if (!proc) continue;
+            visited.add(id);
+            spine.push(proc);
+
+            // Follow flow edges, then branch edges
+            const flows = (flowTo[id] || []).map(f => f.target);
+            const branches = (proc.branches || []).map(b => b.target);
+            const allTargets = [...flows, ...branches];
+            for (const t of allTargets) {
+                if (!visited.has(t)) queue.push(t);
+            }
+        }
+    }
+    walkFlow(entryId);
+
+    // Add any orphan processes not reached
+    for (const p of processes) {
+        if (!visited.has(p.id)) {
+            spine.push(p);
+            visited.add(p.id);
+        }
+    }
+
+    // Render
+    let html = '<div class="sm-flow">';
+    html += `<div class="sm-section-title">${spec.name || 'Agent'} &mdash; State Machine</div>`;
+
+    for (let i = 0; i < spine.length; i++) {
+        const proc = spine[i];
+        const isGate = proc.type === 'gate';
+        const borderColor = NODE_COLORS[proc.type] || '#30363d';
+
+        html += `<div class="sm-node" data-type="${proc.type}" style="border-left: 3px solid ${borderColor};" onclick="smSelectNode('${proc.id}')">`;
+        html += `<div class="sm-node-label">${isGate ? '\u25c7 ' : ''}${proc.label || proc.id}</div>`;
+        html += `<div class="sm-node-type">${proc.type}${proc.id !== proc.label ? ' &middot; ' + proc.id : ''}</div>`;
+        if (proc.description) {
+            html += `<div class="sm-node-desc">${proc.description}</div>`;
+        }
+
+        // Data in/out tags
+        const ioTags = [];
+        if (proc.data_in) ioTags.push(`<span class="sm-io-tag">in: ${proc.data_in}</span>`);
+        if (proc.data_out) ioTags.push(`<span class="sm-io-tag">out: ${proc.data_out}</span>`);
+        if (ioTags.length) html += `<div class="sm-node-io">${ioTags.join('')}</div>`;
+
+        // Invocations
+        const invokes = invokedBy[proc.id] || [];
+        for (const inv of invokes) {
+            html += `<div class="sm-invoke-badge">\u2192 ${inv.agentLabel}`;
+            if (inv.input) html += ` (${inv.input}`;
+            if (inv.output) html += ` \u2192 ${inv.output})`;
+            else if (inv.input) html += ')';
+            html += `</div>`;
+        }
+
+        html += `</div>`;
+
+        // Branches for gates
+        if (isGate && proc.branches && proc.branches.length > 0) {
+            html += `<div class="sm-arrow">\u2502</div>`;
+            html += `<div class="sm-branch-row">`;
+            for (const b of proc.branches) {
+                const targetProc = processes.find(p => p.id === b.target);
+                html += `<div class="sm-branch">`;
+                html += `<div class="sm-branch-cond">${b.condition}</div>`;
+                html += `<div class="sm-branch-target" onclick="smScrollTo('${b.target}')">\u2192 ${targetProc ? targetProc.label : b.target}</div>`;
+                html += `</div>`;
+            }
+            html += `</div>`;
+        }
+
+        // Loop marker
+        if (loopsTo[proc.id]) {
+            const loop = loopsTo[proc.id];
+            const targetProc = processes.find(p => p.id === loop.target);
+            html += `<div class="sm-loop-marker">\u21bb Loop: ${loop.label || loop.condition || ''} \u2192 <span class="sm-branch-target" onclick="smScrollTo('${loop.target}')">${targetProc ? targetProc.label : loop.target}</span></div>`;
+        }
+
+        // Arrow to next
+        if (i < spine.length - 1) {
+            const flowEdges = flowTo[proc.id] || [];
+            const nextLabel = flowEdges.find(f => f.target === spine[i+1].id);
+            html += `<div class="sm-arrow">\u2193${nextLabel && nextLabel.label ? `<span class="sm-arrow-label">${nextLabel.label}</span>` : ''}</div>`;
+        }
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function smSelectNode(procId) {
+    const n = nodes.find(n => n.id === procId);
+    if (n) {
+        selectedNode = n;
+        renderSidebar();
+    }
+}
+
+function smScrollTo(procId) {
+    const container = document.getElementById('sm-view');
+    const el = container.querySelector(`[onclick="smSelectNode('${procId}')"]`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.boxShadow = '0 0 12px rgba(88,166,255,0.5)';
+        setTimeout(() => el.style.boxShadow = '', 1500);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Schemas View
+// ═══════════════════════════════════════════════════════════════
+
+function renderSchemas() {
+    if (!spec) return;
+    const container = document.getElementById('schemas-view');
+    const schemas = spec.schemas || [];
+
+    // Build usage map: which entities/processes/edges reference each schema
+    const usedBy = {};
+    for (const s of schemas) usedBy[s.name] = [];
+
+    function trackRef(name, usedByLabel) {
+        if (usedBy[name]) usedBy[name].push(usedByLabel);
+    }
+
+    for (const e of (spec.entities || [])) {
+        if (e.input_schema) trackRef(e.input_schema, e.label || e.id);
+        if (e.output_schema) trackRef(e.output_schema, e.label || e.id);
+        if (e.schema) trackRef(e.schema, e.label || e.id);
+    }
+    for (const p of (spec.processes || [])) {
+        if (p.data_in) trackRef(p.data_in, p.label || p.id);
+        if (p.data_out) trackRef(p.data_out, p.label || p.id);
+    }
+    for (const e of (spec.edges || [])) {
+        if (e.data) trackRef(e.data, `${e.from} \u2192 ${e.to}`);
+        if (e.input) trackRef(e.input, `${e.from} \u2192 ${e.to}`);
+        if (e.output) trackRef(e.output, `${e.from} \u2192 ${e.to}`);
+    }
+
+    let html = `<div class="schemas-summary">${schemas.length} schemas in ${spec.name || 'spec'}</div>`;
+    html += '<div class="schemas-grid">';
+
+    for (const schema of schemas) {
+        html += `<div class="schema-card">`;
+        html += `<div class="schema-card-name">${schema.name}</div>`;
+        if (schema.description) {
+            html += `<div class="schema-card-desc">${schema.description}</div>`;
+        }
+
+        for (const f of (schema.fields || [])) {
+            html += `<div class="schema-field-row">`;
+            html += `<span class="schema-field-name">${f.name}</span>`;
+            html += `<span>`;
+            html += `<span class="schema-field-type">${f.type}</span>`;
+            if (f.default !== undefined) {
+                html += ` <span class="schema-field-default">= ${f.default}</span>`;
+            }
+            html += `</span>`;
+            html += `</div>`;
+        }
+
+        // Show what uses this schema
+        const refs = usedBy[schema.name] || [];
+        if (refs.length > 0) {
+            html += `<div class="schema-refs">`;
+            for (const r of refs) {
+                html += `<span class="schema-ref-tag">${r}</span>`;
+            }
+            html += `</div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Comparison View
+// ═══════════════════════════════════════════════════════════════
+
+const ALL_SPEC_PATHS = [
+    'specs/claude-code.yaml', 'specs/babyagi.yaml', 'specs/react.yaml',
+    'specs/rag.yaml', 'specs/autogpt.yaml', 'specs/crew.yaml',
+    'specs/code_reviewer.yaml', 'specs/babyagi_autogen.yaml', 'specs/debate.yaml'
+];
+let allSpecs = null;
+
+async function loadAllSpecs() {
+    if (allSpecs) return allSpecs;
+    const results = await Promise.all(ALL_SPEC_PATHS.map(async path => {
+        try {
+            const resp = await fetch(path);
+            const text = await resp.text();
+            return jsyaml.load(text);
+        } catch { return null; }
+    }));
+    allSpecs = results.filter(Boolean);
+    return allSpecs;
+}
+
+async function renderComparison() {
+    const container = document.getElementById('compare-view');
+    container.innerHTML = '<div style="text-align:center;padding:60px;color:#484f58;">Loading all specs...</div>';
+
+    const specs = await loadAllSpecs();
+
+    function count(arr) { return (arr || []).length; }
+    function hasType(s, type) { return (s.processes || []).some(p => p.type === type); }
+    function entityTypes(s, type) { return (s.entities || []).filter(e => e.type === type); }
+    function edgeTypes(s, type) { return (s.edges || []).filter(e => e.type === type); }
+    function models(s) {
+        const m = new Set();
+        (s.entities || []).forEach(e => { if (e.model) m.add(e.model); });
+        return [...m];
+    }
+    function storeTypes(s) {
+        return entityTypes(s, 'store').map(e => e.store_type || 'unknown');
+    }
+
+    // Find max for bar scaling
+    const maxEntities = Math.max(...specs.map(s => count(s.entities)));
+    const maxProcesses = Math.max(...specs.map(s => count(s.processes)));
+    const maxEdges = Math.max(...specs.map(s => count(s.edges)));
+    const maxSchemas = Math.max(...specs.map(s => count(s.schemas)));
+
+    function bar(val, max, color) {
+        const pct = max > 0 ? Math.round((val / max) * 60) : 0;
+        return `<span class="cmp-bar" style="width:${pct}px;background:${color};"></span>${val}`;
+    }
+
+    let html = `<div class="compare-header"><h2>Agent Comparison</h2><p>${specs.length} agents loaded from specs</p></div>`;
+    html += '<table class="compare-table"><thead><tr><th></th>';
+    for (const s of specs) {
+        html += `<th>${s.name || 'Unknown'}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+
+    // Row: Description
+    html += '<tr><td>Description</td>';
+    for (const s of specs) {
+        const desc = (s.description || '').substring(0, 80);
+        html += `<td style="font-size:0.9em;color:#8b949e;text-align:left;">${desc}${s.description && s.description.length > 80 ? '...' : ''}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Entities
+    html += '<tr><td>Entities</td>';
+    for (const s of specs) html += `<td>${bar(count(s.entities), maxEntities, '#4ecdc4')}</td>`;
+    html += '</tr>';
+
+    // Row: Agents
+    html += '<tr><td>Agents</td>';
+    for (const s of specs) {
+        const agents = entityTypes(s, 'agent');
+        html += `<td>${agents.map(a => `<span class="cmp-tag">${a.label || a.id}</span>`).join(' ') || '<span class="cmp-no">-</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Stores
+    html += '<tr><td>Stores</td>';
+    for (const s of specs) {
+        const stores = entityTypes(s, 'store');
+        html += `<td>${stores.map(st => `<span class="cmp-tag">${st.store_type || 'store'}: ${st.label || st.id}</span>`).join(' ') || '<span class="cmp-no">-</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Tools
+    html += '<tr><td>Tools</td>';
+    for (const s of specs) {
+        const tools = entityTypes(s, 'tool');
+        html += `<td>${tools.length > 0 ? `<span class="cmp-count" style="color:#f39c12;">${tools.length}</span>` : '<span class="cmp-no">-</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Processes
+    html += '<tr><td>Processes</td>';
+    for (const s of specs) html += `<td>${bar(count(s.processes), maxProcesses, '#c0c0c0')}</td>`;
+    html += '</tr>';
+
+    // Row: Gates
+    html += '<tr><td>Gates</td>';
+    for (const s of specs) {
+        const gates = (s.processes || []).filter(p => p.type === 'gate');
+        html += `<td>${gates.length > 0 ? `<span class="cmp-yes">${gates.length}</span>` : '<span class="cmp-no">0</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Edges
+    html += '<tr><td>Edges</td>';
+    for (const s of specs) html += `<td>${bar(count(s.edges), maxEdges, '#3498db')}</td>`;
+    html += '</tr>';
+
+    // Row: Has loops
+    html += '<tr><td>Loops</td>';
+    for (const s of specs) {
+        const loops = edgeTypes(s, 'loop');
+        html += `<td>${loops.length > 0 ? '<span class="cmp-yes">Yes</span>' : '<span class="cmp-no">No</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Schemas
+    html += '<tr><td>Schemas</td>';
+    for (const s of specs) html += `<td>${bar(count(s.schemas), maxSchemas, '#d2a8ff')}</td>`;
+    html += '</tr>';
+
+    // Row: Models
+    html += '<tr><td>Models</td>';
+    for (const s of specs) {
+        const m = models(s);
+        html += `<td>${m.map(mm => `<span class="cmp-tag">${mm}</span>`).join(' ') || '<span class="cmp-no">-</span>'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Entry point
+    html += '<tr><td>Entry Point</td>';
+    for (const s of specs) {
+        html += `<td style="color:#7ee787;">${s.entry_point || '-'}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Edge types used
+    html += '<tr><td>Edge Types</td>';
+    for (const s of specs) {
+        const types = new Set((s.edges || []).map(e => e.type));
+        html += `<td>${[...types].map(t => `<span class="cmp-tag" style="background:${EDGE_COLORS[t] ? `rgba(${hexToRgb(EDGE_COLORS[t])},0.1)` : 'rgba(88,166,255,0.08)'};color:${EDGE_COLORS[t] || '#58a6ff'};border-color:${EDGE_COLORS[t] ? `rgba(${hexToRgb(EDGE_COLORS[t])},0.2)` : 'rgba(88,166,255,0.15)'};">${t}</span>`).join(' ')}</td>`;
+    }
+    html += '</tr>';
+
+    // Row: Complexity score (rough: entities + processes + edges + schemas)
+    html += '<tr><td>Complexity</td>';
+    for (const s of specs) {
+        const score = count(s.entities) + count(s.processes) + count(s.edges) + count(s.schemas);
+        const maxScore = Math.max(...specs.map(ss => count(ss.entities) + count(ss.processes) + count(ss.edges) + count(ss.schemas)));
+        const pct = Math.round((score / maxScore) * 100);
+        html += `<td><div style="background:#21262d;border-radius:3px;height:8px;width:100%;"><div style="background:#58a6ff;border-radius:3px;height:8px;width:${pct}%;"></div></div><div style="font-size:0.85em;color:#484f58;margin-top:2px;">${score}</div></td>`;
+    }
+    html += '</tr>';
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `${r},${g},${b}`;
+}
+
+// ── Init ──
+initInteraction();
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+document.getElementById('spec-select').addEventListener('change', (ev) => {
+    loadSpec(ev.target.value);
+});
+
+loadSpec('specs/claude-code.yaml');
+</script>
+</body>
+</html>
