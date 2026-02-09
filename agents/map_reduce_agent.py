@@ -465,11 +465,8 @@ def process_reduce_results(state):
 
     # Logic from spec
     state.data["retry_count"] = state.data.get("retry_count", 0) + 1
-    # Prepare the input for the reduce agent
-    state.data["reduce_input"] = {
-        "task_description": state.data.get("task_description"),
-        "findings": state.data.get("deduplicated_results", [])
-    }
+    # Set flat keys for build_input(ReduceTaskInput)
+    state.data["findings"] = state.data.get("deduplicated_results", [])
     if state.data.get("_done"):
         return state
 

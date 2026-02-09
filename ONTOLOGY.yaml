@@ -138,6 +138,8 @@ process_types:
       logic:       { type: string, description: "What this step does (human-readable or code reference)" }
       data_in:     { type: schema_ref }
       data_out:    { type: schema_ref }
+      timeout:     { type: duration, description: "Max execution time for this step" }
+      on_error:    { type: "enum[fail, skip, retry, fallback]", default: fail, description: "Error handling strategy" }
     visual:
       shape: rect
       default_color: "#c0c0c0"  # gray, like BabyAGI diagram
@@ -239,6 +241,33 @@ process_types:
       default_color: "#e67e22"
       layer: meta
 
+  error_handler:
+    description: "A structured error handling block — try/catch/finally for agent operations"
+    # Wraps one or more processes with error recovery logic.
+    # Enables graceful degradation, retry with backoff, fallback paths.
+    required:
+      id:        { type: string }
+      label:     { type: string }
+      scope:     { type: "list<node_ref>", description: "Processes covered by this handler" }
+      on_error:  { type: node_ref, description: "Where to route on error (catch block)" }
+    optional:
+      retry:
+        description: "Retry configuration for transient failures"
+        properties:
+          max_retries:      { type: integer, default: 3 }
+          backoff:          { type: "enum[none, linear, exponential]", default: exponential }
+          initial_delay_ms: { type: integer, default: 1000 }
+          max_delay_ms:     { type: integer, default: 30000 }
+          retryable_errors: { type: "list<string>", description: "Error types that trigger retry (e.g. rate_limit, timeout, 5xx)" }
+      fallback:    { type: node_ref, description: "Alternative path when retries exhausted" }
+      on_finally:  { type: node_ref, description: "Always-run cleanup (like finally block)" }
+      error_schema: { type: schema_ref, description: "Schema for error data passed to handler" }
+      timeout:     { type: duration, description: "Max time for the entire scope before timeout error" }
+    visual:
+      shape: rounded_rect_dashed
+      default_color: "#c0392b"
+      layer: process
+
 # ─────────────────────────────────────────────────────────────
 # EDGE TYPES — connections between nodes
 # ─────────────────────────────────────────────────────────────
@@ -279,6 +308,14 @@ edge_types:
       output:     { type: schema_ref, description: "Data returned from callee" }
       return_to:  { type: node_ref, description: "Where the result goes (defaults to 'from')" }
       async:      { type: boolean, default: false }
+      retry:
+        description: "Retry configuration for this invocation"
+        properties:
+          max_retries:      { type: integer, default: 0, description: "0 = no retry" }
+          backoff:          { type: "enum[none, linear, exponential]", default: none }
+          initial_delay_ms: { type: integer, default: 1000 }
+          retryable_errors: { type: "list<string>", description: "Error types that trigger retry" }
+      timeout:    { type: duration, description: "Max time for this invocation" }
     visual:
       style: solid
       color: "#4ecdc4"
@@ -366,6 +403,20 @@ edge_types:
       style: dotted
       color: "#95a5a6"
       arrow: false  # no arrowhead, just a connection
+
+  error:
+    description: "Error flow — routes to an error handler when a process fails"
+    required:
+      from:  { type: node_ref, description: "The process that can fail" }
+      to:    { type: "error_handler | step", description: "Where errors are routed" }
+    optional:
+      label:       { type: string }
+      error_types: { type: "list<string>", description: "Which error types trigger this edge (e.g. timeout, rate_limit, validation)" }
+      data:        { type: schema_ref, description: "Error data schema" }
+    visual:
+      style: dashed
+      color: "#c0392b"
+      arrow: true
 
 # ─────────────────────────────────────────────────────────────
 # SCHEMA TYPES — data shapes referenced by nodes and edges
@@ -478,6 +529,18 @@ validation:
 
   - rule: "Protocol participants must reference valid entity nodes"
     severity: error
+
+  - rule: "Error handler scope must reference valid process nodes"
+    severity: error
+
+  - rule: "Error handler on_error target must be a valid process node"
+    severity: error
+
+  - rule: "Error edges must originate from processes within an error_handler scope"
+    severity: warning
+
+  - rule: "Invoke edges with retry.max_retries > 0 should specify retryable_errors"
+    severity: warning
 
 # ─────────────────────────────────────────────────────────────
 # COMPATIBILITY MAPPINGS

@@ -274,6 +274,19 @@ edges:
     to: increment_round
     label: "Increment round"
 
+  # Write completed round to debate history store
+  - type: write
+    from: record_con_argument
+    to: debate_history_store
+    label: "Persist debate round"
+    data: DebateTurn
+
+  # Read debate history from store for judge
+  - type: read
+    from: judge_evaluation
+    to: debate_history_store
+    label: "Read full debate history"
+
   # increment_round flows to check_rounds
   - type: flow
     from: increment_round

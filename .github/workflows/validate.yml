@@ -1,0 +1,90 @@
+name: Validate Agent Ontology
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate-specs:
+    name: Validate YAML Specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate all specs
+        run: python validate.py --all specs/
+
+  lint-specs:
+    name: Lint YAML Specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Lint all specs
+        run: python lint.py --all specs/ --severity warn
+
+  syntax-check-agents:
+    name: Syntax Check Agent Modules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Syntax check all agent files
+        run: |
+          failed=0
+          for f in agents/*.py; do
+            module=$(basename "$f" .py)
+            echo "Checking agents.${module} ..."
+            if ! python -c "import agents.${module}"; then
+              echo "FAIL: agents.${module}"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo "One or more agent modules failed to import."
+            exit 1
+          fi
+          echo "All agent modules passed syntax check."
+
+  smoke-test:
+    name: Smoke Test (ReAct Agent)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [validate-specs, lint-specs, syntax-check-agents]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Run smoke test
+        if: env.GEMINI_API_KEY != ''
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python test_agents.py --agent react --timeout 60

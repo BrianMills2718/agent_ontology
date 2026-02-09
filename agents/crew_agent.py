@@ -510,7 +510,8 @@ def process_dispatch_agent(state):
     # Branch: is researcher → call_researcher
     # Branch: is writer or reviewer → check_writer
 
-    if state.data.get("assigned_agent") == "researcher":
+    agent = state.data.get("assigned_agent", "").lower()
+    if agent == "researcher":
         print(f"    → is researcher")
         return "call_researcher"
     else:
@@ -528,7 +529,8 @@ def process_check_writer(state):
     # Branch: is writer → call_writer
     # Branch: is reviewer → call_reviewer_agent
 
-    if state.data.get("assigned_agent") == "writer":
+    agent = state.data.get("assigned_agent", "").lower()
+    if agent == "writer":
         print(f"    → is writer")
         return "call_writer"
     else:

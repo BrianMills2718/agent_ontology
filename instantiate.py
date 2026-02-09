@@ -258,7 +258,8 @@ def generate_agent(spec):
     w('')
     w('def build_input(state, schema_name):')
     w('    """Build an input dict for an agent call using schema field names.')
-    w('    Pulls matching keys from state.data."""')
+    w('    Pulls matching keys from state.data, checking both flat keys and')
+    w('    values nested inside dict entries (e.g. state.data["xxx_input"]["field"])."""')
     w('    schema = SCHEMAS.get(schema_name)')
     w('    if not schema:')
     w('        return state.data')
@@ -267,6 +268,12 @@ def generate_agent(spec):
     w('        fname = field["name"]')
     w('        if fname in state.data:')
     w('            result[fname] = state.data[fname]')
+    w('        else:')
+    w('            # Search nested dicts in state.data for the field')
+    w('            for _k, _v in state.data.items():')
+    w('                if isinstance(_v, dict) and fname in _v:')
+    w('                    result[fname] = _v[fname]')
+    w('                    break')
     w('    return result')
     w('')
     w('')
@@ -531,6 +538,24 @@ def generate_agent(spec):
                 w(f'        return state')
                 w('')
 
+                # After logic block: flatten nested dicts so schema fields are
+                # available as top-level keys in state.data.  Logic blocks often
+                # create state.data["xxx_input"] = {"field1": val, ...} but
+                # build_input() and downstream gates expect state.data["field1"].
+                invoke_input_schemas = []
+                for (_eid, _edge) in invocations:
+                    _isch = _edge.get("input")
+                    if _isch and _isch in schema_map:
+                        invoke_input_schemas.append(_isch)
+                if invoke_input_schemas:
+                    w(f'    # Flatten nested dicts: promote schema fields to top-level state.data')
+                    w(f'    for _nested_val in list(state.data.values()):')
+                    w(f'        if isinstance(_nested_val, dict):')
+                    w(f'            for _nk, _nv in _nested_val.items():')
+                    w(f'                if _nk not in state.data:')
+                    w(f'                    state.data[_nk] = _nv')
+                    w('')
+
             # Store reads
             for (store_id, op, edge) in store_ops:
                 if op == "read":
@@ -620,9 +645,11 @@ def generate_agent(spec):
                 w(f'        print(f"    → {branches[false_idx].get("condition", "no")}")')
                 w(f'        return "{branches[false_idx]["target"]}"')
             else:
-                for i, branch in enumerate(branches):
+                for i, branch in enumerate(branches[:-1]):
+                    branch_cond = branch.get("condition", "")
+                    branch_check = _generate_gate_check(branch_cond) if branch_cond else check_expr
                     prefix = "if" if i == 0 else "elif"
-                    w(f'    {prefix} {check_expr}:')
+                    w(f'    {prefix} {branch_check}:')
                     w(f'        return "{branch["target"]}"')
                 w(f'    else:')
                 w(f'        return "{branches[-1]["target"]}"')
@@ -899,11 +926,19 @@ def _generate_gate_check(condition):
         if field_path:
             return f'not bool({accessor(field_path)})'
 
+    # Helper to check if a string is a numeric literal (int or float like 0.7)
+    def _is_numeric(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
     # Pattern: "field >= field2" or "field >= N" (comparison with >=)
     gte_match = re.search(r'([\w.]+)\s*>=\s*([\w.]+)', condition)
     if gte_match:
         lhs, rhs = gte_match.group(1), gte_match.group(2)
-        if rhs.isdigit():
+        if _is_numeric(rhs):
             return f'({num_accessor(lhs)}) >= {rhs}'
         elif '.' in rhs and rhs.split('.')[-1] == 'length':
             # field >= other.length
@@ -912,11 +947,23 @@ def _generate_gate_check(condition):
         else:
             return f'({num_accessor(lhs)}) >= ({num_accessor(rhs)})'
 
+    # Pattern: "field <= field2" or "field <= N"
+    lte_match = re.search(r'([\w.]+)\s*<=\s*([\w.]+)', condition)
+    if lte_match:
+        lhs, rhs = lte_match.group(1), lte_match.group(2)
+        if _is_numeric(rhs):
+            return f'({num_accessor(lhs)}) <= {rhs}'
+        elif '.' in rhs and rhs.split('.')[-1] == 'length':
+            base = rhs.rsplit('.', 1)[0]
+            return f'({num_accessor(lhs)}) <= len({accessor(base)} or [])'
+        else:
+            return f'({num_accessor(lhs)}) <= ({num_accessor(rhs)})'
+
     # Pattern: "field > field2" or "field > N"
     gt_match = re.search(r'([\w.]+)\s*>\s*([\w.]+)', condition)
     if gt_match:
         lhs, rhs = gt_match.group(1), gt_match.group(2)
-        if rhs.isdigit():
+        if _is_numeric(rhs):
             return f'({num_accessor(lhs)}) > {rhs}'
         elif '.' in rhs and rhs.split('.')[-1] == 'length':
             base = rhs.rsplit('.', 1)[0]
@@ -928,7 +975,7 @@ def _generate_gate_check(condition):
     lt_match = re.search(r'([\w.]+)\s*<\s*([\w.]+)', condition)
     if lt_match:
         lhs, rhs = lt_match.group(1), lt_match.group(2)
-        if rhs.isdigit():
+        if _is_numeric(rhs):
             return f'({num_accessor(lhs)}) < {rhs}'
         elif '.' in rhs and rhs.split('.')[-1] == 'length':
             base = rhs.rsplit('.', 1)[0]
