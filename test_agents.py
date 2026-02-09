@@ -77,6 +77,33 @@ TEST_INPUTS = {
         "task": "Write a clear, concise explanation of how photosynthesis works for a 10-year-old.",
         "max_rounds": 2,
     },
+    "lats": {
+        "query": "What is the square root of 144?",
+    },
+    "voyager": {
+        "max_iterations": 1,
+    },
+    "multi_agent_codegen": {
+        "prompt": "Write a Python function that checks if a string is a palindrome",
+    },
+    "map_reduce": {
+        "full_text": "The quick brown fox jumps over the lazy dog. " * 20,
+        "task_description": "Extract all animals mentioned in this text.",
+        "chunk_size": 50,
+    },
+    "socratic_tutor": {
+        "topic": "What is 2+2?",
+        "learning_objectives": ["Understand basic addition"],
+        "difficulty": "beginner",
+        "_canned_responses": [
+            "2+2 equals 4 because you combine two groups of two",
+            "Addition means combining quantities to get a sum",
+            "The commutative property means 2+3 equals 3+2",
+            "4 minus 2 equals 2, it reverses addition",
+            "I understand addition is combining numbers together",
+            "Addition is the inverse of subtraction",
+        ],
+    },
 }
 
 # ── Validation criteria per agent ──
@@ -176,6 +203,47 @@ def validate_self_refine(state):
         issues.append("No output produced")
     return issues
 
+def validate_lats(state):
+    """LATS should run MCTS iterations and produce an answer."""
+    issues = []
+    if state.data.get("iteration", 0) < 1:
+        issues.append("No MCTS iterations completed")
+    if not state.data.get("final_solution") and not state.data.get("best_trajectory"):
+        issues.append("No solution or best_trajectory produced")
+    return issues
+
+def validate_voyager(state):
+    """Voyager should propose objectives and attempt skill generation."""
+    issues = []
+    if not state.data.get("objective"):
+        issues.append("No objective proposed")
+    return issues
+
+def validate_multi_agent_codegen(state):
+    """Multi-Agent Codegen should produce a final code package."""
+    issues = []
+    if not state.data.get("final_package") and not state.data.get("code_artifact_output"):
+        issues.append("No code artifacts produced")
+    return issues
+
+def validate_map_reduce(state):
+    """MapReduce should chunk, map, and reduce to a final output."""
+    issues = []
+    if not state.data.get("chunks"):
+        issues.append("No chunks created")
+    if not state.data.get("final_output") and not state.data.get("reduce_output_schema"):
+        issues.append("No final output or reduce result produced")
+    return issues
+
+def validate_socratic_tutor(state):
+    """Socratic tutor should plan curriculum and evaluate responses."""
+    issues = []
+    if not state.data.get("lesson_plan_output") and not state.data.get("concepts"):
+        issues.append("No lesson plan created")
+    if not state.data.get("transcript"):
+        issues.append("No transcript recorded")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -188,6 +256,11 @@ VALIDATORS = {
     "tree_of_thought": validate_tree_of_thought,
     "plan_and_solve": validate_plan_and_solve,
     "self_refine": validate_self_refine,
+    "lats": validate_lats,
+    "voyager": validate_voyager,
+    "multi_agent_codegen": validate_multi_agent_codegen,
+    "map_reduce": validate_map_reduce,
+    "socratic_tutor": validate_socratic_tutor,
 }
 
 # ── Timeout context manager ──
@@ -304,6 +377,8 @@ AGENT_NAMES = [
     "react", "debate", "babyagi", "babyagi_autogen",
     "autogpt", "rag", "code_reviewer", "crew",
     "tree_of_thought", "plan_and_solve", "self_refine",
+    "lats", "voyager", "multi_agent_codegen",
+    "map_reduce", "socratic_tutor",
 ]
 
 DEFAULT_COMPARE_MODELS = [

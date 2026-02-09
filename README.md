@@ -54,6 +54,33 @@ python3 evolve.py specs/react.yaml --generations 2 --population 4
 
 # 11. E2E specgen pipeline test
 python3 test_specgen.py --fix
+
+# 12. Analyze spec coverage of ontology features
+python3 coverage.py --all specs/
+
+# 13. Lint specs for anti-patterns
+python3 lint.py --all specs/ --severity warn
+
+# 14. Classify agent topologies
+python3 topology.py --all specs/
+
+# 15. Compare two spec versions
+python3 spec_diff.py specs/react.yaml specs/autogpt.yaml
+
+# 16. Project health dashboard
+python3 dashboard.py specs/
+python3 dashboard.py --brief specs/
+
+# 17. Export Mermaid flowcharts
+python3 mermaid.py specs/react.yaml
+python3 mermaid.py --all specs/
+
+# 18. Spec similarity and clustering
+python3 similarity.py --all specs/ --top 5 --clusters 5
+
+# 19. Migrate specs to new version
+python3 migrate.py --all specs/ --to 1.1 --dry-run
+python3 migrate.py --list-versions
 ```
 
 ## The Pipeline
@@ -91,7 +118,7 @@ Open `spec-viewer.html` in a browser (via HTTP server). Four views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 12 agent specs.
+- **Compare All** — Side-by-side comparison table across all 15 agent specs.
 
 Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
@@ -117,7 +144,7 @@ Generates a complete Python agent with:
 
 ## Agent Catalog
 
-12 agent specs, all validated. 11 are instantiable and runnable with `gemini-3-flash-preview`.
+15 agent specs, all validated. 14 are instantiable and runnable with `gemini-3-flash-preview`.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -133,6 +160,9 @@ Generates a complete Python agent with:
 | `tree_of_thought` | Tree search | 3 | 7 | 7 | 55.4 (moderate) | Working |
 | `plan_and_solve` | Decompose+verify | 4 | 9 | 9 | 65.7 (complex) | Working |
 | `self_refine` | Generate-critique | 2 | 7 | 7 | 55.0 (moderate) | Working |
+| `voyager` | Open-ended exploration | 5 | 12 | 9 | 55.5 (moderate) | Working |
+| `lats` | MCTS tree search | 5 | 8 | 8 | 51.2 (moderate) | Working |
+| `multi_agent_codegen` | Code generation pipeline | 5 | 5 | 7 | 47.4 (moderate) | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -192,6 +222,14 @@ Full type system: `ONTOLOGY.yaml`
 | `evolve.py` | Evolutionary search | `python3 evolve.py spec.yaml --generations 3 --population 5` |
 | `benchmark.py` | Benchmark suite | `python3 benchmark.py --agent react --json` |
 | `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
+| `spec_diff.py` | Structured spec comparison | `python3 spec_diff.py old.yaml new.yaml` |
+| `coverage.py` | Ontology feature coverage | `python3 coverage.py --all specs/` |
+| `lint.py` | Anti-pattern detection (10 rules) | `python3 lint.py --all specs/` |
+| `topology.py` | Control-flow topology classifier | `python3 topology.py --all specs/` |
+| `dashboard.py` | Unified project health report | `python3 dashboard.py specs/` |
+| `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
+| `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
+| `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
 
 ## Architecture
 
@@ -199,13 +237,21 @@ Full type system: `ONTOLOGY.yaml`
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (12 agents)
+specs/*.yaml           # Agent specifications (15 agents)
      |
      +---> validate.py       # Validation (20+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py
      +---> complexity.py     # Complexity scoring (10 metrics)
      +---> mutate.py         # Spec mutation engine (8 operators)
      +---> evolve.py         # Evolutionary search (mutate → test → select)
+     +---> coverage.py       # Ontology feature coverage report
+     +---> lint.py           # Anti-pattern detection (10 rules)
+     +---> topology.py       # Control-flow topology classifier
+     +---> spec_diff.py      # Structured spec comparison
+     +---> dashboard.py      # Unified project health report
+     +---> mermaid.py        # Mermaid flowchart export
+     +---> similarity.py     # Spec similarity & clustering
+     +---> migrate.py        # Spec version migration
      +---> spec-viewer.html  # Visualization (4 views + trace overlay)
 
 agents/*.py            # Generated runnable agents
@@ -257,7 +303,7 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-specs/                  # Agent specifications (YAML, 12 specs)
+specs/                  # Agent specifications (YAML, 15 specs)
 agents/                 # Generated runnable agents (Python)
 test_descriptions/      # Natural language descriptions for specgen testing
 benchmarks/             # Benchmark task configs
@@ -271,6 +317,14 @@ test_agents.py          # Automated test harness + multi-model comparison
 test_specgen.py         # E2E specgen pipeline testing
 analyze_trace.py        # Trace analysis and comparison
 complexity.py           # Spec complexity scoring
+coverage.py             # Ontology feature coverage report
+lint.py                 # Anti-pattern linter (10 rules)
+topology.py             # Control-flow topology classifier
+spec_diff.py            # Structured spec comparison
+dashboard.py            # Unified project health report
+mermaid.py              # Mermaid flowchart export
+similarity.py           # Spec similarity & clustering
+migrate.py              # Spec version migration
 mutate.py               # Spec mutation engine (8 operators)
 evolve.py               # Evolutionary search over agent architectures
 benchmark.py            # Benchmark suite with standardized evaluation tasks
