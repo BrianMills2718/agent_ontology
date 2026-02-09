@@ -32,10 +32,38 @@ def trace_call(agent_label, model, system_prompt, user_message, response, durati
     print(f"      OUT: {response[:300]}")
 
 
-def dump_trace(path="trace.json"):
+def dump_trace(path="trace.json", iterations=0, clean_exit=True):
+    # Compute metrics
+    total_ms = sum(e["duration_ms"] for e in TRACE)
+    agents_used = list(set(e["agent"] for e in TRACE))
+    schema_ok = 0
+    for e in TRACE:
+        try:
+            r = e["response"].strip()
+            if r.startswith("```"): r = "\n".join(r.split("\n")[1:-1])
+            json.loads(r if r.startswith("{") else r[r.find("{"):r.rfind("}")+1])
+            schema_ok += 1
+        except (json.JSONDecodeError, ValueError):
+            pass
+    est_input_tokens = sum(len(e.get("user_message",""))//4 for e in TRACE)
+    est_output_tokens = sum(len(e.get("response",""))//4 for e in TRACE)
+    metrics = {
+        "total_llm_calls": len(TRACE),
+        "total_duration_ms": total_ms,
+        "avg_call_ms": total_ms // max(len(TRACE), 1),
+        "iterations": iterations,
+        "clean_exit": clean_exit,
+        "agents_used": agents_used,
+        "schema_compliance": f"{schema_ok}/{len(TRACE)}",
+        "est_input_tokens": est_input_tokens,
+        "est_output_tokens": est_output_tokens,
+    }
+    output = {"metrics": metrics, "trace": TRACE}
     with open(path, "w") as f:
-        json.dump(TRACE, f, indent=2)
-    print(f"\nTrace written to {path} ({len(TRACE)} calls)")
+        json.dump(output, f, indent=2)
+    print(f"\nTrace written to {path} ({len(TRACE)} calls, {total_ms}ms total)")
+    print(f"  Schema compliance: {schema_ok}/{len(TRACE)}, est tokens: ~{est_input_tokens}in/~{est_output_tokens}out")
+    return metrics
 
 # ═══════════════════════════════════════════════════════════
 # LLM Call Infrastructure
@@ -509,7 +537,6 @@ def process_evaluate_judgment(state):
     combined_score = state.data.get("pro_score", 0) + state.data.get("con_score", 0)
     print(f"    Combined judge score: {combined_score}")
     if combined_score < 12:
-        state.data["round"] = state.data.get("round", 1) + 1
         print("    Debate quality low, adding one more round.")
         state.data["_continue_debate"] = True
     else:
@@ -654,10 +681,12 @@ def run(initial_data=None):
             print("\n  [DONE] Reached terminal state.")
             break
 
+    _clean_exit = state.iteration < MAX_ITERATIONS
     if state.iteration >= MAX_ITERATIONS:
         print(f"\n  [STOPPED] Max iterations ({MAX_ITERATIONS}) reached.")
+        _clean_exit = False
 
-    dump_trace()
+    dump_trace(iterations=state.iteration, clean_exit=_clean_exit)
     print(f"\nFinal state.data keys: {list(state.data.keys())}")
     return state
 

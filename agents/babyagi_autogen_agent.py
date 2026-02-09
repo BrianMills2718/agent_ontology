@@ -32,10 +32,38 @@ def trace_call(agent_label, model, system_prompt, user_message, response, durati
     print(f"      OUT: {response[:300]}")
 
 
-def dump_trace(path="trace.json"):
+def dump_trace(path="trace.json", iterations=0, clean_exit=True):
+    # Compute metrics
+    total_ms = sum(e["duration_ms"] for e in TRACE)
+    agents_used = list(set(e["agent"] for e in TRACE))
+    schema_ok = 0
+    for e in TRACE:
+        try:
+            r = e["response"].strip()
+            if r.startswith("```"): r = "\n".join(r.split("\n")[1:-1])
+            json.loads(r if r.startswith("{") else r[r.find("{"):r.rfind("}")+1])
+            schema_ok += 1
+        except (json.JSONDecodeError, ValueError):
+            pass
+    est_input_tokens = sum(len(e.get("user_message",""))//4 for e in TRACE)
+    est_output_tokens = sum(len(e.get("response",""))//4 for e in TRACE)
+    metrics = {
+        "total_llm_calls": len(TRACE),
+        "total_duration_ms": total_ms,
+        "avg_call_ms": total_ms // max(len(TRACE), 1),
+        "iterations": iterations,
+        "clean_exit": clean_exit,
+        "agents_used": agents_used,
+        "schema_compliance": f"{schema_ok}/{len(TRACE)}",
+        "est_input_tokens": est_input_tokens,
+        "est_output_tokens": est_output_tokens,
+    }
+    output = {"metrics": metrics, "trace": TRACE}
     with open(path, "w") as f:
-        json.dump(TRACE, f, indent=2)
-    print(f"\nTrace written to {path} ({len(TRACE)} calls)")
+        json.dump(output, f, indent=2)
+    print(f"\nTrace written to {path} ({len(TRACE)} calls, {total_ms}ms total)")
+    print(f"  Schema compliance: {schema_ok}/{len(TRACE)}, est tokens: ~{est_input_tokens}in/~{est_output_tokens}out")
+    return metrics
 
 # ═══════════════════════════════════════════════════════════
 # LLM Call Infrastructure
@@ -373,27 +401,23 @@ def process_pull_task(state):
         print("    No tasks remaining!")
         state.data["_done"] = True
         return state
+    completed = state.data.get("completed_count", 0)
+    max_tasks = state.data.get("max_tasks", 5)
+    if completed >= max_tasks:
+        print(f"    Completed {completed} tasks (max {max_tasks}). Stopping.")
+        state.data["_done"] = True
+        return state
     task = tasks.pop(0)
     state.data["task"] = task
     state.data["tasks"] = tasks
+    state.data["completed_count"] = completed + 1
     # Prepare context from vector_db stored results (top 5)
     stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
     state.data["context"] = stored_results[-5:]
-    print(f"    Pulled task: {task.get('description', task)}")
+    print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
     print(f"    Context from prior results: {len(state.data['context'])} items")
     if state.data.get("_done"):
         return state
-
-    # Invoke: Execute task
-    execution_agent_input = build_input(state, "ExecutionInput")
-    execution_agent_msg = json.dumps(execution_agent_input, default=str)
-    execution_agent_raw = invoke_execution_agent(execution_agent_msg, output_schema="ExecutionOutput")
-    execution_agent_result = parse_response(execution_agent_raw, "ExecutionOutput")
-    # Merge output fields into state.data
-    state.data.update(execution_agent_result)
-    state.data["execution_output"] = execution_agent_result
-    state.data["pull_task_result"] = execution_agent_result
-    print(f"    ← Execution Agent: {execution_agent_result}")
 
     return state
 
@@ -404,6 +428,17 @@ def process_execute_task(state):
     Send task, objective, and context to Execution Agent
     """
     print(f"  → Step 2: Execute task")
+
+    # Invoke: Execute task
+    execution_agent_input = build_input(state, "ExecutionInput")
+    execution_agent_msg = json.dumps(execution_agent_input, default=str)
+    execution_agent_raw = invoke_execution_agent(execution_agent_msg, output_schema="ExecutionOutput")
+    execution_agent_result = parse_response(execution_agent_raw, "ExecutionOutput")
+    # Merge output fields into state.data
+    state.data.update(execution_agent_result)
+    state.data["execution_output"] = execution_agent_result
+    state.data["execute_task_result"] = execution_agent_result
+    print(f"    ← Execution Agent: {execution_agent_result}")
 
     return state
 
@@ -426,17 +461,6 @@ def process_enrich_and_store(state):
     if state.data.get("_done"):
         return state
 
-    # Invoke: Retrieve context
-    context_agent_input = build_input(state, "ContextQuery")
-    context_agent_msg = json.dumps(context_agent_input, default=str)
-    context_agent_raw = invoke_context_agent(context_agent_msg, output_schema="ContextResult")
-    context_agent_result = parse_response(context_agent_raw, "ContextResult")
-    # Merge output fields into state.data
-    state.data.update(context_agent_result)
-    state.data["context_result"] = context_agent_result
-    state.data["enrich_and_store_result"] = context_agent_result
-    print(f"    ← Context Agent: {context_agent_result}")
-
     # Write: Store result in Vector DB
     vector_db_write = build_input(state, "EmbeddedResult")
     state.vector_db.write(vector_db_write)
@@ -450,6 +474,25 @@ def process_retrieve_context(state):
     Retrieve relevant context from vector DB using Context Agent
     """
     print(f"  → Step 4: Retrieve context")
+
+    # Logic from spec
+    state.data["query"] = state.data.get("result", "")
+    state.data["top_k"] = 5
+    stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+    state.data["stored_results"] = stored_results
+    if state.data.get("_done"):
+        return state
+
+    # Invoke: Retrieve context
+    context_agent_input = build_input(state, "ContextQuery")
+    context_agent_msg = json.dumps(context_agent_input, default=str)
+    context_agent_raw = invoke_context_agent(context_agent_msg, output_schema="ContextResult")
+    context_agent_result = parse_response(context_agent_raw, "ContextResult")
+    # Merge output fields into state.data
+    state.data.update(context_agent_result)
+    state.data["context_result"] = context_agent_result
+    state.data["retrieve_context_result"] = context_agent_result
+    print(f"    ← Context Agent: {context_agent_result}")
 
     return state
 
@@ -507,7 +550,7 @@ PROCESSES = {
 TRANSITIONS = {
     "pull_task": "execute_task",
     "execute_task": "enrich_and_store",
-    "enrich_and_store": None,  # terminal
+    "enrich_and_store": "retrieve_context",
     "retrieve_context": "create_and_reprioritize",
     "create_and_reprioritize": "pull_task",  # loop: Loop
 }
@@ -556,10 +599,12 @@ def run(initial_data=None):
             print("\n  [DONE] Reached terminal state.")
             break
 
+    _clean_exit = state.iteration < MAX_ITERATIONS
     if state.iteration >= MAX_ITERATIONS:
         print(f"\n  [STOPPED] Max iterations ({MAX_ITERATIONS}) reached.")
+        _clean_exit = False
 
-    dump_trace()
+    dump_trace(iterations=state.iteration, clean_exit=_clean_exit)
     print(f"\nFinal state.data keys: {list(state.data.keys())}")
     return state
 

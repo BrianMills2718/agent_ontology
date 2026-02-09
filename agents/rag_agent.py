@@ -32,10 +32,38 @@ def trace_call(agent_label, model, system_prompt, user_message, response, durati
     print(f"      OUT: {response[:300]}")
 
 
-def dump_trace(path="trace.json"):
+def dump_trace(path="trace.json", iterations=0, clean_exit=True):
+    # Compute metrics
+    total_ms = sum(e["duration_ms"] for e in TRACE)
+    agents_used = list(set(e["agent"] for e in TRACE))
+    schema_ok = 0
+    for e in TRACE:
+        try:
+            r = e["response"].strip()
+            if r.startswith("```"): r = "\n".join(r.split("\n")[1:-1])
+            json.loads(r if r.startswith("{") else r[r.find("{"):r.rfind("}")+1])
+            schema_ok += 1
+        except (json.JSONDecodeError, ValueError):
+            pass
+    est_input_tokens = sum(len(e.get("user_message",""))//4 for e in TRACE)
+    est_output_tokens = sum(len(e.get("response",""))//4 for e in TRACE)
+    metrics = {
+        "total_llm_calls": len(TRACE),
+        "total_duration_ms": total_ms,
+        "avg_call_ms": total_ms // max(len(TRACE), 1),
+        "iterations": iterations,
+        "clean_exit": clean_exit,
+        "agents_used": agents_used,
+        "schema_compliance": f"{schema_ok}/{len(TRACE)}",
+        "est_input_tokens": est_input_tokens,
+        "est_output_tokens": est_output_tokens,
+    }
+    output = {"metrics": metrics, "trace": TRACE}
     with open(path, "w") as f:
-        json.dump(TRACE, f, indent=2)
-    print(f"\nTrace written to {path} ({len(TRACE)} calls)")
+        json.dump(output, f, indent=2)
+    print(f"\nTrace written to {path} ({len(TRACE)} calls, {total_ms}ms total)")
+    print(f"  Schema compliance: {schema_ok}/{len(TRACE)}, est tokens: ~{est_input_tokens}in/~{est_output_tokens}out")
+    return metrics
 
 # ═══════════════════════════════════════════════════════════
 # LLM Call Infrastructure
@@ -396,7 +424,7 @@ def process_rewrite_query(state):
     query_rewriter_result = parse_response(query_rewriter_raw, "RewrittenQuery")
     # Merge output fields into state.data
     state.data.update(query_rewriter_result)
-    state.data["rewritten_query"] = query_rewriter_result
+    state.data["rewritten_query_schema"] = query_rewriter_result
     state.data["rewrite_query_result"] = query_rewriter_result
     print(f"    ← Query Rewriter: {query_rewriter_result}")
 
@@ -413,10 +441,13 @@ def process_retrieve(state):
     # Logic from spec
     search_query = state.data.get("rewritten_query", state.data.get("query", ""))
     state.data["search_query"] = search_query
-    state.data["top_k"] = state.data.get("top_k", 5)
-    stored = [e.get("text", "") for e in state.vector_store.read() if e.get("text")]
+    top_k = state.data.get("top_k", 5)
+    state.data["top_k"] = top_k
+    results = state.vector_store.read(key=search_query)
+    stored = [e.get("text", "") for e in (results or []) if e.get("text")]
     state.data["stored_chunks"] = stored
-    print(f"    Searching {len(stored)} chunks for: {search_query[:100]}")
+    state.data["passages"] = stored
+    print(f"    Semantic search returned {len(stored)} chunks for: {search_query[:100]}")
     if state.data.get("_done"):
         return state
 
@@ -568,10 +599,17 @@ def process_embed_and_store(state):
 
     # Logic from spec
     chunks = state.data.get("chunks", [])
+    doc_id = state.data.get("document_id", "unknown")
     for chunk in chunks:
-        state.data["text"] = chunk["text"]
-        state.data["embedding"] = []
-        state.data["metadata"] = {"source": state.data.get("document_id", "unknown"), "index": chunk["index"]}
+        entry = {
+            "text": chunk["text"],
+            "embedding": [],
+            "metadata": {"source": doc_id, "index": chunk["index"]}
+        }
+        state.vector_store.write(entry, key=f"{doc_id}_chunk_{chunk['index']}")
+    state.data["text"] = chunks[-1]["text"] if chunks else ""
+    state.data["embedding"] = []
+    state.data["metadata"] = {"source": doc_id, "index": len(chunks) - 1}
     print(f"    Stored {len(chunks)} chunks in vector store")
     state.data["_done"] = True
     if state.data.get("_done"):
@@ -661,10 +699,12 @@ def run(initial_data=None):
             print("\n  [DONE] Reached terminal state.")
             break
 
+    _clean_exit = state.iteration < MAX_ITERATIONS
     if state.iteration >= MAX_ITERATIONS:
         print(f"\n  [STOPPED] Max iterations ({MAX_ITERATIONS}) reached.")
+        _clean_exit = False
 
-    dump_trace()
+    dump_trace(iterations=state.iteration, clean_exit=_clean_exit)
     print(f"\nFinal state.data keys: {list(state.data.keys())}")
     return state
 

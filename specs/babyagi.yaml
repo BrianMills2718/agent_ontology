@@ -70,11 +70,18 @@ processes:
           print("    No tasks remaining!")
           state.data["_done"] = True
           return state
+      completed = state.data.get("completed_count", 0)
+      max_tasks = state.data.get("max_tasks", 5)
+      if completed >= max_tasks:
+          print(f"    Completed {completed} tasks (max {max_tasks}). Stopping.")
+          state.data["_done"] = True
+          return state
       task = tasks.pop(0)
       state.data["task"] = task
       state.data["tasks"] = tasks
+      state.data["completed_count"] = completed + 1
       state.data["context"] = [e.get("text", "") for e in state.vector_db.read() if e.get("text")][-5:]
-      print(f"    Pulled task: {task.get('description', task)}")
+      print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
       print(f"    Context from prior results: {len(state.data['context'])} items")
 
   - id: enrich

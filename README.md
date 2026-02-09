@@ -3,33 +3,44 @@
 **OpenAPI for Agents** — a universal format for describing AI agent architectures.
 
 ```
-docs  -->  spec  -->  { diagram, running agent }
+docs  -->  spec  -->  { validate, visualize, instantiate, analyze }
 ```
 
 Given any agent's documentation, OpenClaw lets you:
 1. **Decompose** it into a structured YAML spec
-2. **Validate** the spec against a formal ontology
+2. **Validate** the spec against a formal ontology (structural + graph analysis)
 3. **Visualize** it as an interactive flowchart
 4. **Instantiate** it as a runnable Python agent with real LLM calls
+5. **Analyze** complexity, traces, and runtime metrics
+6. **Test** agents automatically with canned inputs and validators
 
-Nobody does all four today. This is the gap.
+Nobody does all six today. This is the gap.
 
 ## Quick Start
 
 ```bash
 # 1. Validate a spec
-python3 validate.py specs/babyagi.yaml
+python3 validate.py specs/react.yaml
 
 # 2. Generate a runnable agent
-python3 instantiate.py specs/babyagi.yaml -o agents/babyagi_agent.py
+python3 instantiate.py specs/react.yaml
 
-# 3. Run it (requires OPENAI_API_KEY)
-export OPENAI_API_KEY=sk-...
-python3 agents/babyagi_agent.py
+# 3. Run it (requires API keys in .env.local)
+export $(cat .env.local | xargs)
+python3 agents/react_agent.py
 
 # 4. View specs in the browser
 python3 -m http.server 8000
 # Open http://localhost:8000/spec-viewer.html
+
+# 5. Analyze the trace
+python3 analyze_trace.py trace.json
+
+# 6. Score spec complexity
+python3 complexity.py --all specs/
+
+# 7. Run all agent tests
+python3 test_agents.py
 ```
 
 ## The Pipeline
@@ -52,7 +63,13 @@ python3 validate.py specs/my_agent.yaml
 # Output: errors (must fix) and warnings (informational)
 ```
 
-Validates against `ONTOLOGY.yaml` — checks entity types, process types, edge types, required fields, schema references, graph connectivity.
+Validates against `ONTOLOGY.yaml` with 20+ rules:
+- Entity/process/edge type validation with required fields
+- Schema reference resolution
+- Graph connectivity (unreachable processes, disconnected chains)
+- Fan-out without join detection
+- Empty process shells (no logic, invocations, or store access)
+- Schema field collision warnings in fan-out patterns
 
 ### Step 3: Visualize
 
@@ -66,31 +83,36 @@ Open `spec-viewer.html` in a browser (via HTTP server). Four views:
 ### Step 4: Instantiate
 
 ```bash
-python3 instantiate.py specs/babyagi.yaml -o agents/babyagi_agent.py
+python3 instantiate.py specs/react.yaml
 ```
 
 Generates a complete Python agent with:
 - State machine (PROCESSES dict + TRANSITIONS dict)
+- **Fan-out support**: Multiple outgoing flow edges run all branches sequentially
+- **Namespaced state**: Agent outputs stored under `state.data["schema_name"]` and `state.data["process_id_result"]` to prevent field collisions
 - Schema-aware LLM calls (input extraction, output parsing, structured prompts)
 - Gate condition evaluation (parsed from human-readable conditions)
-- Trace logging (every LLM call logged to `trace.json`)
+- Trace logging with metrics (LLM calls, duration, schema compliance, token estimates)
 - Store abstractions (queue, vector, buffer, log)
+- Multi-model routing: `claude*` → Anthropic, `gemini*` → Google genai, else → OpenAI
 
 ## Agent Catalog
 
-9 agent specs, all validated and instantiable:
+9 agent specs, all validated. 8 are instantiable and runnable with `gemini-3-flash-preview`.
 
-| Spec | Type | Entities | Processes | Schemas | Notes |
-|------|------|----------|-----------|---------|-------|
-| `claude-code` | Tool-use agent | 14 | 13 | 8 | Most complex: permissions, spawning, compaction |
-| `babyagi` | Task-driven autonomous | 5 | 5 | 9 | Fully functional with real API calls |
-| `react` | Reason+Act | 6 | 8 | 5 | Think/Act/Observe loop with tools |
-| `rag` | Retrieval-augmented | 6 | 8 | 7 | Query rewriting + relevance judging |
-| `autogpt` | Goal-driven | 7 | 12 | 7 | Planning + criticism loop |
-| `crew` | Multi-agent | 6 | 15 | 7 | Coordinator dispatches to specialists |
-| `code_reviewer` | Parallel analysis | 6 | 9 | 9 | Auto-generated from description |
-| `babyagi_autogen` | Task-driven | 5 | 5 | 9 | Auto-generated; matches hand-written |
-| `debate` | Multi-agent debate | 5 | 13 | 7 | Auto-generated; pro/con/judge |
+| Spec | Type | Ent | Proc | Sch | Complexity | Status |
+|------|------|-----|------|-----|------------|--------|
+| `claude-code` | Tool-use agent | 22 | 19 | 40 | 83.2 (very complex) | Description only |
+| `crew` | Multi-agent | 6 | 17 | 9 | 61.4 (complex) | Working |
+| `react` | Reason+Act | 6 | 8 | 8 | 60.7 (complex) | Working |
+| `code_reviewer` | Parallel analysis | 7 | 10 | 9 | 60.6 (complex) | Working |
+| `babyagi` | Task-driven autonomous | 5 | 5 | 9 | 59.5 (moderate) | Working |
+| `autogpt` | Goal-driven | 6 | 11 | 10 | 59.2 (moderate) | Working |
+| `babyagi_autogen` | Task-driven | 5 | 3 | 9 | 58.4 (moderate) | Working |
+| `debate` | Multi-agent debate | 6 | 13 | 7 | 57.7 (moderate) | Working |
+| `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
+
+Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
 ## Spec Format
 
@@ -138,9 +160,13 @@ Full type system: `ONTOLOGY.yaml`
 | Tool | Purpose | Usage |
 |------|---------|-------|
 | `validate.py` | Check spec against ontology | `python3 validate.py spec.yaml` |
-| `instantiate.py` | Generate runnable Python agent | `python3 instantiate.py spec.yaml -o agent.py` |
+| `instantiate.py` | Generate runnable Python agent | `python3 instantiate.py spec.yaml` |
 | `specgen.py` | Generate spec from description | `python3 specgen.py desc.md -o spec.yaml --validate --fix` |
 | `spec-viewer.html` | Interactive visualization | Serve via HTTP, open in browser |
+| `test_agents.py` | Automated agent testing | `python3 test_agents.py --agent react` |
+| `analyze_trace.py` | Trace analysis and comparison | `python3 analyze_trace.py trace.json` |
+| `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
+| `mutate.py` | Spec mutation engine | `python3 mutate.py spec.yaml --random -n 5` |
 
 ## Architecture
 
@@ -150,9 +176,19 @@ ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      v
 specs/*.yaml           # Agent specifications (9 agents)
      |
-     +---> validate.py       # Validation against ontology
+     +---> validate.py       # Validation (20+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py
+     +---> complexity.py     # Complexity scoring (10 metrics)
+     +---> mutate.py         # Spec mutation engine (8 operators)
      +---> spec-viewer.html  # Visualization (4 views)
+
+agents/*.py            # Generated runnable agents
+     |
+     +---> test_agents.py    # Automated testing with validators
+     +---> trace.json        # Runtime traces
+              |
+              v
+         analyze_trace.py    # Trace analysis + comparison
 
 test_descriptions/*.md # Natural language agent descriptions
      |
@@ -176,8 +212,17 @@ See `VISION.md` for the full rationale and `ONTOLOGY.yaml` for the complete type
 
 - Python 3.8+
 - `pyyaml` (`pip install pyyaml`)
-- `openai` (for running generated agents and specgen): `pip install openai`
+- `google-genai` (for running generated agents with Gemini): `pip install google-genai`
+- `openai` (for specgen and OpenAI model agents): `pip install openai`
+- `anthropic` (optional, for Claude model agents): `pip install anthropic`
 - Modern browser (for spec-viewer)
+
+API keys go in `.env.local`:
+```bash
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...     # optional, for specgen
+ANTHROPIC_API_KEY=...  # optional, for Claude model agents
+```
 
 ## Project Structure
 
@@ -185,10 +230,15 @@ See `VISION.md` for the full rationale and `ONTOLOGY.yaml` for the complete type
 specs/                  # Agent specifications (YAML)
 agents/                 # Generated runnable agents (Python)
 test_descriptions/      # Natural language descriptions for specgen testing
+traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
-validate.py             # Spec validator
-instantiate.py          # Code generator
+validate.py             # Spec validator (20+ rules)
+instantiate.py          # Code generator (fan-out, namespacing, metrics)
 specgen.py              # Description-to-spec pipeline
 spec-viewer.html        # Interactive multi-view visualization
-trace.json              # LLM call traces from agent runs
+test_agents.py          # Automated test harness
+analyze_trace.py        # Trace analysis and comparison
+complexity.py           # Spec complexity scoring
+mutate.py               # Spec mutation engine (8 operators)
+trace.json              # LLM call traces from last agent run
 ```

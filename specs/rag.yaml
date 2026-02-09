@@ -86,10 +86,13 @@ processes:
     logic: |
       search_query = state.data.get("rewritten_query", state.data.get("query", ""))
       state.data["search_query"] = search_query
-      state.data["top_k"] = state.data.get("top_k", 5)
-      stored = [e.get("text", "") for e in state.vector_store.read() if e.get("text")]
+      top_k = state.data.get("top_k", 5)
+      state.data["top_k"] = top_k
+      results = state.vector_store.read(key=search_query)
+      stored = [e.get("text", "") for e in (results or []) if e.get("text")]
       state.data["stored_chunks"] = stored
-      print(f"    Searching {len(stored)} chunks for: {search_query[:100]}")
+      state.data["passages"] = stored
+      print(f"    Semantic search returned {len(stored)} chunks for: {search_query[:100]}")
 
   - id: judge_relevance
     type: step
@@ -168,10 +171,17 @@ processes:
     data_in: ChunkList
     logic: |
       chunks = state.data.get("chunks", [])
+      doc_id = state.data.get("document_id", "unknown")
       for chunk in chunks:
-          state.data["text"] = chunk["text"]
-          state.data["embedding"] = []
-          state.data["metadata"] = {"source": state.data.get("document_id", "unknown"), "index": chunk["index"]}
+          entry = {
+              "text": chunk["text"],
+              "embedding": [],
+              "metadata": {"source": doc_id, "index": chunk["index"]}
+          }
+          state.vector_store.write(entry, key=f"{doc_id}_chunk_{chunk['index']}")
+      state.data["text"] = chunks[-1]["text"] if chunks else ""
+      state.data["embedding"] = []
+      state.data["metadata"] = {"source": doc_id, "index": len(chunks) - 1}
       print(f"    Stored {len(chunks)} chunks in vector store")
       state.data["_done"] = True
 

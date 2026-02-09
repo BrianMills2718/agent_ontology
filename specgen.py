@@ -27,9 +27,10 @@ def load_ontology():
 
 
 def load_examples():
-    """Load 1-2 example specs to include as few-shot examples."""
+    """Load example specs covering key patterns: loops, fan-out, gates."""
     examples = []
-    for name in ["babyagi.yaml", "react.yaml"]:
+    # react: tool-use loop; code_reviewer: fan-out pattern; debate: gates + multi-agent
+    for name in ["react.yaml", "code_reviewer.yaml", "debate.yaml"]:
         path = os.path.join(SCRIPT_DIR, "specs", name)
         if os.path.exists(path):
             with open(path) as f:
@@ -54,7 +55,7 @@ An OpenClaw spec defines an agent architecture using:
 - schemas: data shapes flowing between components
 
 RULES:
-1. Every entity needs: id, type, label. Agents also need: model, system_prompt.
+1. Every entity needs: id, type, label. Agents also need: model, system_prompt, input_schema, output_schema.
 2. Every process needs: id, type, label. Steps can have logic (Python code).
 3. Gates need: condition (human-readable), branches (2+ with condition and target).
 4. Edges connect processes to processes (flow/loop) or processes to entities (invoke/read/write).
@@ -62,9 +63,30 @@ RULES:
 6. The spec needs: name, version, description, entry_point.
 7. Tools need: tool_type (api, function, shell, browser, mcp).
 8. Stores need: store_type (vector, file, kv, queue, relational, blackboard).
-9. Gate conditions should reference flat state.data fields, not nested paths.
-10. Use gpt-4.1-mini as the default model unless the description specifies otherwise.
+9. Gate conditions should reference flat state.data fields, not nested paths (e.g. use "round" not "state.round").
+10. Use gemini-3-flash-preview as the default model unless the description specifies otherwise.
 11. Add logic fields to processes that need data preparation before agent invocations.
+
+FAN-OUT PATTERN (CRITICAL):
+- When a process needs to invoke MULTIPLE agents in parallel (e.g. security review + style review + logic review), add MULTIPLE invoke edges from that same process to different agents.
+- The code generator will automatically run all invocations from a single process and merge results.
+- Each invoked agent MUST have a DIFFERENT output_schema to avoid field collisions.
+- After fan-out, add a downstream "synthesis" process that reads from all the namespaced results.
+- Example: code_reviewer.yaml has analyze_security, analyze_style, analyze_logic all invoked from the same fan-out step.
+
+STATE NAMESPACING:
+- Agent outputs are stored in state.data both flat (via .update()) and namespaced (under snake_case of output schema name).
+- AVOID schema names where the snake_case version matches a field name in that schema.
+  BAD: Schema "Plan" with field "plan" → both produce key "plan", causing collision.
+  GOOD: Schema "PlanOutput" with field "plan" → "plan_output" vs "plan", no collision.
+- For gate conditions, use flat field names from the output schema (e.g. "quality_score >= 7").
+
+LOOP TERMINATION:
+- Every loop MUST have a termination condition. Common patterns:
+  - A counter (completed_count >= max_tasks) checked in logic
+  - A state flag (_done = True) set when goal is achieved
+  - A gate that checks completion and branches to exit
+- Without termination, loops run forever. Always include a max iteration check.
 
 Output ONLY valid YAML. No markdown code fences. No explanatory text before or after.
 
@@ -82,8 +104,14 @@ Here are example specs for reference:
 ---
 
 Generate a complete, valid OpenClaw spec YAML. Include all entities, processes, edges, and schemas.
-Make sure every entity referenced in an edge exists. Make sure the entry_point process exists.
-Add logic fields to processes that need data preparation."""
+Requirements:
+- Every entity referenced in an edge MUST exist in entities
+- Every schema referenced in entities/edges MUST exist in schemas
+- entry_point MUST reference an existing process
+- Add logic fields to processes that need data preparation before agent invocations
+- If multiple agents run in parallel, use fan-out (multiple invoke edges from same process)
+- Every loop MUST have a termination condition
+- Avoid schema names whose snake_case matches a field name in the schema"""
 
     return system, user
 
@@ -92,6 +120,8 @@ def call_llm(model, system, user, temperature=0.3, max_tokens=8192):
     """Call the LLM to generate the spec."""
     if model.startswith("claude") or model.startswith("anthropic"):
         return _call_anthropic(model, system, user, temperature, max_tokens)
+    elif model.startswith("gemini"):
+        return _call_gemini(model, system, user, temperature, max_tokens)
     else:
         return _call_openai(model, system, user, temperature, max_tokens)
 
@@ -121,6 +151,17 @@ def _call_anthropic(model, system, user, temperature, max_tokens):
         messages=[{"role": "user", "content": user}],
     )
     return response.content[0].text
+
+
+def _call_gemini(model, system, user, temperature, max_tokens):
+    from google import genai
+    client = genai.Client()
+    response = client.models.generate_content(
+        model=model,
+        contents=f"{system}\n\n{user}",
+        config={"temperature": temperature, "max_output_tokens": max_tokens},
+    )
+    return response.text
 
 
 def extract_yaml(response):
@@ -161,7 +202,7 @@ def main():
     parser = argparse.ArgumentParser(description="OpenClaw Spec Generator (docs → spec)")
     parser.add_argument("input", help="Path to description file, or '-' for stdin")
     parser.add_argument("-o", "--output", help="Output YAML file path")
-    parser.add_argument("--model", default="gpt-4.1-mini", help="LLM model to use")
+    parser.add_argument("--model", default="gemini-3-flash-preview", help="LLM model to use")
     parser.add_argument("--validate", action="store_true", help="Validate generated spec")
     parser.add_argument("--fix", action="store_true", help="Auto-fix validation errors (re-prompt)")
     parser.add_argument("--dry-run", action="store_true", help="Print prompt but don't call LLM")
@@ -211,9 +252,10 @@ def main():
             print(output)
 
             if args.fix:
-                # Re-prompt with validation errors
-                print("\nAttempting auto-fix...")
-                fix_user = f"""The spec you generated has validation errors:
+                max_fix_attempts = 3
+                for attempt in range(1, max_fix_attempts + 1):
+                    print(f"\nAuto-fix attempt {attempt}/{max_fix_attempts}...")
+                    fix_user = f"""The spec you generated has validation errors:
 
 {output}
 
@@ -221,15 +263,22 @@ Here is the spec you generated:
 
 {yaml_text}
 
-Fix ALL validation errors and return the corrected YAML. Output ONLY valid YAML, no markdown fences."""
+Fix ALL validation errors and return the corrected YAML. Output ONLY valid YAML, no markdown fences.
+Pay special attention to:
+- Every entity referenced in edges must exist in entities
+- Every process referenced in edges must exist in processes
+- Every schema referenced in entities/edges must exist in schemas
+- Gate branches must have valid target processes
+- invoke edges need input and output schema references"""
 
-                response2 = call_llm(args.model, system, fix_user)
-                yaml_text = extract_yaml(response2)
+                    response_fix = call_llm(args.model, system, fix_user)
+                    yaml_text = extract_yaml(response_fix)
 
-                valid2, output2 = validate_spec(yaml_text)
-                print(f"After fix: {'PASS' if valid2 else 'FAIL'}")
-                if not valid2:
-                    print(output2)
+                    valid, output = validate_spec(yaml_text)
+                    print(f"After fix {attempt}: {'PASS' if valid else 'FAIL'}")
+                    if valid:
+                        break
+                    print(output)
 
     # Output
     if args.output:

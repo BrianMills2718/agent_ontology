@@ -32,10 +32,38 @@ def trace_call(agent_label, model, system_prompt, user_message, response, durati
     print(f"      OUT: {response[:300]}")
 
 
-def dump_trace(path="trace.json"):
+def dump_trace(path="trace.json", iterations=0, clean_exit=True):
+    # Compute metrics
+    total_ms = sum(e["duration_ms"] for e in TRACE)
+    agents_used = list(set(e["agent"] for e in TRACE))
+    schema_ok = 0
+    for e in TRACE:
+        try:
+            r = e["response"].strip()
+            if r.startswith("```"): r = "\n".join(r.split("\n")[1:-1])
+            json.loads(r if r.startswith("{") else r[r.find("{"):r.rfind("}")+1])
+            schema_ok += 1
+        except (json.JSONDecodeError, ValueError):
+            pass
+    est_input_tokens = sum(len(e.get("user_message",""))//4 for e in TRACE)
+    est_output_tokens = sum(len(e.get("response",""))//4 for e in TRACE)
+    metrics = {
+        "total_llm_calls": len(TRACE),
+        "total_duration_ms": total_ms,
+        "avg_call_ms": total_ms // max(len(TRACE), 1),
+        "iterations": iterations,
+        "clean_exit": clean_exit,
+        "agents_used": agents_used,
+        "schema_compliance": f"{schema_ok}/{len(TRACE)}",
+        "est_input_tokens": est_input_tokens,
+        "est_output_tokens": est_output_tokens,
+    }
+    output = {"metrics": metrics, "trace": TRACE}
     with open(path, "w") as f:
-        json.dump(TRACE, f, indent=2)
-    print(f"\nTrace written to {path} ({len(TRACE)} calls)")
+        json.dump(output, f, indent=2)
+    print(f"\nTrace written to {path} ({len(TRACE)} calls, {total_ms}ms total)")
+    print(f"  Schema compliance: {schema_ok}/{len(TRACE)}, est tokens: ~{est_input_tokens}in/~{est_output_tokens}out")
+    return metrics
 
 # ═══════════════════════════════════════════════════════════
 # LLM Call Infrastructure
@@ -370,11 +398,18 @@ def process_pull_task(state):
         print("    No tasks remaining!")
         state.data["_done"] = True
         return state
+    completed = state.data.get("completed_count", 0)
+    max_tasks = state.data.get("max_tasks", 5)
+    if completed >= max_tasks:
+        print(f"    Completed {completed} tasks (max {max_tasks}). Stopping.")
+        state.data["_done"] = True
+        return state
     task = tasks.pop(0)
     state.data["task"] = task
     state.data["tasks"] = tasks
+    state.data["completed_count"] = completed + 1
     state.data["context"] = [e.get("text", "") for e in state.vector_db.read() if e.get("text")][-5:]
-    print(f"    Pulled task: {task.get('description', task)}")
+    print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
     print(f"    Context from prior results: {len(state.data['context'])} items")
     if state.data.get("_done"):
         return state
@@ -525,10 +560,12 @@ def run(initial_data=None):
             print("\n  [DONE] Reached terminal state.")
             break
 
+    _clean_exit = state.iteration < MAX_ITERATIONS
     if state.iteration >= MAX_ITERATIONS:
         print(f"\n  [STOPPED] Max iterations ({MAX_ITERATIONS}) reached.")
+        _clean_exit = False
 
-    dump_trace()
+    dump_trace(iterations=state.iteration, clean_exit=_clean_exit)
     print(f"\nFinal state.data keys: {list(state.data.keys())}")
     return state
 

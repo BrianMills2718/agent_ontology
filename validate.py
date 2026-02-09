@@ -244,6 +244,202 @@ def validate_spec(spec, ontology, filepath):
                 if entity_ref and entity_ref not in all_nodes:
                     err(f"Protocol '{p.get('id')}' participant references unknown entity '{entity_ref}'")
 
+    # ════════════════════════════════════════════════════
+    # 6. Advanced structural checks
+    # ════════════════════════════════════════════════════
+
+    # Build adjacency structures for graph analysis
+    # outgoing_flow[pid] = set of process ids reachable via flow/branch/loop edges from pid
+    outgoing_flow = {}   # node_id -> set of target node_ids (flow/branch/loop edges)
+    incoming_flow = {}   # node_id -> set of source node_ids (flow/branch/loop edges)
+    outgoing_flow_only = {}  # node_id -> set of target node_ids (flow edges only)
+    invoke_from = {}     # node_id -> set of target entity_ids (invoke edges)
+    read_from = {}       # node_id -> set of target store_ids (read edges)
+    write_from = {}      # node_id -> set of target store_ids (write edges)
+
+    for e in edges:
+        etype = e.get("type")
+        efrom = e.get("from")
+        eto = e.get("to")
+        if not efrom or not eto:
+            continue
+        if etype in ("flow", "branch", "loop"):
+            outgoing_flow.setdefault(efrom, set()).add(eto)
+            incoming_flow.setdefault(eto, set()).add(efrom)
+        if etype == "flow":
+            outgoing_flow_only.setdefault(efrom, set()).add(eto)
+        if etype == "invoke":
+            invoke_from.setdefault(efrom, set()).add(eto)
+        if etype == "read":
+            read_from.setdefault(efrom, set()).add(eto)
+        if etype == "write":
+            write_from.setdefault(efrom, set()).add(eto)
+
+    # Also include gate branch targets declared in process definitions
+    # (some specs declare branches in the gate's branches[] array rather
+    # than as explicit branch-type edges in the edges list)
+    for p in processes:
+        pid = p.get("id")
+        if not pid:
+            continue
+        if p.get("type") == "gate":
+            for b in p.get("branches", []):
+                target = b.get("target")
+                if target and target in all_nodes:
+                    outgoing_flow.setdefault(pid, set()).add(target)
+                    incoming_flow.setdefault(target, set()).add(pid)
+        # Also include gate default targets
+        default_target = p.get("default")
+        if p.get("type") == "gate" and default_target and default_target in all_nodes:
+            outgoing_flow.setdefault(pid, set()).add(default_target)
+            incoming_flow.setdefault(default_target, set()).add(pid)
+
+    process_ids = {p.get("id") for p in processes if p.get("id")}
+
+    # ── Rule 6a: Unreachable processes ──
+    # Starting from entry_point, follow flow/branch/loop edges to find all
+    # reachable processes. Any process not reachable produces a WARNING.
+    effective_entry = entry_point
+    if not effective_entry:
+        # Fall back to auto-detected root if no entry_point declared
+        all_incoming = set()
+        for e in edges:
+            if e.get("type") in ("flow", "invoke"):
+                all_incoming.add(e.get("to"))
+        auto_roots = process_ids - all_incoming
+        if len(auto_roots) == 1:
+            effective_entry = auto_roots.pop()
+
+    if effective_entry and effective_entry in all_nodes:
+        reachable = set()
+        frontier = [effective_entry]
+        while frontier:
+            current = frontier.pop()
+            if current in reachable:
+                continue
+            reachable.add(current)
+            for target in outgoing_flow.get(current, set()):
+                if target not in reachable:
+                    frontier.append(target)
+        for pid in sorted(process_ids):
+            if pid not in reachable:
+                warn(f"Process '{pid}' is unreachable from entry_point '{effective_entry}'")
+
+    # ── Rule 6b: Fan-out without join ──
+    # When a process has multiple outgoing flow edges, check that all
+    # targets eventually converge to a common downstream process.
+    def _find_all_downstream(start_id, adjacency, visited=None):
+        """Return all nodes reachable from start_id via adjacency."""
+        if visited is None:
+            visited = set()
+        frontier = [start_id]
+        result = set()
+        while frontier:
+            node = frontier.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            result.add(node)
+            for nxt in adjacency.get(node, set()):
+                if nxt not in visited:
+                    frontier.append(nxt)
+        return result
+
+    for pid in process_ids:
+        flow_targets = outgoing_flow_only.get(pid, set())
+        if len(flow_targets) > 1:
+            # This process fans out — check if the branches converge
+            downstream_sets = []
+            for target in flow_targets:
+                ds = _find_all_downstream(target, outgoing_flow)
+                downstream_sets.append(ds)
+            # Check intersection: is there a common node all branches reach?
+            if downstream_sets:
+                common = downstream_sets[0]
+                for ds in downstream_sets[1:]:
+                    common = common & ds
+                if not common:
+                    warn(f"Process '{pid}' has fan-out flow edges to {sorted(flow_targets)} that never converge to a common downstream process")
+
+    # ── Rule 6c: Empty processes ──
+    # If a process has type "step" but has no logic field AND no invoke
+    # edges from it AND no read/write edges from it, it's an empty shell.
+    for p in processes:
+        pid = p.get("id")
+        if not pid:
+            continue
+        if p.get("type") == "step":
+            has_logic = bool(p.get("logic"))
+            has_invoke = pid in invoke_from
+            has_read = pid in read_from
+            has_write = pid in write_from
+            if not has_logic and not has_invoke and not has_read and not has_write:
+                warn(f"Process '{pid}' has no logic, invocations, or store access (empty shell)")
+
+    # ── Rule 6d: Schema field collisions in fan-out ──
+    # When a process has multiple outgoing flow edges and the target
+    # processes invoke agents with the same output schema field names,
+    # warn about potential field collisions.
+    schema_map = {s.get("name"): s for s in schemas if s.get("name")}
+
+    def _get_output_field_names(process_id):
+        """Get the set of output schema field names for agents invoked by a process."""
+        field_names = set()
+        for inv_edge in edges:
+            if inv_edge.get("type") != "invoke":
+                continue
+            if inv_edge.get("from") != process_id:
+                continue
+            output_schema_name = inv_edge.get("output")
+            if output_schema_name and output_schema_name in schema_map:
+                schema_def = schema_map[output_schema_name]
+                for field in schema_def.get("fields", []):
+                    fname = field.get("name")
+                    if fname:
+                        field_names.add((fname, output_schema_name))
+        return field_names
+
+    for pid in process_ids:
+        flow_targets = outgoing_flow_only.get(pid, set())
+        if len(flow_targets) > 1:
+            # Collect output fields from each fan-out target's invoke edges
+            target_fields = {}  # target_id -> set of (field_name, schema_name)
+            for target in flow_targets:
+                fields = _get_output_field_names(target)
+                if fields:
+                    target_fields[target] = fields
+
+            if len(target_fields) >= 2:
+                # Check for field name collisions across targets
+                all_field_names = {}  # field_name -> list of (target, schema_name)
+                for target, fields in target_fields.items():
+                    for fname, sname in fields:
+                        all_field_names.setdefault(fname, []).append((target, sname))
+
+                for fname, sources in all_field_names.items():
+                    if len(sources) >= 2:
+                        involved = ", ".join(f"'{t}' (schema '{s}')" for t, s in sources)
+                        warn(f"Fan-out from '{pid}': output field '{fname}' produced by multiple targets: {involved} (potential field collision)")
+
+    # ── Rule 6e: Disconnected flow chain ──
+    # If process A flows to process B, but B has no outgoing flow/branch/loop
+    # edges and is not a terminal node (no _done in logic), produce WARNING.
+    for p in processes:
+        pid = p.get("id")
+        if not pid:
+            continue
+        # Only check process nodes (not entities)
+        if all_nodes.get(pid, {}).get("category") != "process":
+            continue
+        has_incoming_flow = pid in incoming_flow
+        has_outgoing_flow = pid in outgoing_flow
+        if has_incoming_flow and not has_outgoing_flow:
+            # This process is a dead-end — check if it's intentionally terminal
+            logic_text = p.get("logic", "") or ""
+            is_terminal = "_done" in logic_text
+            if not is_terminal:
+                warn(f"Process '{pid}' has incoming flow but no outgoing flow/branch/loop edges and no '_done' in logic (disconnected chain end)")
+
     return errors, warnings
 
 

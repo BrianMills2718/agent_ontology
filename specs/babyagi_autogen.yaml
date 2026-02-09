@@ -60,13 +60,20 @@ processes:
           print("    No tasks remaining!")
           state.data["_done"] = True
           return state
+      completed = state.data.get("completed_count", 0)
+      max_tasks = state.data.get("max_tasks", 5)
+      if completed >= max_tasks:
+          print(f"    Completed {completed} tasks (max {max_tasks}). Stopping.")
+          state.data["_done"] = True
+          return state
       task = tasks.pop(0)
       state.data["task"] = task
       state.data["tasks"] = tasks
+      state.data["completed_count"] = completed + 1
       # Prepare context from vector_db stored results (top 5)
       stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
       state.data["context"] = stored_results[-5:]
-      print(f"    Pulled task: {task.get('description', task)}")
+      print(f"    Pulled task {completed + 1}/{max_tasks}: {task.get('description', task)}")
       print(f"    Context from prior results: {len(state.data['context'])} items")
 
   - id: execute_task
@@ -97,6 +104,11 @@ processes:
     description: "Retrieve relevant context from vector DB using Context Agent"
     data_in: EnrichedResult
     data_out: ContextResult
+    logic: |
+      state.data["query"] = state.data.get("result", "")
+      state.data["top_k"] = 5
+      stored_results = [e.get("text", "") for e in state.vector_db.read() if e.get("text")]
+      state.data["stored_results"] = stored_results
 
   - id: create_and_reprioritize
     type: step
@@ -110,40 +122,45 @@ processes:
 
 edges:
 
-  # Step 1 → Execution Agent → Step 2
-  - type: invoke
+  # Step 1 → Step 2
+  - type: flow
     from: pull_task
+    to: execute_task
+    label: "Pass task"
+
+  # Step 2: Invoke Execution Agent → Step 3
+  - type: invoke
+    from: execute_task
     to: execution_agent
     label: "Execute task"
     input: ExecutionInput
     output: ExecutionOutput
 
   - type: flow
-    from: pull_task
-    to: execute_task
-    label: "Return task"
-
-  # Step 2 → Step 3
-  - type: flow
     from: execute_task
     to: enrich_and_store
     label: "Execution result"
 
-  # Step 3 → Context Agent + Vector DB
-  - type: invoke
-    from: enrich_and_store
-    to: context_agent
-    label: "Retrieve context"
-    input: ContextQuery
-    output: ContextResult
-
+  # Step 3 → Vector DB write → Step 4
   - type: write
     from: enrich_and_store
     to: vector_db
     label: "Store result in Vector DB"
     data: EmbeddedResult
 
-  # Step 4 → Step 5 & 6
+  - type: flow
+    from: enrich_and_store
+    to: retrieve_context
+    label: "Proceed to context retrieval"
+
+  # Step 4: Invoke Context Agent → Step 5 & 6
+  - type: invoke
+    from: retrieve_context
+    to: context_agent
+    label: "Retrieve context"
+    input: ContextQuery
+    output: ContextResult
+
   - type: flow
     from: retrieve_context
     to: create_and_reprioritize

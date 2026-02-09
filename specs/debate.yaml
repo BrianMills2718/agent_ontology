@@ -157,7 +157,6 @@ processes:
       combined_score = state.data.get("pro_score", 0) + state.data.get("con_score", 0)
       print(f"    Combined judge score: {combined_score}")
       if combined_score < 12:
-          state.data["round"] = state.data.get("round", 1) + 1
           print("    Debate quality low, adding one more round.")
           state.data["_continue_debate"] = True
       else:
