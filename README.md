@@ -81,6 +81,13 @@ python3 similarity.py --all specs/ --top 5 --clusters 5
 # 19. Migrate specs to new version
 python3 migrate.py --all specs/ --to 1.1 --dry-run
 python3 migrate.py --list-versions
+
+# 20. Run property-based tests (no API keys needed)
+python3 test_properties.py
+
+# 21. Generate comparative analysis report
+python3 comparative_report.py --all specs/
+python3 comparative_report.py --all specs/ --json
 ```
 
 ## The Pipeline
@@ -103,13 +110,14 @@ python3 validate.py specs/my_agent.yaml
 # Output: errors (must fix) and warnings (informational)
 ```
 
-Validates against `ONTOLOGY.yaml` with 20+ rules:
+Validates against `ONTOLOGY.yaml` with 25+ rules:
 - Entity/process/edge type validation with required fields
 - Schema reference resolution
 - Graph connectivity (unreachable processes, disconnected chains)
 - Fan-out without join detection
 - Empty process shells (no logic, invocations, or store access)
 - Schema field collision warnings in fan-out patterns
+- Error handler scope and retry configuration validation
 
 ### Step 3: Visualize
 
@@ -118,7 +126,7 @@ Open `spec-viewer.html` in a browser (via HTTP server). Four views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 15 agent specs.
+- **Compare All** — Side-by-side comparison table across all 20 agent specs.
 
 Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
@@ -144,11 +152,16 @@ Generates a complete Python agent with:
 
 ## Agent Catalog
 
-15 agent specs, all validated. 14 are instantiable and runnable with `gemini-3-flash-preview`.
+20 agent specs, all validated. 19 are instantiable and runnable with `gemini-3-flash-preview`.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
 | `claude-code` | Tool-use agent | 22 | 19 | 40 | 83.2 (very complex) | Description only |
+| `meta_prompting` | Dynamic delegation | 6 | 15 | 11 | 70.4 (complex) | Working |
+| `mixture_of_agents` | Parallel proposers | 6 | 11 | 7 | 68.8 (complex) | Working |
+| `plan_and_solve` | Decompose+verify | 4 | 9 | 9 | 65.7 (complex) | Working |
+| `socratic_tutor` | Human-in-loop tutoring | 7 | 12 | 13 | 65.5 (complex) | Working |
+| `reflexion` | Self-reflection loop | 5 | 11 | 10 | 62.1 (complex) | Working |
 | `crew` | Multi-agent | 6 | 17 | 9 | 61.4 (complex) | Working |
 | `react` | Reason+Act | 6 | 8 | 8 | 60.7 (complex) | Working |
 | `code_reviewer` | Parallel analysis | 7 | 10 | 9 | 60.6 (complex) | Working |
@@ -156,12 +169,12 @@ Generates a complete Python agent with:
 | `autogpt` | Goal-driven | 6 | 11 | 10 | 59.2 (moderate) | Working |
 | `babyagi_autogen` | Task-driven | 5 | 3 | 9 | 58.4 (moderate) | Working |
 | `debate` | Multi-agent debate | 6 | 13 | 7 | 57.7 (moderate) | Working |
-| `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
-| `tree_of_thought` | Tree search | 3 | 7 | 7 | 55.4 (moderate) | Working |
-| `plan_and_solve` | Decompose+verify | 4 | 9 | 9 | 65.7 (complex) | Working |
-| `self_refine` | Generate-critique | 2 | 7 | 7 | 55.0 (moderate) | Working |
 | `voyager` | Open-ended exploration | 5 | 12 | 9 | 55.5 (moderate) | Working |
+| `tree_of_thought` | Tree search | 3 | 7 | 7 | 55.4 (moderate) | Working |
+| `self_refine` | Generate-critique | 2 | 7 | 7 | 55.0 (moderate) | Working |
 | `lats` | MCTS tree search | 5 | 8 | 8 | 51.2 (moderate) | Working |
+| `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
+| `map_reduce` | Parallel chunk processing | 4 | 6 | 11 | 48.6 (moderate) | Working |
 | `multi_agent_codegen` | Code generation pipeline | 5 | 5 | 7 | 47.4 (moderate) | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
@@ -196,6 +209,7 @@ schemas:        # Data shapes flowing between components
 - `spawn` — Create sub-agents (supports `recursive: true`)
 - `protocol` — Multi-party interaction
 - `policy` — Cross-cutting constraint
+- `error_handler` — Structured error handling with retry, fallback, timeout
 
 ### Edge types
 - `flow` — Sequential control flow
@@ -203,6 +217,7 @@ schemas:        # Data shapes flowing between components
 - `loop` — Conditional back-edge
 - `branch` — Conditional forward-edge (from gates)
 - `read` / `write` — Store access
+- `error` — Error flow routing to handler
 - `modify` / `observe` — Policy interactions
 
 Full type system: `ONTOLOGY.yaml`
@@ -230,6 +245,8 @@ Full type system: `ONTOLOGY.yaml`
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
+| `test_properties.py` | Property-based structural tests | `python3 test_properties.py` |
+| `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 
 ## Architecture
 
@@ -252,6 +269,8 @@ specs/*.yaml           # Agent specifications (15 agents)
      +---> mermaid.py        # Mermaid flowchart export
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
+     +---> comparative_report.py  # Cross-spec comparative analysis
+     +---> test_properties.py     # Property-based structural tests
      +---> spec-viewer.html  # Visualization (4 views + trace overlay)
 
 agents/*.py            # Generated runnable agents
@@ -303,13 +322,13 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-specs/                  # Agent specifications (YAML, 15 specs)
+specs/                  # Agent specifications (YAML, 20 specs)
 agents/                 # Generated runnable agents (Python)
 test_descriptions/      # Natural language descriptions for specgen testing
 benchmarks/             # Benchmark task configs
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
-validate.py             # Spec validator (20+ rules)
+validate.py             # Spec validator (25+ rules)
 instantiate.py          # Code generator (fan-out, namespacing, retry, schema validation)
 specgen.py              # Description-to-spec pipeline
 spec-viewer.html        # Interactive multi-view visualization + trace overlay
@@ -325,6 +344,10 @@ dashboard.py            # Unified project health report
 mermaid.py              # Mermaid flowchart export
 similarity.py           # Spec similarity & clustering
 migrate.py              # Spec version migration
+comparative_report.py   # Cross-spec comparative analysis
+test_properties.py      # Property-based structural tests (139 tests)
+gaps.md                 # Ontology expressiveness gap analysis
+.github/workflows/      # CI: validate, lint, syntax-check, smoke-test
 mutate.py               # Spec mutation engine (8 operators)
 evolve.py               # Evolutionary search over agent architectures
 benchmark.py            # Benchmark suite with standardized evaluation tasks
