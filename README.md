@@ -41,6 +41,19 @@ python3 complexity.py --all specs/
 
 # 7. Run all agent tests
 python3 test_agents.py
+
+# 8. Override model for all agents
+python3 test_agents.py --model gpt-4o --agent react
+
+# 9. Compare models side-by-side
+python3 test_agents.py --compare-models gemini-3-flash-preview gpt-4o-mini gpt-4o
+
+# 10. Mutate and evolve a spec
+python3 mutate.py specs/react.yaml --random -n 3
+python3 evolve.py specs/react.yaml --generations 2 --population 4
+
+# 11. E2E specgen pipeline test
+python3 test_specgen.py --fix
 ```
 
 ## The Pipeline
@@ -78,7 +91,9 @@ Open `spec-viewer.html` in a browser (via HTTP server). Four views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 9 agent specs.
+- **Compare All** — Side-by-side comparison table across all 12 agent specs.
+
+Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
 ### Step 4: Instantiate
 
@@ -95,10 +110,14 @@ Generates a complete Python agent with:
 - Trace logging with metrics (LLM calls, duration, schema compliance, token estimates)
 - Store abstractions (queue, vector, buffer, log)
 - Multi-model routing: `claude*` → Anthropic, `gemini*` → Google genai, else → OpenAI
+- Runtime model override via `OPENCLAW_MODEL` env var
+- LLM retry with exponential backoff (3 attempts)
+- Runtime schema validation (field presence + type checking)
+- Configurable `MAX_ITERATIONS` via `OPENCLAW_MAX_ITER` env var
 
 ## Agent Catalog
 
-9 agent specs, all validated. 8 are instantiable and runnable with `gemini-3-flash-preview`.
+12 agent specs, all validated. 11 are instantiable and runnable with `gemini-3-flash-preview`.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -111,6 +130,9 @@ Generates a complete Python agent with:
 | `babyagi_autogen` | Task-driven | 5 | 3 | 9 | 58.4 (moderate) | Working |
 | `debate` | Multi-agent debate | 6 | 13 | 7 | 57.7 (moderate) | Working |
 | `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
+| `tree_of_thought` | Tree search | 3 | 7 | — | — | Working |
+| `plan_and_solve` | Decompose+verify | 4 | 9 | — | — | Working |
+| `self_refine` | Generate-critique | 2 | 7 | — | — | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -167,6 +189,9 @@ Full type system: `ONTOLOGY.yaml`
 | `analyze_trace.py` | Trace analysis and comparison | `python3 analyze_trace.py trace.json` |
 | `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
 | `mutate.py` | Spec mutation engine | `python3 mutate.py spec.yaml --random -n 5` |
+| `evolve.py` | Evolutionary search | `python3 evolve.py spec.yaml --generations 3 --population 5` |
+| `benchmark.py` | Benchmark suite | `python3 benchmark.py --agent react --json` |
+| `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
 
 ## Architecture
 
@@ -174,17 +199,19 @@ Full type system: `ONTOLOGY.yaml`
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (9 agents)
+specs/*.yaml           # Agent specifications (12 agents)
      |
      +---> validate.py       # Validation (20+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py
      +---> complexity.py     # Complexity scoring (10 metrics)
      +---> mutate.py         # Spec mutation engine (8 operators)
-     +---> spec-viewer.html  # Visualization (4 views)
+     +---> evolve.py         # Evolutionary search (mutate → test → select)
+     +---> spec-viewer.html  # Visualization (4 views + trace overlay)
 
 agents/*.py            # Generated runnable agents
      |
-     +---> test_agents.py    # Automated testing with validators
+     +---> test_agents.py    # Automated testing + multi-model comparison
+     +---> benchmark.py      # Benchmark suite with standardized tasks
      +---> trace.json        # Runtime traces
               |
               v
@@ -197,6 +224,9 @@ specgen.py             # LLM-powered spec generation
      |
      v
 specs/*.yaml           # Generated specs (validated + auto-fixed)
+     |
+     v
+test_specgen.py        # E2E pipeline testing
 ```
 
 ## Formal Foundation
@@ -227,18 +257,22 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-specs/                  # Agent specifications (YAML)
+specs/                  # Agent specifications (YAML, 12 specs)
 agents/                 # Generated runnable agents (Python)
 test_descriptions/      # Natural language descriptions for specgen testing
+benchmarks/             # Benchmark task configs
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
 validate.py             # Spec validator (20+ rules)
-instantiate.py          # Code generator (fan-out, namespacing, metrics)
+instantiate.py          # Code generator (fan-out, namespacing, retry, schema validation)
 specgen.py              # Description-to-spec pipeline
-spec-viewer.html        # Interactive multi-view visualization
-test_agents.py          # Automated test harness
+spec-viewer.html        # Interactive multi-view visualization + trace overlay
+test_agents.py          # Automated test harness + multi-model comparison
+test_specgen.py         # E2E specgen pipeline testing
 analyze_trace.py        # Trace analysis and comparison
 complexity.py           # Spec complexity scoring
 mutate.py               # Spec mutation engine (8 operators)
+evolve.py               # Evolutionary search over agent architectures
+benchmark.py            # Benchmark suite with standardized evaluation tasks
 trace.json              # LLM call traces from last agent run
 ```

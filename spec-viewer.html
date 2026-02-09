@@ -62,7 +62,7 @@
             white-space: nowrap;
         }
         #header h1 span { color: #7ee787; }
-        #header select {
+        #header select, #header .hdr-btn {
             background: #161b22;
             color: #c9d1d9;
             border: 1px solid #30363d;
@@ -72,6 +72,7 @@
             font-family: inherit;
             cursor: pointer;
         }
+        #header .hdr-btn:hover { border-color: #58a6ff; color: #e6edf3; }
         #header .stats {
             font-size: 0.7em;
             color: #484f58;
@@ -143,6 +144,18 @@
         }
         .sb-schema .field-name { color: #7ee787; }
         .sb-schema .field-type { color: #d2a8ff; }
+        .sb-logic {
+            background: #0d1117;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin: 4px 0;
+            font-size: 0.72em;
+            white-space: pre-wrap;
+            color: #8b949e;
+            line-height: 1.5;
+            max-height: 200px;
+            overflow-y: auto;
+        }
 
         /* ── Legend ── */
         #legend {
@@ -196,146 +209,264 @@
         .view-container { display: none; }
         .view-container.active { display: block; }
 
-        /* ── State Machine View ── */
+        /* ═══════════════════════════════════════════════════════
+           Enhanced State Machine View
+           ═══════════════════════════════════════════════════════ */
         #sm-view {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
-            overflow-y: auto;
+            overflow: auto;
             padding: 60px 32px 32px;
             background: #0d1117;
         }
-        .sm-flow {
-            max-width: 700px;
-            margin: 0 auto;
-        }
-        .sm-node {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 12px 16px;
-            margin: 0 auto;
-            max-width: 500px;
-            cursor: pointer;
-            transition: border-color 0.15s, box-shadow 0.15s;
+        .sm-canvas {
             position: relative;
-        }
-        .sm-node:hover {
-            border-color: #58a6ff;
-            box-shadow: 0 0 8px rgba(88,166,255,0.2);
-        }
-        .sm-node-label {
-            font-weight: 600;
-            font-size: 0.9em;
-            color: #e6edf3;
-        }
-        .sm-node-type {
-            font-size: 0.7em;
-            color: #484f58;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-top: 2px;
-        }
-        .sm-node-desc {
-            font-size: 0.75em;
-            color: #8b949e;
-            margin-top: 6px;
-            line-height: 1.5;
-        }
-        .sm-node-io {
-            display: flex;
-            gap: 12px;
-            margin-top: 6px;
-        }
-        .sm-io-tag {
-            font-size: 0.65em;
-            padding: 2px 6px;
-            border-radius: 3px;
-            background: rgba(88,166,255,0.1);
-            color: #58a6ff;
-        }
-        .sm-node[data-type="gate"] {
-            background: rgba(231,76,60,0.08);
-            border-color: #e74c3c;
-            max-width: 460px;
-        }
-        .sm-node[data-type="gate"] .sm-node-label { color: #e74c3c; }
-        .sm-arrow {
-            text-align: center;
-            padding: 6px 0;
-            color: #30363d;
-            font-size: 1.2em;
-            position: relative;
-        }
-        .sm-arrow-label {
-            font-size: 0.6em;
-            color: #484f58;
-            position: absolute;
-            left: calc(50% + 20px);
-            top: 50%;
-            transform: translateY(-50%);
-            white-space: nowrap;
-        }
-        .sm-branch-row {
-            display: flex;
-            gap: 16px;
-            max-width: 600px;
             margin: 0 auto;
+            min-height: 600px;
         }
-        .sm-branch {
-            flex: 1;
+        .sm-title-bar {
             text-align: center;
-            padding: 8px;
-            border-radius: 4px;
-            background: rgba(231,76,60,0.06);
-            border: 1px dashed #e74c3c40;
-            font-size: 0.72em;
-        }
-        .sm-branch-cond {
-            color: #e74c3c;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        .sm-branch-target {
-            color: #58a6ff;
-            cursor: pointer;
-        }
-        .sm-branch-target:hover { text-decoration: underline; }
-        .sm-invoke-badge {
-            display: inline-block;
-            margin-top: 6px;
-            font-size: 0.65em;
-            padding: 2px 8px;
-            border-radius: 3px;
-            background: rgba(78,205,196,0.1);
-            color: #4ecdc4;
-            border: 1px solid rgba(78,205,196,0.2);
-        }
-        .sm-loop-marker {
-            text-align: center;
-            padding: 8px;
-            margin: 4px auto;
-            max-width: 400px;
-            border-radius: 4px;
-            background: rgba(240,136,62,0.08);
-            border: 1px dashed #f0883e60;
-            font-size: 0.72em;
-            color: #f0883e;
-        }
-        .sm-section-title {
-            text-align: center;
-            font-size: 0.7em;
+            font-size: 0.8em;
             color: #484f58;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin: 20px 0 8px;
+            margin-bottom: 24px;
+            padding-bottom: 6px;
             border-bottom: 1px solid #21262d;
-            padding-bottom: 4px;
-            max-width: 500px;
-            margin-left: auto;
-            margin-right: auto;
+        }
+        .sm-title-bar strong { color: #e6edf3; font-size: 1.2em; letter-spacing: 0; text-transform: none; }
+
+        /* Process nodes as positioned boxes */
+        .sm-proc {
+            position: absolute;
+            cursor: pointer;
+            transition: box-shadow 0.15s, transform 0.1s;
+            z-index: 2;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.82em;
+            padding: 10px 16px;
+            min-width: 140px;
+        }
+        .sm-proc:hover {
+            box-shadow: 0 0 14px rgba(88,166,255,0.35);
+            transform: translateY(-1px);
+            z-index: 5;
+        }
+        .sm-proc.sm-selected {
+            box-shadow: 0 0 16px rgba(88,166,255,0.5);
+            outline: 2px solid #58a6ff;
+            outline-offset: 2px;
+        }
+        .sm-proc-name { font-weight: 600; color: #e6edf3; font-size: 0.95em; margin-bottom: 2px; }
+        .sm-proc-type { font-size: 0.7em; color: #484f58; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* Step: rounded rectangle, light blue */
+        .sm-proc-step {
+            background: rgba(52,152,219,0.08);
+            border: 2px solid #3498db;
+            border-radius: 10px;
+            color: #3498db;
+        }
+        .sm-proc-step .sm-proc-name { color: #7ec8e3; }
+
+        /* Gate: diamond shape via clip-path, yellow */
+        .sm-proc-gate {
+            background: rgba(241,196,15,0.10);
+            border: 2px solid #f1c40f;
+            min-width: 160px;
+            min-height: 70px;
+            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+            padding: 20px 28px;
+        }
+        .sm-proc-gate .sm-proc-name { color: #f1c40f; font-size: 0.85em; }
+        .sm-proc-gate .sm-proc-type { display: none; }
+
+        /* Checkpoint: octagon, orange */
+        .sm-proc-checkpoint {
+            background: rgba(230,126,34,0.10);
+            border: 2px solid #e67e22;
+            clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+            min-width: 150px;
+            min-height: 60px;
+            padding: 14px 22px;
+        }
+        .sm-proc-checkpoint .sm-proc-name { color: #e67e22; }
+
+        /* Spawn: double-bordered rectangle, purple */
+        .sm-proc-spawn {
+            background: rgba(155,89,182,0.08);
+            border: 3px double #9b59b6;
+            border-radius: 6px;
+            color: #9b59b6;
+        }
+        .sm-proc-spawn .sm-proc-name { color: #c39bd3; }
+
+        /* Policy: rounded with dashed border */
+        .sm-proc-policy {
+            background: rgba(230,126,34,0.06);
+            border: 1px dashed #e67e22;
+            border-radius: 6px;
+        }
+        .sm-proc-policy .sm-proc-name { color: #e67e22; }
+
+        /* Entry point marker */
+        .sm-proc-entry {
+            outline: 3px solid #7ee787 !important;
+            outline-offset: 3px;
         }
 
-        /* ── Schemas View ── */
+        /* Invoke badges on the side */
+        .sm-invoke-sidebar {
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translate(100%, -50%);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            z-index: 3;
+        }
+        .sm-invoke-chip {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(78,205,196,0.1);
+            border: 1px solid rgba(78,205,196,0.25);
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 0.65em;
+            color: #4ecdc4;
+            white-space: nowrap;
+            cursor: default;
+        }
+        .sm-invoke-chip .inv-icon {
+            width: 10px;
+            height: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .sm-invoke-chip-agent { border-color: rgba(78,205,196,0.4); color: #4ecdc4; }
+        .sm-invoke-chip-tool { border-color: rgba(243,156,18,0.3); color: #f39c12; background: rgba(243,156,18,0.06); }
+
+        /* SVG overlay for edges */
+        .sm-svg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .sm-svg-layer line, .sm-svg-layer path {
+            fill: none;
+            stroke-width: 1.5;
+        }
+        .sm-edge-flow { stroke: #3498db; }
+        .sm-edge-loop { stroke: #f0883e; stroke-dasharray: 6 4; }
+        .sm-edge-branch { stroke: #e74c3c; }
+        .sm-edge-label {
+            font-family: 'SF Mono', monospace;
+            font-size: 10px;
+            fill: #8b949e;
+        }
+        .sm-edge-label-bg {
+            fill: #0d1117;
+            rx: 3;
+            ry: 3;
+        }
+
+        /* State Machine legend */
+        .sm-legend {
+            position: sticky;
+            top: 44px;
+            z-index: 6;
+            background: rgba(13,17,23,0.95);
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 8px 14px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+            font-size: 0.68em;
+        }
+        .sm-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #8b949e;
+        }
+        .sm-legend-shape {
+            width: 18px;
+            height: 14px;
+            border-radius: 3px;
+            display: inline-block;
+        }
+        .sm-legend-line {
+            width: 24px;
+            height: 2px;
+            display: inline-block;
+        }
+
+        /* Trace overlay controls */
+        .trace-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-left: 8px;
+        }
+        .trace-label { font-size: 0.68em; color: #484f58; }
+        .trace-badge {
+            position: absolute;
+            top: -6px;
+            left: -6px;
+            min-width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: #58a6ff;
+            color: #0d1117;
+            font-size: 0.6em;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 4px;
+            z-index: 6;
+        }
+        .trace-duration {
+            position: absolute;
+            bottom: -6px;
+            right: -6px;
+            border-radius: 4px;
+            padding: 1px 5px;
+            font-size: 0.55em;
+            font-weight: 600;
+            z-index: 6;
+            color: #fff;
+        }
+        .trace-llm-badge {
+            position: absolute;
+            bottom: -6px;
+            left: -6px;
+            border-radius: 4px;
+            padding: 1px 5px;
+            font-size: 0.55em;
+            font-weight: 600;
+            z-index: 6;
+            background: #9b59b6;
+            color: #fff;
+        }
+
+        /* ═══════════════════════════════════════════════════════
+           Enhanced Schemas View
+           ═══════════════════════════════════════════════════════ */
         #schemas-view {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -345,61 +476,120 @@
         }
         .schemas-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
             gap: 16px;
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         .schema-card {
             background: #161b22;
             border: 1px solid #30363d;
-            border-radius: 6px;
+            border-radius: 8px;
             padding: 16px;
-            transition: border-color 0.15s;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            scroll-margin-top: 80px;
         }
-        .schema-card:hover { border-color: #58a6ff; }
+        .schema-card:hover { border-color: #58a6ff; box-shadow: 0 0 8px rgba(88,166,255,0.15); }
+        .schema-card.schema-highlight {
+            border-color: #7ee787;
+            box-shadow: 0 0 16px rgba(126,231,135,0.3);
+        }
         .schema-card-name {
             font-weight: 600;
             color: #58a6ff;
-            font-size: 0.95em;
-            margin-bottom: 4px;
+            font-size: 1em;
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .schema-card-name .schema-count {
+            font-size: 0.7em;
+            color: #484f58;
+            font-weight: 400;
         }
         .schema-card-desc {
-            font-size: 0.72em;
-            color: #484f58;
-            margin-bottom: 10px;
+            font-size: 0.75em;
+            color: #8b949e;
+            margin-bottom: 12px;
+            line-height: 1.5;
         }
         .schema-field-row {
             display: flex;
             justify-content: space-between;
-            padding: 4px 0;
+            align-items: center;
+            padding: 5px 0;
             border-bottom: 1px solid rgba(33,38,45,0.5);
             font-size: 0.78em;
         }
         .schema-field-row:last-child { border-bottom: none; }
-        .schema-field-name { color: #7ee787; }
-        .schema-field-type { color: #d2a8ff; }
-        .schema-field-default { color: #484f58; font-size: 0.9em; }
+        .schema-field-name { color: #7ee787; font-weight: 500; }
+        .schema-field-type {
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        .schema-field-default { color: #484f58; font-size: 0.85em; margin-left: 6px; }
+        .schema-field-optional { color: #484f58; font-size: 0.75em; font-style: italic; margin-left: 4px; }
+        /* Type color coding */
+        .sft-string { background: rgba(46,204,113,0.1); color: #2ecc71; }
+        .sft-integer, .sft-number, .sft-boolean { background: rgba(52,152,219,0.1); color: #3498db; }
+        .sft-list { background: rgba(155,89,182,0.1); color: #9b59b6; }
+        .sft-enum { background: rgba(230,126,34,0.1); color: #e67e22; }
+        .sft-object { background: rgba(149,165,166,0.1); color: #95a5a6; }
+        .sft-datetime { background: rgba(241,196,15,0.1); color: #f1c40f; }
+        .sft-ref { background: rgba(88,166,255,0.1); color: #58a6ff; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+        .sft-ref:hover { color: #79c0ff; text-decoration-style: solid; }
+
         .schema-refs {
             margin-top: 10px;
             padding-top: 8px;
             border-top: 1px solid #21262d;
         }
+        .schema-refs-title {
+            font-size: 0.65em;
+            color: #484f58;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
         .schema-ref-tag {
             display: inline-block;
-            font-size: 0.65em;
-            padding: 2px 6px;
+            font-size: 0.68em;
+            padding: 2px 7px;
             margin: 2px;
             border-radius: 3px;
             color: #8b949e;
             border: 1px solid #30363d;
+            cursor: pointer;
+            transition: border-color 0.15s;
         }
+        .schema-ref-tag:hover { border-color: #58a6ff; color: #c9d1d9; }
+        .schema-ref-tag-process { border-color: rgba(52,152,219,0.3); color: #3498db; }
+        .schema-ref-tag-entity { border-color: rgba(78,205,196,0.3); color: #4ecdc4; }
+        .schema-ref-tag-edge { border-color: rgba(149,165,166,0.3); color: #95a5a6; }
         .schemas-summary {
             text-align: center;
             color: #484f58;
             font-size: 0.75em;
             margin-bottom: 16px;
         }
+        .schemas-filter {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .schemas-filter input {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #c9d1d9;
+            padding: 5px 12px;
+            font-family: inherit;
+            font-size: 0.8em;
+            width: 300px;
+        }
+        .schemas-filter input::placeholder { color: #484f58; }
+        .schemas-filter input:focus { outline: none; border-color: #58a6ff; }
 
         /* ── Compare View ── */
         #compare-view {
@@ -482,6 +672,9 @@
             vertical-align: middle;
             margin-right: 4px;
         }
+
+        /* Trace file input hidden */
+        #trace-file-input { display: none; }
     </style>
 </head>
 <body>
@@ -498,6 +691,9 @@
                 <option value="specs/code_reviewer.yaml">Code Reviewer</option>
                 <option value="specs/babyagi_autogen.yaml">BabyAGI (auto)</option>
                 <option value="specs/debate.yaml">Debate</option>
+                <option value="specs/tree_of_thought.yaml">Tree of Thought</option>
+                <option value="specs/plan_and_solve.yaml">Plan and Solve</option>
+                <option value="specs/self_refine.yaml">Self Refine</option>
             </select>
             <div class="tab-bar">
                 <button class="tab-btn active" data-view="graph">Graph</button>
@@ -505,6 +701,12 @@
                 <button class="tab-btn" data-view="schemas">Schemas</button>
                 <button class="tab-btn" data-view="compare">Compare All</button>
             </div>
+            <div class="trace-controls" id="trace-controls" style="display:none;">
+                <button class="hdr-btn" id="trace-load-btn" title="Load a trace.json file to overlay execution data">Load Trace</button>
+                <button class="hdr-btn" id="trace-clear-btn" style="display:none;" title="Clear trace overlay">Clear Trace</button>
+                <span class="trace-label" id="trace-info"></span>
+            </div>
+            <input type="file" id="trace-file-input" accept=".json">
             <span class="stats" id="stats"></span>
         </div>
         <!-- Graph view (existing) -->
@@ -525,22 +727,20 @@
     </div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-// OpenClaw Spec Viewer — renders agent specs as flowchart diagrams
-// ═══════════════════════════════════════════════════════════════
+// =====================================================================
+// OpenClaw Spec Viewer -- renders agent specs as flowchart diagrams
+// =====================================================================
 
-// ── Visual constants from ontology ──
+// -- Visual constants from ontology --
 const NODE_COLORS = {
-    // Entity types
     agent:  '#4ecdc4',
     store:  '#95a5a6',
     tool:   '#f39c12',
     human:  '#e6edf3',
     config: '#34495e',
-    // Process types
-    step:       '#c0c0c0',
-    gate:       '#e74c3c',
-    checkpoint: '#e6edf3',
+    step:       '#3498db',
+    gate:       '#f1c40f',
+    checkpoint: '#e67e22',
     spawn:      '#9b59b6',
     protocol:   '#3498db',
     policy:     '#e67e22',
@@ -568,17 +768,18 @@ const EDGE_STYLES = {
     observe: 'dotted',
 };
 
-// ── State ──
+// -- State --
 let spec = null;
-let nodes = [];      // { id, label, type, category, data, x, y, w, h }
-let edges = [];      // { from, to, type, label, data, fromNode, toNode }
+let nodes = [];
+let edges = [];
 let hoverNode = null;
 let hoverEdge = null;
 let selectedNode = null;
 let panX = 0, panY = 0, zoom = 1;
 let dragPan = false, dragNodeTarget = null, didDrag = false, lastMX = 0, lastMY = 0;
+let traceData = null;
 
-// ── Load spec ──
+// -- Load spec --
 async function loadSpec(path) {
     const resp = await fetch(path);
     const text = await resp.text();
@@ -592,18 +793,16 @@ async function loadSpec(path) {
     renderSidebar();
     draw();
 
-    // Render non-graph views if active
     if (currentView === 'sm') renderStateMachine();
     if (currentView === 'schemas') renderSchemas();
 }
 
-// ── Build graph from spec ──
+// -- Build graph from spec --
 function buildGraph() {
     nodes = [];
     edges = [];
     const idMap = {};
 
-    // Entities
     (spec.entities || []).forEach(e => {
         const n = {
             id: e.id,
@@ -617,7 +816,6 @@ function buildGraph() {
         idMap[e.id] = n;
     });
 
-    // Processes
     (spec.processes || []).forEach(p => {
         const n = {
             id: p.id,
@@ -631,7 +829,6 @@ function buildGraph() {
         idMap[p.id] = n;
     });
 
-    // Edges
     (spec.edges || []).forEach(e => {
         const fromNode = idMap[e.from];
         const toNode = idMap[e.to];
@@ -648,12 +845,11 @@ function buildGraph() {
     });
 }
 
-// ── Layout algorithm ──
+// -- Layout algorithm --
 function layoutGraph() {
     const canvas = document.getElementById('canvas');
     const W = canvas.width, H = canvas.height;
 
-    // Step 1: Find the main flow spine via BFS from entry_point
     const spine = [];
     const visited = new Set();
     const spineSet = new Set();
@@ -669,11 +865,9 @@ function layoutGraph() {
             spine.push(node);
             spineSet.add(id);
 
-            // Follow flow and branch edges to other processes
             const outgoing = edges.filter(e =>
                 e.from === id && (e.type === 'flow' || e.type === 'branch') && e.toNode.category === 'process'
             );
-            // Prioritize 'flow' over 'branch', and avoid loops for layout
             outgoing.sort((a, b) => {
                 if (a.type === 'flow' && b.type === 'branch') return -1;
                 if (a.type === 'branch' && b.type === 'flow') return 1;
@@ -687,13 +881,11 @@ function layoutGraph() {
 
     walkSpine(spec.entry_point || (spec.processes && spec.processes[0]?.id));
 
-    // Any processes not in spine (shouldn't happen but safety)
     nodes.filter(n => n.category === 'process' && !spineSet.has(n.id)).forEach(n => {
         spine.push(n);
         spineSet.add(n.id);
     });
 
-    // Step 2: Measure nodes
     const ctx = canvas.getContext('2d');
     ctx.font = '12px monospace';
 
@@ -711,7 +903,6 @@ function layoutGraph() {
         }
     }
 
-    // Step 3: Position spine (center column)
     const spineX = 500;
     const startY = 80;
     const gapY = 62;
@@ -720,16 +911,11 @@ function layoutGraph() {
         n.y = startY + i * gapY;
     });
 
-    // Step 4: Position entity callouts
-    // Group entities by what connects to them
     const entityPlaced = new Set();
-
-    // Stores: left side
     const stores = nodes.filter(n => n.type === 'store');
     const storeX = 120;
     let storeY = startY;
     stores.forEach(n => {
-        // Find which process reads/writes to this store
         const connEdges = edges.filter(e => (e.to === n.id || e.from === n.id) && (e.type === 'read' || e.type === 'write'));
         if (connEdges.length > 0) {
             const procIds = connEdges.map(e => e.from === n.id ? e.to : e.from);
@@ -748,7 +934,6 @@ function layoutGraph() {
         entityPlaced.add(n.id);
     });
 
-    // De-overlap stores vertically
     stores.sort((a, b) => a.y - b.y);
     for (let i = 1; i < stores.length; i++) {
         if (stores[i].y - stores[i-1].y < 42) {
@@ -756,10 +941,8 @@ function layoutGraph() {
         }
     }
 
-    // Tools: right side, grouped
     const tools = nodes.filter(n => n.type === 'tool');
     const toolX = 880;
-    // Find which process invokes tools
     const toolInvokeProc = edges.filter(e => e.type === 'invoke' && tools.some(t => t.id === e.to));
     const execNode = nodes.find(n => n.id === 'execute');
     const toolBaseY = execNode ? execNode.y - (tools.length * 18) : startY + 200;
@@ -769,7 +952,6 @@ function layoutGraph() {
         entityPlaced.add(n.id);
     });
 
-    // Agents: right side, near their invoke
     const agents = nodes.filter(n => n.type === 'agent');
     agents.forEach(n => {
         const invokeEdge = edges.find(e => e.type === 'invoke' && e.to === n.id);
@@ -783,7 +965,6 @@ function layoutGraph() {
         entityPlaced.add(n.id);
     });
 
-    // Human: far left
     const humans = nodes.filter(n => n.type === 'human');
     humans.forEach(n => {
         n.x = 30;
@@ -791,7 +972,6 @@ function layoutGraph() {
         entityPlaced.add(n.id);
     });
 
-    // Configs: far left, below stores
     const configs = nodes.filter(n => n.type === 'config');
     configs.forEach((n, i) => {
         n.x = 40;
@@ -799,7 +979,6 @@ function layoutGraph() {
         entityPlaced.add(n.id);
     });
 
-    // Policies: left of spine, near their targets
     const policies = nodes.filter(n => n.type === 'policy');
     policies.forEach((n, i) => {
         const modEdge = edges.find(e => e.from === n.id && (e.type === 'modify' || e.type === 'observe'));
@@ -812,7 +991,6 @@ function layoutGraph() {
         }
     });
 
-    // Spawn: right of spine, near execute
     const spawns = nodes.filter(n => n.type === 'spawn');
     spawns.forEach(n => {
         const execN = nodes.find(nn => nn.id === 'execute');
@@ -820,7 +998,6 @@ function layoutGraph() {
         n.y = (execN ? execN.y : startY) + 50;
     });
 
-    // Step 5: Adjust panX/panY so the diagram is visible
     const allX = nodes.map(n => n.x);
     const allY = nodes.map(n => n.y);
     const minX = Math.min(...allX) - 80;
@@ -828,11 +1005,9 @@ function layoutGraph() {
     const maxY = Math.max(...allY) + 80;
     const minY = Math.min(...allY) - 60;
 
-    // Center horizontally, start near top
     panX = (W / 2) - ((minX + maxX) / 2);
     panY = 20 - minY;
 
-    // If the diagram is taller than viewport, zoom to fit
     const diagramH = maxY - minY + 100;
     const diagramW = maxX - minX + 100;
     if (diagramH > H - 60 || diagramW > W) {
@@ -842,7 +1017,7 @@ function layoutGraph() {
     }
 }
 
-// ── Drawing ──
+// -- Drawing --
 function draw() {
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -853,12 +1028,10 @@ function draw() {
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
 
-    // Draw edges
     for (const e of edges) {
         drawEdge(ctx, e);
     }
 
-    // Draw nodes
     for (const n of nodes) {
         drawNode(ctx, n);
     }
@@ -878,7 +1051,6 @@ function drawNode(ctx, n) {
 
     ctx.globalAlpha = alpha;
 
-    // Glow
     if (isSel || isHov) {
         ctx.shadowColor = isSel ? '#58a6ff' : 'rgba(88,166,255,0.4)';
         ctx.shadowBlur = isSel ? 12 : 8;
@@ -886,17 +1058,14 @@ function drawNode(ctx, n) {
 
     const color = NODE_COLORS[n.type] || '#484f58';
 
-    // Shape
     ctx.beginPath();
     if (n.type === 'gate') {
-        // Diamond
         ctx.moveTo(x, y - h/2);
         ctx.lineTo(x + w/2, y);
         ctx.lineTo(x, y + h/2);
         ctx.lineTo(x - w/2, y);
         ctx.closePath();
     } else if (n.type === 'checkpoint') {
-        // Octagon
         const s = Math.min(w, h) / 2;
         const d = s * 0.38;
         ctx.moveTo(x - s + d, y - s);
@@ -909,7 +1078,6 @@ function drawNode(ctx, n) {
         ctx.lineTo(x - s, y - s + d);
         ctx.closePath();
     } else if (n.type === 'store') {
-        // Cylinder
         const rx = w/2, ry = 6;
         ctx.moveTo(x - rx, y - h/2 + ry);
         ctx.ellipse(x, y - h/2 + ry, rx, ry, 0, Math.PI, 0);
@@ -917,13 +1085,11 @@ function drawNode(ctx, n) {
         ctx.ellipse(x, y + h/2 - ry, rx, ry, 0, 0, Math.PI);
         ctx.closePath();
     } else if (n.type === 'spawn') {
-        // Double rect
         const r = 4;
         roundRect(ctx, x - w/2 + 3, y - h/2 + 3, w - 6, h - 6, r);
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.stroke();
-        // If recursive (template: "self"), draw a small recursive loop icon
         if (n.data.template === 'self' || n.data.recursive) {
             ctx.save();
             ctx.strokeStyle = color;
@@ -932,7 +1098,6 @@ function drawNode(ctx, n) {
             const ix = x + w/2 - 14, iy = y - h/2 + 12;
             ctx.arc(ix, iy, 5, -Math.PI * 0.3, Math.PI * 1.3);
             ctx.stroke();
-            // arrowhead on the loop
             const ax = ix + 5 * Math.cos(-Math.PI * 0.3);
             const ay = iy + 5 * Math.sin(-Math.PI * 0.3);
             ctx.beginPath();
@@ -947,7 +1112,6 @@ function drawNode(ctx, n) {
         ctx.beginPath();
         roundRect(ctx, x - w/2, y - h/2, w, h, r);
     } else if (n.type === 'policy') {
-        // Shield shape
         ctx.moveTo(x, y - h/2);
         ctx.lineTo(x + w/2, y - h/2 + 8);
         ctx.lineTo(x + w/2, y + h/4);
@@ -956,17 +1120,13 @@ function drawNode(ctx, n) {
         ctx.lineTo(x - w/2, y - h/2 + 8);
         ctx.closePath();
     } else if (n.type === 'tool') {
-        // Small rounded rect
         roundRect(ctx, x - w/2, y - h/2, w, h, 4);
     } else if (n.category === 'entity') {
-        // Rounded rect for agents, humans, etc
         roundRect(ctx, x - w/2, y - h/2, w, h, 8);
     } else {
-        // Process: rectangle with slight rounding
         roundRect(ctx, x - w/2, y - h/2, w, h, 4);
     }
 
-    // Fill
     if (n.category === 'process') {
         ctx.fillStyle = isSel ? '#2d333b' : '#1c2028';
     } else {
@@ -974,7 +1134,6 @@ function drawNode(ctx, n) {
     }
     ctx.fill();
 
-    // Border
     ctx.strokeStyle = isSel ? '#58a6ff' : color;
     ctx.lineWidth = isSel ? 2 : (n.category === 'process' ? 1.5 : 1);
     ctx.stroke();
@@ -982,7 +1141,6 @@ function drawNode(ctx, n) {
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
 
-    // Cylinder top ellipse for stores
     if (n.type === 'store') {
         const rx = w/2, ry = 6;
         ctx.beginPath();
@@ -994,7 +1152,6 @@ function drawNode(ctx, n) {
         ctx.stroke();
     }
 
-    // Label
     ctx.font = (isHov || isSel) ? 'bold 11px monospace' : '11px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1023,28 +1180,23 @@ function drawEdge(ctx, e) {
 
     ctx.globalAlpha = dimmed ? 0.08 : (isHighlighted || isHovered ? 1 : 0.6);
 
-    // Compute connection points
     const [x1, y1] = getEdgeAnchor(from, to);
     const [x2, y2] = getEdgeAnchor(to, from);
 
-    // Loop edges: draw as arc
     if (e.type === 'loop') {
         drawLoopEdge(ctx, e, x1, y1, x2, y2, color);
         ctx.globalAlpha = 1;
         return;
     }
 
-    // Set line style
     ctx.strokeStyle = color;
     ctx.lineWidth = (isHighlighted || isHovered) ? 2 : 1;
     setLineDash(ctx, style);
 
-    // Curve slightly for non-straight edges
     const dx = x2 - x1, dy = y2 - y1;
     const dist = Math.sqrt(dx*dx + dy*dy);
     let cx = (x1+x2)/2, cy = (y1+y2)/2;
 
-    // Offset perpendicular for curve (more for longer edges between same column)
     if (from.x !== to.x || dist > 200) {
         cx -= dy * 0.08;
         cy += dx * 0.08;
@@ -1056,11 +1208,9 @@ function drawEdge(ctx, e) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Arrowhead
     const angle = Math.atan2(y2 - cy, x2 - cx);
     drawArrowhead(ctx, x2, y2, angle, color);
 
-    // Label
     if ((isHighlighted || isHovered) && e.label) {
         const lx = (x1 + cx + x2) / 3;
         const ly = (y1 + cy + y2) / 3 - 8;
@@ -1069,7 +1219,6 @@ function drawEdge(ctx, e) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
 
-        // Background
         const tw = ctx.measureText(e.label).width + 8;
         ctx.fillStyle = 'rgba(13,17,23,0.85)';
         ctx.fillRect(lx - tw/2, ly - 10, tw, 13);
@@ -1081,7 +1230,6 @@ function drawEdge(ctx, e) {
 }
 
 function drawLoopEdge(ctx, e, x1, y1, x2, y2, color) {
-    // Draw a wide arc on the right side (or left if crossing)
     const from = e.fromNode, to = e.toNode;
     const isRight = from.x >= to.x;
     const offsetX = isRight ? 100 : -100;
@@ -1102,11 +1250,9 @@ function drawLoopEdge(ctx, e, x1, y1, x2, y2, color) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Arrowhead
     const angle = Math.atan2(y2 - (y2 - 30), x2 - (x2 + offsetX * 0.3));
     drawArrowhead(ctx, x2, y2, angle, color);
 
-    // Label
     if (e.label) {
         ctx.font = 'bold 10px monospace';
         ctx.fillStyle = color;
@@ -1126,35 +1272,28 @@ function drawArrowhead(ctx, x, y, angle, color) {
 }
 
 function getEdgeAnchor(from, to) {
-    // Find the point on from's border closest to to's center
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const angle = Math.atan2(dy, dx);
 
     if (from.type === 'gate') {
-        // Diamond: intersect with diamond edges
         const hw = from.w / 2, hh = from.h / 2;
         const absA = Math.abs(angle);
         if (absA < Math.atan2(hh, hw) || absA > Math.PI - Math.atan2(hh, hw)) {
-            // Left or right
             const sx = Math.sign(dx);
             return [from.x + sx * hw, from.y + (dy/Math.abs(dx)) * hw * Math.sign(dx) * 0.5];
         } else {
-            // Top or bottom
             const sy = Math.sign(dy);
             return [from.x + (dx/Math.abs(dy)) * hh * Math.sign(dy) * 0.5, from.y + sy * hh];
         }
     }
 
-    // Rectangle: intersect with edges
     const hw = from.w / 2 + 1, hh = from.h / 2 + 1;
     const tanA = Math.abs(dy / (dx || 0.001));
     if (tanA < hh / hw) {
-        // Exit through left or right
         const sx = Math.sign(dx) || 1;
         return [from.x + sx * hw, from.y + (dy * hw / Math.abs(dx || 0.001)) * sx * 0.5];
     } else {
-        // Exit through top or bottom
         const sy = Math.sign(dy) || 1;
         return [from.x + (dx * hh / Math.abs(dy || 0.001)) * sy * 0.5, from.y + sy * hh];
     }
@@ -1186,7 +1325,7 @@ function adjustAlpha(hex, alpha) {
     return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// ── Interaction ──
+// -- Interaction --
 function initInteraction() {
     const canvas = document.getElementById('canvas');
     const wrap = document.getElementById('canvas-wrap');
@@ -1209,7 +1348,6 @@ function initInteraction() {
         const mx = (ev.clientX - rect.left);
         const my = (ev.clientY - rect.top);
 
-        // Zoom toward mouse
         panX = mx - (mx - panX) * factor;
         panY = my - (my - panY) * factor;
         zoom *= factor;
@@ -1223,7 +1361,6 @@ function initInteraction() {
         lastMY = ev.clientY;
         didDrag = false;
 
-        // Check if clicking on a node (for node dragging)
         const [mx, my] = canvasToGraph(ev);
         const hitNode = findNodeAt(mx, my);
         if (hitNode) {
@@ -1240,7 +1377,6 @@ function initInteraction() {
         const dyScreen = ev.clientY - lastMY;
 
         if (dragNodeTarget) {
-            // Drag individual node in graph space
             dragNodeTarget.x += dxScreen / zoom;
             dragNodeTarget.y += dyScreen / zoom;
             lastMX = ev.clientX;
@@ -1282,7 +1418,6 @@ function initInteraction() {
         dragPan = false;
         dragNodeTarget = null;
 
-        // If it was a click (not a drag), handle selection
         if (!didDrag) {
             const [mx, my] = canvasToGraph(ev);
             const clicked = findNodeAt(mx, my);
@@ -1378,7 +1513,7 @@ function showTooltip(ev, node, edge) {
     tt.style.top = (ev.clientY - rect.top + 14) + 'px';
 }
 
-// ── Sidebar ──
+// -- Sidebar --
 function renderSidebar() {
     const sb = document.getElementById('sidebar');
     if (!selectedNode) {
@@ -1399,17 +1534,21 @@ function renderSidebar() {
         html += `<div class="sb-desc">${d.description}</div>`;
     }
 
-    // Recursion callout
     if (d.subgraph === 'self' || d.template === 'self' || d.recursive) {
         html += `<div style="background:rgba(155,89,182,0.15);border:1px solid #9b59b6;border-radius:4px;padding:8px;margin-bottom:12px;font-size:0.8em;">
             <span style="color:#9b59b6;font-weight:600;">&#x21bb; Recursive</span>
-            <span style="color:#8b949e;"> — this ${d.subgraph === 'self' ? 'agent runs the same architecture' : 'spawns instances of the parent spec'}.
+            <span style="color:#8b949e;"> -- this ${d.subgraph === 'self' ? 'agent runs the same architecture' : 'spawns instances of the parent spec'}.
             Depth bounded by ${d.max_depth && d.max_depth !== 'unbounded' ? 'max_depth=' + d.max_depth : 'context window / cost'}.</span>
         </div>`;
     }
 
-    // Properties
-    const skip = new Set(['id', 'type', 'label', 'description']);
+    // Logic section
+    if (d.logic) {
+        html += `<div class="sb-section">Logic</div>`;
+        html += `<div class="sb-logic">${escapeHtml(d.logic)}</div>`;
+    }
+
+    const skip = new Set(['id', 'type', 'label', 'description', 'logic']);
     const props = Object.entries(d).filter(([k]) => !skip.has(k));
     if (props.length > 0) {
         html += `<div class="sb-section">Properties</div>`;
@@ -1427,7 +1566,6 @@ function renderSidebar() {
         }
     }
 
-    // Connected edges
     const outgoing = edges.filter(e => e.fromNode === n);
     const incoming = edges.filter(e => e.toNode === n);
 
@@ -1451,7 +1589,6 @@ function renderSidebar() {
         }
     }
 
-    // Schema (if referenced)
     const schemaRefs = new Set();
     if (d.input_schema) schemaRefs.add(d.input_schema);
     if (d.output_schema) schemaRefs.add(d.output_schema);
@@ -1490,7 +1627,6 @@ function renderEdgeSidebar(e) {
         <div class="sb-field"><span class="key">To</span><span class="val" style="cursor:pointer;color:${NODE_COLORS[e.toNode.type]}" onclick="selectEdgeTarget('${e.to}')">${e.toNode.label}</span></div>
     `;
 
-    // Edge data
     const skip = new Set(['from', 'to', 'type', 'label']);
     const props = Object.entries(e.data).filter(([k]) => !skip.has(k));
     if (props.length > 0) {
@@ -1501,7 +1637,6 @@ function renderEdgeSidebar(e) {
         }
     }
 
-    // Schema
     const schemaRef = e.data.data || e.data.input || e.data.output;
     if (schemaRef && spec.schemas) {
         const schema = spec.schemas.find(s => s.name === schemaRef);
@@ -1528,7 +1663,7 @@ function selectEdgeTarget(id) {
     }
 }
 
-// ── Legend ──
+// -- Legend --
 function drawLegend() {
     const leg = document.getElementById('legend');
     const types = [
@@ -1544,12 +1679,16 @@ function drawLegend() {
 
 function updateStats() {
     const el = document.getElementById('stats');
-    el.textContent = `${nodes.filter(n => n.category === 'entity').length} entities · ${nodes.filter(n => n.category === 'process').length} processes · ${edges.length} edges · ${(spec.schemas||[]).length} schemas`;
+    el.textContent = `${nodes.filter(n => n.category === 'entity').length} entities \u00b7 ${nodes.filter(n => n.category === 'process').length} processes \u00b7 ${edges.length} edges \u00b7 ${(spec.schemas||[]).length} schemas`;
 }
 
-// ═══════════════════════════════════════════════════════════════
+function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// =====================================================================
 // View switching
-// ═══════════════════════════════════════════════════════════════
+// =====================================================================
 
 let currentView = 'graph';
 
@@ -1561,9 +1700,11 @@ function switchView(view) {
     document.getElementById(viewIds[view]).classList.add('active');
 
     const sidebar = document.getElementById('sidebar');
+    const traceControls = document.getElementById('trace-controls');
+
     if (view === 'graph') {
         sidebar.style.display = '';
-        // Re-measure canvas after it becomes visible again
+        traceControls.style.display = 'none';
         const canvas = document.getElementById('canvas');
         const wrap = document.getElementById('canvas-wrap');
         canvas.width = wrap.clientWidth;
@@ -1572,6 +1713,7 @@ function switchView(view) {
         draw();
     } else {
         sidebar.style.display = '';
+        traceControls.style.display = (view === 'sm') ? 'flex' : 'none';
         if (view === 'compare') {
             sidebar.style.display = 'none';
         }
@@ -1581,24 +1723,25 @@ function switchView(view) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// State Machine View
-// ═══════════════════════════════════════════════════════════════
+// =====================================================================
+// ENHANCED State Machine View
+// =====================================================================
 
 function renderStateMachine() {
     if (!spec) return;
     const container = document.getElementById('sm-view');
     const processes = spec.processes || [];
     const specEdges = spec.edges || [];
+    const entities = spec.entities || [];
 
-    // Build adjacency: which process flows to which
-    const flowTo = {};  // processId -> [{target, label, type}]
-    const invokedBy = {};  // processId -> [{agentId, input, output}]
-    const loopsTo = {};  // processId -> {target, label, condition}
+    // Build adjacency maps
+    const flowTo = {};     // processId -> [{target, label}]
+    const branchTo = {};   // processId -> [{target, label, condition}]
+    const invokedBy = {};  // processId -> [{entityId, entityLabel, entityType, input, output}]
+    const loopsTo = {};    // processId -> {target, label, condition}
 
     for (const e of specEdges) {
         if (e.type === 'flow') {
-            // Only process-to-process flows
             const fromProc = processes.find(p => p.id === e.from);
             const toProc = processes.find(p => p.id === e.to);
             if (fromProc && toProc) {
@@ -1606,21 +1749,38 @@ function renderStateMachine() {
                 flowTo[e.from].push({ target: e.to, label: e.label || '' });
             }
         }
-        if (e.type === 'invoke') {
-            // Process invokes agent
+        if (e.type === 'branch') {
             const fromProc = processes.find(p => p.id === e.from);
-            const toEntity = (spec.entities || []).find(en => en.id === e.to);
+            const toProc = processes.find(p => p.id === e.to);
+            if (fromProc && toProc) {
+                if (!branchTo[e.from]) branchTo[e.from] = [];
+                branchTo[e.from].push({ target: e.to, label: e.label || '', condition: e.condition || '' });
+            }
+        }
+        if (e.type === 'invoke') {
+            const fromProc = processes.find(p => p.id === e.from);
+            const toEntity = entities.find(en => en.id === e.to);
             if (fromProc && toEntity) {
                 if (!invokedBy[e.from]) invokedBy[e.from] = [];
-                invokedBy[e.from].push({ agentId: e.to, agentLabel: toEntity.label || e.to, input: e.input, output: e.output });
+                invokedBy[e.from].push({
+                    entityId: e.to,
+                    entityLabel: toEntity.label || e.to,
+                    entityType: toEntity.type,
+                    input: e.input,
+                    output: e.output
+                });
             }
         }
         if (e.type === 'loop') {
-            loopsTo[e.from] = { target: e.to, label: e.label || '', condition: e.condition || '' };
+            const fromProc = processes.find(p => p.id === e.from);
+            const toProc = processes.find(p => p.id === e.to);
+            if (fromProc && toProc) {
+                loopsTo[e.from] = { target: e.to, label: e.label || '', condition: e.condition || '' };
+            }
         }
     }
 
-    // Walk the flow spine (BFS from entry_point)
+    // Walk the flow spine via BFS from entry point
     const entryId = spec.entry_point || (processes[0] && processes[0].id);
     const spine = [];
     const visited = new Set();
@@ -1635,10 +1795,12 @@ function renderStateMachine() {
             visited.add(id);
             spine.push(proc);
 
-            // Follow flow edges, then branch edges
+            // Follow flow edges then branch targets
             const flows = (flowTo[id] || []).map(f => f.target);
-            const branches = (proc.branches || []).map(b => b.target);
-            const allTargets = [...flows, ...branches];
+            const branches = (branchTo[id] || []).map(b => b.target);
+            // Also follow gate branches defined in the process itself
+            const procBranches = (proc.branches || []).map(b => b.target);
+            const allTargets = [...flows, ...branches, ...procBranches];
             for (const t of allTargets) {
                 if (!visited.has(t)) queue.push(t);
             }
@@ -1646,7 +1808,7 @@ function renderStateMachine() {
     }
     walkFlow(entryId);
 
-    // Add any orphan processes not reached
+    // Add orphan processes
     for (const p of processes) {
         if (!visited.has(p.id)) {
             spine.push(p);
@@ -1654,138 +1816,346 @@ function renderStateMachine() {
         }
     }
 
-    // Render
-    let html = '<div class="sm-flow">';
-    html += `<div class="sm-section-title">${spec.name || 'Agent'} &mdash; State Machine</div>`;
+    // Compute layout positions for each process node
+    const NODE_W = 180;
+    const NODE_H_STEP = 56;
+    const NODE_H_GATE = 80;
+    const NODE_H_CP = 60;
+    const GAP_Y = 80;
+    const CANVAS_PAD_LEFT = 200;
+    const CANVAS_PAD_TOP = 20;
+
+    // Assign column and row for each process
+    // Simple: single-column layout centered, with branches shown as labeled edges
+    const positions = {};
+    let curY = CANVAS_PAD_TOP;
+    const centerX = 400;
 
     for (let i = 0; i < spine.length; i++) {
         const proc = spine[i];
-        const isGate = proc.type === 'gate';
-        const borderColor = NODE_COLORS[proc.type] || '#30363d';
+        const h = proc.type === 'gate' ? NODE_H_GATE : (proc.type === 'checkpoint' ? NODE_H_CP : NODE_H_STEP);
+        positions[proc.id] = { x: centerX, y: curY, w: NODE_W, h: h };
+        curY += h + GAP_Y;
+    }
 
-        html += `<div class="sm-node" data-type="${proc.type}" style="border-left: 3px solid ${borderColor};" onclick="smSelectNode('${proc.id}')">`;
-        html += `<div class="sm-node-label">${isGate ? '\u25c7 ' : ''}${proc.label || proc.id}</div>`;
-        html += `<div class="sm-node-type">${proc.type}${proc.id !== proc.label ? ' &middot; ' + proc.id : ''}</div>`;
-        if (proc.description) {
-            html += `<div class="sm-node-desc">${proc.description}</div>`;
+    const totalH = curY + 60;
+    const totalW = centerX * 2 + NODE_W + 300;
+
+    // Build SVG edges
+    let svgEdges = '';
+    const ARROW_ID = 'sm-arrowhead';
+    const ARROW_LOOP_ID = 'sm-arrowhead-loop';
+    const ARROW_BRANCH_ID = 'sm-arrowhead-branch';
+
+    svgEdges += `<defs>
+        <marker id="${ARROW_ID}" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#3498db"/>
+        </marker>
+        <marker id="${ARROW_LOOP_ID}" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+        </marker>
+        <marker id="${ARROW_BRANCH_ID}" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 8 3, 0 6" fill="#e74c3c"/>
+        </marker>
+    </defs>`;
+
+    // Flow edges: straight down
+    for (const fromId of Object.keys(flowTo)) {
+        const fromPos = positions[fromId];
+        if (!fromPos) continue;
+        for (const ft of flowTo[fromId]) {
+            const toPos = positions[ft.target];
+            if (!toPos) continue;
+            const x1 = fromPos.x + fromPos.w / 2;
+            const y1 = fromPos.y + fromPos.h;
+            const x2 = toPos.x + toPos.w / 2;
+            const y2 = toPos.y;
+
+            if (Math.abs(x1 - x2) < 5) {
+                // Straight vertical
+                svgEdges += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="sm-edge-flow" marker-end="url(#${ARROW_ID})"/>`;
+            } else {
+                // Curved path
+                const midY = (y1 + y2) / 2;
+                svgEdges += `<path d="M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}" class="sm-edge-flow" marker-end="url(#${ARROW_ID})"/>`;
+            }
+
+            // Label
+            if (ft.label) {
+                const lx = (x1 + x2) / 2 + 8;
+                const ly = (y1 + y2) / 2;
+                svgEdges += `<rect x="${lx - 2}" y="${ly - 10}" width="${ft.label.length * 6 + 6}" height="14" class="sm-edge-label-bg"/>`;
+                svgEdges += `<text x="${lx + 2}" y="${ly}" class="sm-edge-label">${escapeHtml(ft.label)}</text>`;
+            }
+        }
+    }
+
+    // Branch edges: from gates
+    for (const fromId of Object.keys(branchTo)) {
+        const fromPos = positions[fromId];
+        if (!fromPos) continue;
+        const branches = branchTo[fromId];
+        for (let bi = 0; bi < branches.length; bi++) {
+            const b = branches[bi];
+            const toPos = positions[b.target];
+            if (!toPos) continue;
+
+            const fromCx = fromPos.x + fromPos.w / 2;
+            const fromBot = fromPos.y + fromPos.h;
+            const toCx = toPos.x + toPos.w / 2;
+            const toTop = toPos.y;
+
+            // If target is below the source, use a slight offset
+            if (toPos.y > fromPos.y) {
+                // Side offset based on branch index
+                const offsetX = (bi === 0 ? -60 : 60) * (bi > 1 ? bi : 1);
+                const midY = (fromBot + toTop) / 2;
+                svgEdges += `<path d="M${fromCx},${fromBot} C${fromCx + offsetX},${midY} ${toCx + offsetX},${midY} ${toCx},${toTop}" class="sm-edge-branch" marker-end="url(#${ARROW_BRANCH_ID})"/>`;
+            } else {
+                // Target is above (loop-like branch)
+                const offsetX = 220 + bi * 30;
+                svgEdges += `<path d="M${fromCx + fromPos.w/2},${fromPos.y + fromPos.h/2} C${fromCx + offsetX},${fromPos.y + fromPos.h/2} ${toCx + offsetX},${toPos.y + toPos.h/2} ${toCx + toPos.w/2},${toPos.y + toPos.h/2}" class="sm-edge-branch" marker-end="url(#${ARROW_BRANCH_ID})"/>`;
+            }
+
+            // Branch label
+            const lx = (fromCx + toCx) / 2 + (bi === 0 ? -70 : 50);
+            const ly = (fromBot + toTop) / 2;
+            const labelText = b.label || b.condition || '';
+            if (labelText) {
+                svgEdges += `<rect x="${lx - 2}" y="${ly - 10}" width="${labelText.length * 5.5 + 8}" height="14" class="sm-edge-label-bg"/>`;
+                svgEdges += `<text x="${lx + 2}" y="${ly}" class="sm-edge-label" fill="#e74c3c">${escapeHtml(labelText)}</text>`;
+            }
+        }
+    }
+
+    // Loop edges: dashed arcs going back up
+    for (const fromId of Object.keys(loopsTo)) {
+        const loop = loopsTo[fromId];
+        const fromPos = positions[fromId];
+        const toPos = positions[loop.target];
+        if (!fromPos || !toPos) continue;
+
+        const fromRight = fromPos.x + fromPos.w;
+        const fromMidY = fromPos.y + fromPos.h / 2;
+        const toRight = toPos.x + toPos.w;
+        const toMidY = toPos.y + toPos.h / 2;
+        const offsetX = 80;
+
+        svgEdges += `<path d="M${fromRight},${fromMidY} C${fromRight + offsetX},${fromMidY} ${toRight + offsetX},${toMidY} ${toRight},${toMidY}" class="sm-edge-loop" marker-end="url(#${ARROW_LOOP_ID})"/>`;
+
+        // Label
+        const lx = Math.max(fromRight, toRight) + offsetX + 5;
+        const ly = (fromMidY + toMidY) / 2;
+        const loopLabel = loop.label || loop.condition || 'loop';
+        svgEdges += `<rect x="${lx - 2}" y="${ly - 10}" width="${loopLabel.length * 5.5 + 8}" height="14" class="sm-edge-label-bg"/>`;
+        svgEdges += `<text x="${lx + 2}" y="${ly}" class="sm-edge-label" fill="#f0883e">${escapeHtml(loopLabel)}</text>`;
+    }
+
+    // Build HTML
+    let html = '';
+
+    // Legend bar
+    html += `<div class="sm-legend">
+        <div class="sm-legend-item"><div class="sm-legend-shape" style="background:rgba(52,152,219,0.15);border:2px solid #3498db;border-radius:6px;"></div>Step</div>
+        <div class="sm-legend-item"><div class="sm-legend-shape" style="background:rgba(241,196,15,0.15);border:2px solid #f1c40f;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);"></div>Gate</div>
+        <div class="sm-legend-item"><div class="sm-legend-shape" style="background:rgba(230,126,34,0.15);border:2px solid #e67e22;clip-path:polygon(30% 0%,70% 0%,100% 30%,100% 70%,70% 100%,30% 100%,0% 70%,0% 30%);"></div>Checkpoint</div>
+        <div class="sm-legend-item"><div class="sm-legend-shape" style="background:rgba(155,89,182,0.12);border:3px double #9b59b6;border-radius:3px;"></div>Spawn</div>
+        <div class="sm-legend-item"><div class="sm-legend-line" style="background:#3498db;"></div>Flow</div>
+        <div class="sm-legend-item"><div class="sm-legend-line" style="background:repeating-linear-gradient(90deg,#f0883e 0,#f0883e 4px,transparent 4px,transparent 7px);"></div>Loop</div>
+        <div class="sm-legend-item"><div class="sm-legend-line" style="background:repeating-linear-gradient(90deg,#e74c3c 0,#e74c3c 4px,transparent 4px,transparent 7px);"></div>Branch</div>
+        <div class="sm-legend-item" style="border:2px solid #7ee787;border-radius:4px;padding:0 4px;">Entry</div>
+    </div>`;
+
+    html += `<div class="sm-title-bar"><strong>${spec.name || 'Agent'}</strong> -- State Machine Flow &middot; ${processes.length} processes</div>`;
+
+    // Canvas container
+    html += `<div class="sm-canvas" style="width:${totalW}px;height:${totalH}px;">`;
+
+    // SVG layer for edges
+    html += `<svg class="sm-svg-layer" width="${totalW}" height="${totalH}">${svgEdges}</svg>`;
+
+    // Process nodes
+    for (const proc of spine) {
+        const pos = positions[proc.id];
+        if (!pos) continue;
+
+        const isEntry = proc.id === entryId;
+        const typeClass = `sm-proc-${proc.type}`;
+        const entryClass = isEntry ? 'sm-proc-entry' : '';
+
+        // Get trace data if available
+        let traceHtml = '';
+        if (traceData && traceData.processes) {
+            const td = traceData.processes[proc.id];
+            if (td) {
+                if (td.count !== undefined) {
+                    traceHtml += `<div class="trace-badge" title="Execution count: ${td.count}">${td.count}</div>`;
+                }
+                if (td.duration_ms !== undefined) {
+                    const dur = td.duration_ms;
+                    const maxDur = traceData._maxDuration || 1000;
+                    const ratio = Math.min(dur / maxDur, 1);
+                    // Red=slow, green=fast
+                    const r = Math.round(200 * ratio + 55);
+                    const g = Math.round(200 * (1 - ratio) + 55);
+                    const bgColor = `rgb(${r},${g},60)`;
+                    traceHtml += `<div class="trace-duration" style="background:${bgColor}" title="Duration: ${dur}ms">${dur}ms</div>`;
+                }
+                if (td.llm_calls !== undefined && td.llm_calls > 0) {
+                    traceHtml += `<div class="trace-llm-badge" title="LLM calls: ${td.llm_calls}">LLM:${td.llm_calls}</div>`;
+                }
+            }
         }
 
-        // Data in/out tags
-        const ioTags = [];
-        if (proc.data_in) ioTags.push(`<span class="sm-io-tag">in: ${proc.data_in}</span>`);
-        if (proc.data_out) ioTags.push(`<span class="sm-io-tag">out: ${proc.data_out}</span>`);
-        if (ioTags.length) html += `<div class="sm-node-io">${ioTags.join('')}</div>`;
+        html += `<div class="sm-proc ${typeClass} ${entryClass}" data-proc-id="${proc.id}"
+                      style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;"
+                      onclick="smSelectProcess('${proc.id}')">`;
+        html += traceHtml;
+        html += `<div class="sm-proc-name">${proc.label || proc.id}</div>`;
+        html += `<div class="sm-proc-type">${proc.type}${proc.id !== (proc.label || '').toLowerCase().replace(/\s+/g, '_') ? ' : ' + proc.id : ''}</div>`;
 
-        // Invocations
+        // Invoke badges on the side
         const invokes = invokedBy[proc.id] || [];
-        for (const inv of invokes) {
-            html += `<div class="sm-invoke-badge">\u2192 ${inv.agentLabel}`;
-            if (inv.input) html += ` (${inv.input}`;
-            if (inv.output) html += ` \u2192 ${inv.output})`;
-            else if (inv.input) html += ')';
-            html += `</div>`;
-        }
-
-        html += `</div>`;
-
-        // Branches for gates
-        if (isGate && proc.branches && proc.branches.length > 0) {
-            html += `<div class="sm-arrow">\u2502</div>`;
-            html += `<div class="sm-branch-row">`;
-            for (const b of proc.branches) {
-                const targetProc = processes.find(p => p.id === b.target);
-                html += `<div class="sm-branch">`;
-                html += `<div class="sm-branch-cond">${b.condition}</div>`;
-                html += `<div class="sm-branch-target" onclick="smScrollTo('${b.target}')">\u2192 ${targetProc ? targetProc.label : b.target}</div>`;
-                html += `</div>`;
+        if (invokes.length > 0) {
+            html += `<div class="sm-invoke-sidebar">`;
+            // Show at most 5 individually, then a count
+            const shown = invokes.slice(0, 5);
+            const remaining = invokes.length - shown.length;
+            for (const inv of shown) {
+                const chipClass = inv.entityType === 'agent' ? 'sm-invoke-chip-agent' : 'sm-invoke-chip-tool';
+                const icon = inv.entityType === 'agent' ? '<svg class="inv-icon" viewBox="0 0 10 10"><circle cx="5" cy="3" r="2" fill="currentColor"/><path d="M1,9 Q5,6 9,9" stroke="currentColor" fill="none" stroke-width="1"/></svg>'
+                    : '<svg class="inv-icon" viewBox="0 0 10 10"><rect x="1" y="3" width="8" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1"/><line x1="5" y1="1" x2="5" y2="3" stroke="currentColor" stroke-width="1"/></svg>';
+                html += `<div class="sm-invoke-chip ${chipClass}" title="${inv.entityLabel}${inv.input ? ' ('+inv.input+')' : ''}">${icon}${inv.entityLabel}</div>`;
+            }
+            if (remaining > 0) {
+                html += `<div class="sm-invoke-chip" title="${remaining} more invocations">+${remaining} more</div>`;
             }
             html += `</div>`;
         }
 
-        // Loop marker
-        if (loopsTo[proc.id]) {
-            const loop = loopsTo[proc.id];
-            const targetProc = processes.find(p => p.id === loop.target);
-            html += `<div class="sm-loop-marker">\u21bb Loop: ${loop.label || loop.condition || ''} \u2192 <span class="sm-branch-target" onclick="smScrollTo('${loop.target}')">${targetProc ? targetProc.label : loop.target}</span></div>`;
-        }
-
-        // Arrow to next
-        if (i < spine.length - 1) {
-            const flowEdges = flowTo[proc.id] || [];
-            const nextLabel = flowEdges.find(f => f.target === spine[i+1].id);
-            html += `<div class="sm-arrow">\u2193${nextLabel && nextLabel.label ? `<span class="sm-arrow-label">${nextLabel.label}</span>` : ''}</div>`;
-        }
+        html += `</div>`;
     }
 
-    html += '</div>';
+    html += '</div>'; // End sm-canvas
+
     container.innerHTML = html;
 }
 
-function smSelectNode(procId) {
+function smSelectProcess(procId) {
     const n = nodes.find(n => n.id === procId);
     if (n) {
         selectedNode = n;
         renderSidebar();
+        // Highlight the clicked node
+        document.querySelectorAll('.sm-proc.sm-selected').forEach(el => el.classList.remove('sm-selected'));
+        const el = document.querySelector(`.sm-proc[data-proc-id="${procId}"]`);
+        if (el) el.classList.add('sm-selected');
     }
 }
 
-function smScrollTo(procId) {
-    const container = document.getElementById('sm-view');
-    const el = container.querySelector(`[onclick="smSelectNode('${procId}')"]`);
-    if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.style.boxShadow = '0 0 12px rgba(88,166,255,0.5)';
-        setTimeout(() => el.style.boxShadow = '', 1500);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Schemas View
-// ═══════════════════════════════════════════════════════════════
+// =====================================================================
+// ENHANCED Schemas View
+// =====================================================================
 
 function renderSchemas() {
     if (!spec) return;
     const container = document.getElementById('schemas-view');
     const schemas = spec.schemas || [];
 
-    // Build usage map: which entities/processes/edges reference each schema
+    // Build usage map
     const usedBy = {};
     for (const s of schemas) usedBy[s.name] = [];
 
-    function trackRef(name, usedByLabel) {
-        if (usedBy[name]) usedBy[name].push(usedByLabel);
+    function trackRef(name, label, refType) {
+        if (usedBy[name]) usedBy[name].push({ label, refType });
     }
 
     for (const e of (spec.entities || [])) {
-        if (e.input_schema) trackRef(e.input_schema, e.label || e.id);
-        if (e.output_schema) trackRef(e.output_schema, e.label || e.id);
-        if (e.schema) trackRef(e.schema, e.label || e.id);
+        if (e.input_schema) trackRef(e.input_schema, e.label || e.id, 'entity');
+        if (e.output_schema) trackRef(e.output_schema, e.label || e.id, 'entity');
+        if (e.schema) trackRef(e.schema, e.label || e.id, 'entity');
     }
     for (const p of (spec.processes || [])) {
-        if (p.data_in) trackRef(p.data_in, p.label || p.id);
-        if (p.data_out) trackRef(p.data_out, p.label || p.id);
+        if (p.data_in) trackRef(p.data_in, p.label || p.id, 'process');
+        if (p.data_out) trackRef(p.data_out, p.label || p.id, 'process');
+        if (p.input_schema) trackRef(p.input_schema, p.label || p.id, 'process');
+        if (p.output_schema) trackRef(p.output_schema, p.label || p.id, 'process');
     }
     for (const e of (spec.edges || [])) {
-        if (e.data) trackRef(e.data, `${e.from} \u2192 ${e.to}`);
-        if (e.input) trackRef(e.input, `${e.from} \u2192 ${e.to}`);
-        if (e.output) trackRef(e.output, `${e.from} \u2192 ${e.to}`);
+        if (e.data) trackRef(e.data, `${e.from} \u2192 ${e.to}`, 'edge');
+        if (e.input) trackRef(e.input, `${e.from} \u2192 ${e.to}`, 'edge');
+        if (e.output) trackRef(e.output, `${e.from} \u2192 ${e.to}`, 'edge');
     }
 
-    let html = `<div class="schemas-summary">${schemas.length} schemas in ${spec.name || 'spec'}</div>`;
-    html += '<div class="schemas-grid">';
+    // Build a set of known schema names for cross-referencing
+    const schemaNames = new Set(schemas.map(s => s.name));
+
+    // Classify a field type and extract references
+    function classifyType(typeStr) {
+        if (!typeStr) return { cls: 'sft-object', refs: [] };
+        const str = String(typeStr);
+        const refs = [];
+
+        // Extract type references: look for schema names inside the type string
+        for (const sn of schemaNames) {
+            if (str.includes(sn)) {
+                refs.push(sn);
+            }
+        }
+
+        const lower = str.toLowerCase();
+        if (lower === 'string' || lower.startsWith('string')) return { cls: 'sft-string', refs };
+        if (lower === 'integer' || lower === 'number' || lower === 'int' || lower === 'float') return { cls: 'sft-integer', refs };
+        if (lower === 'boolean' || lower === 'bool') return { cls: 'sft-integer', refs };
+        if (lower.startsWith('list') || lower.startsWith('array')) return { cls: 'sft-list', refs };
+        if (lower.startsWith('enum')) return { cls: 'sft-enum', refs };
+        if (lower === 'datetime' || lower === 'date') return { cls: 'sft-datetime', refs };
+        if (lower === 'object') return { cls: 'sft-object', refs };
+
+        // If it contains a reference to another schema, mark as ref
+        if (refs.length > 0) return { cls: 'sft-ref', refs };
+
+        return { cls: 'sft-object', refs };
+    }
+
+    // Render type with clickable references
+    function renderType(typeStr) {
+        if (!typeStr) return '<span class="schema-field-type sft-object">object</span>';
+        const str = String(typeStr);
+        const { cls, refs } = classifyType(str);
+
+        if (refs.length > 0) {
+            // Replace schema name references with clickable links
+            let rendered = escapeHtml(str);
+            for (const ref of refs) {
+                rendered = rendered.replace(ref, `<span class="sft-ref" onclick="scrollToSchema('${ref}')" title="Jump to ${ref}">${ref}</span>`);
+            }
+            return `<span class="schema-field-type ${cls}">${rendered}</span>`;
+        }
+
+        return `<span class="schema-field-type ${cls}">${escapeHtml(str)}</span>`;
+    }
+
+    let html = '';
+    html += `<div class="schemas-summary">${schemas.length} schemas defined in <strong>${spec.name || 'spec'}</strong></div>`;
+    html += `<div class="schemas-filter"><input type="text" id="schema-filter-input" placeholder="Filter schemas by name or field..." oninput="filterSchemas(this.value)"></div>`;
+    html += '<div class="schemas-grid" id="schemas-grid">';
 
     for (const schema of schemas) {
-        html += `<div class="schema-card">`;
-        html += `<div class="schema-card-name">${schema.name}</div>`;
+        const fieldCount = (schema.fields || []).length;
+        const refs = usedBy[schema.name] || [];
+
+        html += `<div class="schema-card" id="schema-card-${schema.name}" data-schema-name="${(schema.name || '').toLowerCase()}" data-fields="${(schema.fields || []).map(f => f.name + ' ' + f.type).join(' ').toLowerCase()}">`;
+        html += `<div class="schema-card-name">${schema.name} <span class="schema-count">${fieldCount} field${fieldCount !== 1 ? 's' : ''}</span></div>`;
         if (schema.description) {
             html += `<div class="schema-card-desc">${schema.description}</div>`;
         }
 
         for (const f of (schema.fields || [])) {
             html += `<div class="schema-field-row">`;
-            html += `<span class="schema-field-name">${f.name}</span>`;
+            html += `<span class="schema-field-name">${f.name}${f.optional ? '<span class="schema-field-optional">?</span>' : ''}</span>`;
             html += `<span>`;
-            html += `<span class="schema-field-type">${f.type}</span>`;
+            html += renderType(f.type);
             if (f.default !== undefined) {
                 html += ` <span class="schema-field-default">= ${f.default}</span>`;
             }
@@ -1793,12 +2163,15 @@ function renderSchemas() {
             html += `</div>`;
         }
 
-        // Show what uses this schema
-        const refs = usedBy[schema.name] || [];
+        // Cross-references: who uses this schema
         if (refs.length > 0) {
             html += `<div class="schema-refs">`;
+            html += `<div class="schema-refs-title">Referenced by</div>`;
             for (const r of refs) {
-                html += `<span class="schema-ref-tag">${r}</span>`;
+                const tagClass = r.refType === 'process' ? 'schema-ref-tag-process'
+                    : r.refType === 'entity' ? 'schema-ref-tag-entity'
+                    : 'schema-ref-tag-edge';
+                html += `<span class="schema-ref-tag ${tagClass}" title="${r.refType}: ${r.label}">${r.label}</span>`;
             }
             html += `</div>`;
         }
@@ -1810,14 +2183,70 @@ function renderSchemas() {
     container.innerHTML = html;
 }
 
-// ═══════════════════════════════════════════════════════════════
+function scrollToSchema(name) {
+    const card = document.getElementById('schema-card-' + name);
+    if (card) {
+        // If we're not on schemas view, switch to it
+        if (currentView !== 'schemas') {
+            switchView('schemas');
+        }
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('schema-highlight');
+        setTimeout(() => card.classList.remove('schema-highlight'), 2000);
+    }
+}
+
+function filterSchemas(query) {
+    const q = query.toLowerCase().trim();
+    const cards = document.querySelectorAll('.schema-card');
+    cards.forEach(card => {
+        const name = card.dataset.schemaName || '';
+        const fields = card.dataset.fields || '';
+        const match = !q || name.includes(q) || fields.includes(q);
+        card.style.display = match ? '' : 'none';
+    });
+}
+
+// =====================================================================
+// Trace Overlay
+// =====================================================================
+
+function loadTraceData(data) {
+    traceData = data;
+
+    // Pre-compute max duration for heat-mapping
+    if (traceData.processes) {
+        let maxDur = 0;
+        for (const pid of Object.keys(traceData.processes)) {
+            const d = traceData.processes[pid].duration_ms;
+            if (d !== undefined && d > maxDur) maxDur = d;
+        }
+        traceData._maxDuration = maxDur || 1000;
+    }
+
+    document.getElementById('trace-clear-btn').style.display = '';
+    document.getElementById('trace-info').textContent = 'Trace loaded: ' + (traceData.name || Object.keys(traceData.processes || {}).length + ' processes');
+
+    // Re-render state machine if on that view
+    if (currentView === 'sm') renderStateMachine();
+}
+
+function clearTraceData() {
+    traceData = null;
+    document.getElementById('trace-clear-btn').style.display = 'none';
+    document.getElementById('trace-info').textContent = '';
+    if (currentView === 'sm') renderStateMachine();
+}
+
+// =====================================================================
 // Comparison View
-// ═══════════════════════════════════════════════════════════════
+// =====================================================================
 
 const ALL_SPEC_PATHS = [
     'specs/claude-code.yaml', 'specs/babyagi.yaml', 'specs/react.yaml',
     'specs/rag.yaml', 'specs/autogpt.yaml', 'specs/crew.yaml',
-    'specs/code_reviewer.yaml', 'specs/babyagi_autogen.yaml', 'specs/debate.yaml'
+    'specs/code_reviewer.yaml', 'specs/babyagi_autogen.yaml', 'specs/debate.yaml',
+    'specs/tree_of_thought.yaml', 'specs/plan_and_solve.yaml', 'specs/self_refine.yaml'
 ];
 let allSpecs = null;
 
@@ -1849,11 +2278,7 @@ async function renderComparison() {
         (s.entities || []).forEach(e => { if (e.model) m.add(e.model); });
         return [...m];
     }
-    function storeTypes(s) {
-        return entityTypes(s, 'store').map(e => e.store_type || 'unknown');
-    }
 
-    // Find max for bar scaling
     const maxEntities = Math.max(...specs.map(s => count(s.entities)));
     const maxProcesses = Math.max(...specs.map(s => count(s.processes)));
     const maxEdges = Math.max(...specs.map(s => count(s.edges)));
@@ -1871,7 +2296,6 @@ async function renderComparison() {
     }
     html += '</tr></thead><tbody>';
 
-    // Row: Description
     html += '<tr><td>Description</td>';
     for (const s of specs) {
         const desc = (s.description || '').substring(0, 80);
@@ -1879,12 +2303,10 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Entities
     html += '<tr><td>Entities</td>';
     for (const s of specs) html += `<td>${bar(count(s.entities), maxEntities, '#4ecdc4')}</td>`;
     html += '</tr>';
 
-    // Row: Agents
     html += '<tr><td>Agents</td>';
     for (const s of specs) {
         const agents = entityTypes(s, 'agent');
@@ -1892,7 +2314,6 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Stores
     html += '<tr><td>Stores</td>';
     for (const s of specs) {
         const stores = entityTypes(s, 'store');
@@ -1900,7 +2321,6 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Tools
     html += '<tr><td>Tools</td>';
     for (const s of specs) {
         const tools = entityTypes(s, 'tool');
@@ -1908,12 +2328,10 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Processes
     html += '<tr><td>Processes</td>';
     for (const s of specs) html += `<td>${bar(count(s.processes), maxProcesses, '#c0c0c0')}</td>`;
     html += '</tr>';
 
-    // Row: Gates
     html += '<tr><td>Gates</td>';
     for (const s of specs) {
         const gates = (s.processes || []).filter(p => p.type === 'gate');
@@ -1921,12 +2339,10 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Edges
     html += '<tr><td>Edges</td>';
     for (const s of specs) html += `<td>${bar(count(s.edges), maxEdges, '#3498db')}</td>`;
     html += '</tr>';
 
-    // Row: Has loops
     html += '<tr><td>Loops</td>';
     for (const s of specs) {
         const loops = edgeTypes(s, 'loop');
@@ -1934,12 +2350,10 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Schemas
     html += '<tr><td>Schemas</td>';
     for (const s of specs) html += `<td>${bar(count(s.schemas), maxSchemas, '#d2a8ff')}</td>`;
     html += '</tr>';
 
-    // Row: Models
     html += '<tr><td>Models</td>';
     for (const s of specs) {
         const m = models(s);
@@ -1947,14 +2361,12 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Entry point
     html += '<tr><td>Entry Point</td>';
     for (const s of specs) {
         html += `<td style="color:#7ee787;">${s.entry_point || '-'}</td>`;
     }
     html += '</tr>';
 
-    // Row: Edge types used
     html += '<tr><td>Edge Types</td>';
     for (const s of specs) {
         const types = new Set((s.edges || []).map(e => e.type));
@@ -1962,7 +2374,6 @@ async function renderComparison() {
     }
     html += '</tr>';
 
-    // Row: Complexity score (rough: entities + processes + edges + schemas)
     html += '<tr><td>Complexity</td>';
     for (const s of specs) {
         const score = count(s.entities) + count(s.processes) + count(s.edges) + count(s.schemas);
@@ -1983,7 +2394,7 @@ function hexToRgb(hex) {
     return `${r},${g},${b}`;
 }
 
-// ── Init ──
+// -- Init --
 initInteraction();
 
 // Tab switching
@@ -1994,6 +2405,27 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 document.getElementById('spec-select').addEventListener('change', (ev) => {
     loadSpec(ev.target.value);
 });
+
+// Trace file loading
+document.getElementById('trace-load-btn').addEventListener('click', () => {
+    document.getElementById('trace-file-input').click();
+});
+document.getElementById('trace-file-input').addEventListener('change', (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = JSON.parse(e.target.result);
+            loadTraceData(data);
+        } catch (err) {
+            alert('Invalid trace JSON: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
+    ev.target.value = '';
+});
+document.getElementById('trace-clear-btn').addEventListener('click', clearTraceData);
 
 loadSpec('specs/claude-code.yaml');
 </script>

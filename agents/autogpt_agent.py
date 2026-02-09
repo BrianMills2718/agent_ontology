@@ -69,63 +69,67 @@ def dump_trace(path="trace.json", iterations=0, clean_exit=True):
 # LLM Call Infrastructure
 # ═══════════════════════════════════════════════════════════
 
-def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096):
-    if model.startswith("claude") or model.startswith("anthropic"):
-        return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
-    elif model.startswith("gemini"):
-        return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
-    else:
-        return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
+# Model override: set OPENCLAW_MODEL env var to override all agent models at runtime
+_MODEL_OVERRIDE = os.environ.get("OPENCLAW_MODEL", "")
+
+
+def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
+    if _MODEL_OVERRIDE:
+        model = _MODEL_OVERRIDE
+    for attempt in range(retries):
+        try:
+            if model.startswith("claude") or model.startswith("anthropic"):
+                return _call_anthropic(model, system_prompt, user_message, temperature, max_tokens)
+            elif model.startswith("gemini"):
+                return _call_gemini(model, system_prompt, user_message, temperature, max_tokens)
+            else:
+                return _call_openai(model, system_prompt, user_message, temperature, max_tokens)
+        except Exception as e:
+            if attempt < retries - 1:
+                wait = 2 ** attempt
+                print(f"    [RETRY] {type(e).__name__}: {e} — retrying in {wait}s (attempt {attempt+1}/{retries})")
+                import time as _time; _time.sleep(wait)
+            else:
+                print(f"    [FAIL] {type(e).__name__}: {e} after {retries} attempts")
+                return json.dumps({"stub": True, "model": model, "error": str(e)})
 
 
 def _call_openai(model, system_prompt, user_message, temperature, max_tokens):
-    try:
-        from openai import OpenAI
-        client = OpenAI()
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"[STUB] Would call OpenAI {model} — {user_message[:80]}")
-        return json.dumps({"stub": True, "model": model})
+    from openai import OpenAI
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
 
 
 def _call_anthropic(model, system_prompt, user_message, temperature, max_tokens):
-    try:
-        import anthropic
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        return response.content[0].text
-    except Exception as e:
-        print(f"[STUB] Would call Anthropic {model} — {user_message[:80]}")
-        return json.dumps({"stub": True, "model": model})
+    import anthropic
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    return response.content[0].text
 
 
 def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
-    try:
-        from google import genai
-        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
-        response = client.models.generate_content(
-            model=model,
-            contents=f"{system_prompt}\n\n{user_message}",
-            config={"temperature": temperature, "max_output_tokens": max_tokens},
-        )
-        return response.text
-    except Exception as e:
-        print(f"[STUB] Would call Gemini {model} — {user_message[:80]}")
-        return json.dumps({"stub": True, "model": model})
+    from google import genai
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    response = client.models.generate_content(
+        model=model,
+        contents=f"{system_prompt}\n\n{user_message}",
+        config={"temperature": temperature, "max_output_tokens": max_tokens},
+    )
+    return response.text
 
 # ═══════════════════════════════════════════════════════════
 # Schema Registry
@@ -175,6 +179,34 @@ SCHEMAS = {
 }
 
 
+def validate_output(data, schema_name):
+    """Validate parsed LLM output against schema. Returns list of issues."""
+    schema = SCHEMAS.get(schema_name)
+    if not schema or "raw" in data:
+        return []
+    issues = []
+    for field in schema["fields"]:
+        fname = field["name"]
+        ftype = field["type"]
+        if fname not in data:
+            issues.append(f"Missing field '{fname}' ({ftype})")
+            continue
+        val = data[fname]
+        if ftype == "string" and not isinstance(val, str):
+            issues.append(f"Field '{fname}' expected string, got {type(val).__name__}")
+        elif ftype == "integer" and not isinstance(val, (int, float)):
+            issues.append(f"Field '{fname}' expected integer, got {type(val).__name__}")
+        elif ftype.startswith("list") and not isinstance(val, list):
+            issues.append(f"Field '{fname}' expected list, got {type(val).__name__}")
+        elif ftype.startswith("enum["):
+            allowed = [v.strip() for v in ftype[5:-1].split(",")]
+            if val not in allowed:
+                issues.append(f"Field '{fname}' value '{val}' not in {allowed}")
+    if issues:
+        print(f"    [SCHEMA] {schema_name}: {len(issues)} issue(s): {issues[0]}")
+    return issues
+
+
 def build_input(state, schema_name):
     """Build an input dict for an agent call using schema field names.
     Pulls matching keys from state.data."""
@@ -201,7 +233,7 @@ def output_instruction(schema_name):
 def parse_response(response, schema_name):
     """Parse an LLM response according to an output schema.
     Returns a dict of field values, or {"raw": response} if parsing fails."""
-    # Try to extract JSON from the response
+    import re as _re
     text = response.strip()
     # Handle markdown code blocks
     if text.startswith("```"):
@@ -210,21 +242,41 @@ def parse_response(response, schema_name):
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines)
+    # Attempt 1: direct parse
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
         return {"value": parsed}
     except json.JSONDecodeError:
-        # Try to find JSON object in the response
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end])
-            except json.JSONDecodeError:
-                pass
-        return {"raw": response}
+        pass
+    # Attempt 2: extract JSON object from prose
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        candidate = text[start:end]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        # Attempt 3: fix trailing commas
+        fixed = _re.sub(r",\s*}", "}", candidate)
+        fixed = _re.sub(r",\s*]", "]", fixed)
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+        # Attempt 4: find matching braces (handle nested)
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{": depth += 1
+            elif ch == "}": depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i+1])
+                except json.JSONDecodeError:
+                    break
+    return {"raw": response}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -412,6 +464,7 @@ class AgentState:
         self.workspace = Store_workspace()
         self.data = {}  # current data flowing through the pipeline
         self.iteration = 0
+        self.schema_violations = 0
 
 
 # ═══════════════════════════════════════════════════════════
@@ -450,7 +503,8 @@ def process_decompose(state):
     planner_msg = json.dumps(planner_input, default=str)
     planner_raw = invoke_planner(planner_msg, output_schema="Plan")
     planner_result = parse_response(planner_raw, "Plan")
-    # Merge output fields into state.data
+    # Validate and merge output fields into state.data
+    state.schema_violations += len(validate_output(planner_result, "Plan"))
     state.data.update(planner_result)
     state.data["plan_schema"] = planner_result
     state.data["decompose_result"] = planner_result
@@ -484,7 +538,8 @@ def process_think(state):
     thinker_msg = json.dumps(thinker_input, default=str)
     thinker_raw = invoke_thinker(thinker_msg, output_schema="Thought")
     thinker_result = parse_response(thinker_raw, "Thought")
-    # Merge output fields into state.data
+    # Validate and merge output fields into state.data
+    state.schema_violations += len(validate_output(thinker_result, "Thought"))
     state.data.update(thinker_result)
     state.data["thought"] = thinker_result
     state.data["think_result"] = thinker_result
@@ -505,7 +560,8 @@ def process_criticize(state):
     critic_msg = json.dumps(critic_input, default=str)
     critic_raw = invoke_critic(critic_msg, output_schema="Criticism")
     critic_result = parse_response(critic_raw, "Criticism")
-    # Merge output fields into state.data
+    # Validate and merge output fields into state.data
+    state.schema_violations += len(validate_output(critic_result, "Criticism"))
     state.data.update(critic_result)
     state.data["criticism"] = critic_result
     state.data["criticize_result"] = critic_result
@@ -591,7 +647,8 @@ def process_act(state):
     executor_msg = json.dumps(executor_input, default=str)
     executor_raw = invoke_executor(executor_msg, output_schema="ActionResult")
     executor_result = parse_response(executor_raw, "ActionResult")
-    # Merge output fields into state.data
+    # Validate and merge output fields into state.data
+    state.schema_violations += len(validate_output(executor_result, "ActionResult"))
     state.data.update(executor_result)
     state.data["action_result_schema"] = executor_result
     state.data["act_result"] = executor_result
@@ -700,7 +757,7 @@ TRANSITIONS = {
 }
 
 
-MAX_ITERATIONS = 100
+MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))
 
 
 def run(initial_data=None):
@@ -751,6 +808,8 @@ def run(initial_data=None):
         print(f"\n  [STOPPED] Max iterations ({MAX_ITERATIONS}) reached.")
         _clean_exit = False
 
+    if state.schema_violations > 0:
+        print(f"\n  [SCHEMA] {state.schema_violations} total schema violation(s) during execution")
     dump_trace(iterations=state.iteration, clean_exit=_clean_exit)
     print(f"\nFinal state.data keys: {list(state.data.keys())}")
     return state

@@ -11,6 +11,8 @@ Usage:
     python3 test_agents.py --dry-run          # Check imports only, no API calls
     python3 test_agents.py --timeout 60       # Set per-agent timeout (seconds)
     python3 test_agents.py --json             # Output results as JSON
+    python3 test_agents.py --model gpt-4o     # Override model for all agents
+    python3 test_agents.py --compare-models   # Compare across multiple models
 """
 
 import argparse
@@ -60,6 +62,20 @@ TEST_INPUTS = {
     },
     "crew": {
         "objective": "Write a short blog post about AI safety",
+    },
+    "tree_of_thought": {
+        "problem": "What is the most efficient way to sort a million integers?",
+        "branching_factor": 3,
+        "max_depth": 2,
+        "beam_width": 2,
+    },
+    "plan_and_solve": {
+        "problem": "How do you build a basic web application with user authentication?",
+        "max_retries": 1,
+    },
+    "self_refine": {
+        "task": "Write a clear, concise explanation of how photosynthesis works for a 10-year-old.",
+        "max_rounds": 2,
     },
 }
 
@@ -134,6 +150,32 @@ def validate_crew(state):
         issues.append("No assignments created")
     return issues
 
+def validate_tree_of_thought(state):
+    """Tree of Thought should explore candidates and produce an answer."""
+    issues = []
+    if not state.data.get("answer") and not state.data.get("best_thought"):
+        issues.append("No answer or best_thought produced")
+    return issues
+
+def validate_plan_and_solve(state):
+    """Plan and Solve should decompose, solve, and synthesize."""
+    issues = []
+    if not state.data.get("sub_problems") and not state.data.get("plan"):
+        issues.append("No sub_problems or plan produced")
+    if (not state.data.get("final_answer") and not state.data.get("synthesis")
+            and not state.data.get("solved_sub_solutions")):
+        issues.append("No final_answer, synthesis, or solved_sub_solutions produced")
+    return issues
+
+def validate_self_refine(state):
+    """Self Refine should produce output through generate-critique-refine loop."""
+    issues = []
+    if (not state.data.get("output") and not state.data.get("refined_output")
+            and not state.data.get("draft") and not state.data.get("final_output")
+            and not state.data.get("output_text") and not state.data.get("current_output")):
+        issues.append("No output produced")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -143,6 +185,9 @@ VALIDATORS = {
     "rag": validate_rag,
     "code_reviewer": validate_code_reviewer,
     "crew": validate_crew,
+    "tree_of_thought": validate_tree_of_thought,
+    "plan_and_solve": validate_plan_and_solve,
+    "self_refine": validate_self_refine,
 }
 
 # ── Timeout context manager ──
@@ -258,7 +303,93 @@ def run_agent_test(agent_name, timeout_sec=120, dry_run=False):
 AGENT_NAMES = [
     "react", "debate", "babyagi", "babyagi_autogen",
     "autogpt", "rag", "code_reviewer", "crew",
+    "tree_of_thought", "plan_and_solve", "self_refine",
 ]
+
+DEFAULT_COMPARE_MODELS = [
+    "gemini-3-flash-preview",
+    "gpt-4o-mini",
+    "gpt-4o",
+]
+
+
+def run_model_comparison(models, agents, timeout_sec=120, as_json=False):
+    """Run each agent with multiple models and output a comparison table."""
+    all_results = {}  # model -> [result, ...]
+
+    for model in models:
+        os.environ["OPENCLAW_MODEL"] = model
+        if not as_json:
+            print(f"\n{'='*60}")
+            print(f"  Model: {model}")
+            print(f"{'='*60}")
+
+        # Force reimport of all agent modules so they pick up new model
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("agents."):
+                del sys.modules[mod_name]
+
+        model_results = []
+        for name in agents:
+            if not as_json:
+                print(f"  [TEST] {name}...", end=" ", flush=True)
+            result = run_agent_test(name, timeout_sec=timeout_sec)
+            result["model"] = model
+            model_results.append(result)
+            if not as_json:
+                status = result["status"]
+                calls = result["llm_calls"]
+                dur = result["duration_ms"]
+                icon = {"PASS": "✓", "ISSUES": "⚠", "ERROR": "✗", "TIMEOUT": "⏱"}.get(status, "?")
+                print(f"{icon} {status} ({dur}ms, {calls} calls)")
+
+        all_results[model] = model_results
+
+    # Clean up env
+    if "OPENCLAW_MODEL" in os.environ:
+        del os.environ["OPENCLAW_MODEL"]
+
+    if as_json:
+        print(json.dumps(all_results, indent=2))
+        return
+
+    # Print comparison table
+    print(f"\n{'='*70}")
+    print(f"  Model Comparison Summary")
+    print(f"{'='*70}")
+
+    # Header
+    col_w = max(len(m) for m in models) + 2
+    header = f"  {'Agent':<20s}"
+    for m in models:
+        header += f"  {m:<{col_w}s}"
+    print(header)
+    print("  " + "-" * (20 + (col_w + 2) * len(models)))
+
+    # Per-agent rows
+    for i, name in enumerate(agents):
+        row = f"  {name:<20s}"
+        for model in models:
+            r = all_results[model][i]
+            if r["status"] == "PASS":
+                cell = f"✓ {r['llm_calls']}c {r['duration_ms']/1000:.1f}s"
+            else:
+                cell = f"✗ {r['status']}"
+            row += f"  {cell:<{col_w}s}"
+        print(row)
+
+    # Totals row
+    print("  " + "-" * (20 + (col_w + 2) * len(models)))
+    row = f"  {'TOTAL':<20s}"
+    for model in models:
+        mrs = all_results[model]
+        passed = sum(1 for r in mrs if r["status"] == "PASS")
+        total_calls = sum(r["llm_calls"] for r in mrs)
+        total_s = sum(r["duration_ms"] for r in mrs) / 1000
+        row += f"  {f'{passed}/{len(agents)} {total_calls}c {total_s:.0f}s':<{col_w}s}"
+    print(row)
+    print(f"{'='*70}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -268,15 +399,36 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Check imports only, no API calls")
     parser.add_argument("--timeout", "-t", type=int, default=120, help="Per-agent timeout in seconds")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    parser.add_argument("--model", "-m", type=str, default=None,
+                        help="Override model for all agents (sets OPENCLAW_MODEL env var)")
+    parser.add_argument("--compare-models", nargs="*", metavar="MODEL",
+                        help="Compare across models. No args = default set, or list models explicitly")
     args = parser.parse_args()
+
+    # Model comparison mode
+    if args.compare_models is not None:
+        models = args.compare_models if args.compare_models else DEFAULT_COMPARE_MODELS
+        run_model_comparison(
+            models=models,
+            agents=([args.agent] if args.agent else AGENT_NAMES),
+            timeout_sec=args.timeout,
+            as_json=args.json,
+        )
+        return
+
+    # Single-model override
+    if args.model:
+        os.environ["OPENCLAW_MODEL"] = args.model
 
     agents_to_test = [args.agent] if args.agent else AGENT_NAMES
     results = []
 
+    model_label = os.environ.get("OPENCLAW_MODEL", "spec default")
     if not args.json:
         print(f"\n{'='*60}")
         print(f"  Agent Test Harness")
         print(f"  Testing {len(agents_to_test)} agent(s), timeout={args.timeout}s")
+        print(f"  Model: {model_label}")
         print(f"{'='*60}\n")
 
     for name in agents_to_test:
