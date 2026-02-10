@@ -1,7 +1,7 @@
 # Agent Ontology Roadmap
 
 **Date:** 2026-02-10
-**Current state:** v0.2 ontology, 22 specs, 28 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI)
+**Current state:** v0.2 ontology, 23 specs, 30 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI + AutoGen), spec-level state schema support, benchmark evolution
 
 ---
 
@@ -9,12 +9,12 @@
 
 ### Assets
 - **Ontology** (ONTOLOGY.yaml v0.2): 8 entity types, 7 process types, 12 edge types, 25+ validation rules
-- **Spec catalog**: 22 agent specs covering major patterns in the literature (ReAct, debate, RAG, plan-and-solve, self-refine, tree-of-thought, LATS, voyager, multi-agent codegen, map-reduce, socratic tutor, reflexion, mixture-of-agents, meta-prompting, customer-support swarm, software team, etc.)
+- **Spec catalog**: 23 agent specs covering major patterns in the literature (ReAct, debate, RAG, plan-and-solve, self-refine, tree-of-thought, LATS, voyager, multi-agent codegen, map-reduce, socratic tutor, reflexion, mixture-of-agents, meta-prompting, customer-support swarm, software team, self-improver, etc.)
 - **Full pipeline**: docs -> spec -> {validate, visualize, instantiate, test, analyze, mutate, evolve, benchmark}
 - **Two code gen backends**: custom state machine + LangGraph
 - **Pattern library**: 7 reusable patterns with composition, mutation, crossover
 - **Benchmarks**: 4 datasets (HotpotQA, GSM8K, ARC, HumanEval)
-- **Property tests**: 174/174 pass across all 22 specs
+- **Property tests**: 182/182 pass across all 23 specs
 
 ### Core Thesis
 Agent architectures are typed graphs. If you make the graph formal, you unlock validation, visualization, code generation, testing, analysis, comparison, mutation, and evolution for free.
@@ -135,6 +135,15 @@ AST-based parser extracts Agent/Task/Crew definitions → valid YAML specs. Test
 - Financial analysis/221 lines (third-party): 4 agents, 5 tools, 4 tasks — validates clean
 
 Supports: `async_execution` fan-out, task-specific tool entities + invoke edges, checkpoint for `human_input`, sequential + hierarchical process types, Pydantic output schemas.
+
+#### 2.3 AutoGen Importer — DONE (import_autogen.py)
+AST-based parser extracts AutoGen agent code → valid YAML specs. Supports both pyautogen v0.2 and autogen-agentchat v0.4 APIs:
+- v0.2: AssistantAgent, UserProxyAgent, ConversableAgent, GroupChat, GroupChatManager, `register_for_llm`/`register_for_execution` tool decorators, `register_function`, `initiate_chat`/`initiate_chats`, nested chats
+- v0.4: AssistantAgent (autogen_agentchat), FunctionTool, RoundRobinGroupChat/SelectorGroupChat/Swarm teams, Handoff, `model_client` extraction
+- Variable resolution for llm_config dicts, config_list model extraction, FunctionTool variable references
+- GroupChat → team entity + loop/gate processes with termination detection
+- `--llm-augment` flag for LLM-enhanced import
+- CLI entry point: `ao-import-autogen`
 
 ### Phase 3: Production Code Generation
 **Goal**: Generated agents that actually work with real tools and persistent memory.
@@ -433,3 +442,7 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-09 | JSON Schema (Phase 1.3) before LangGraph importer | Quick win that enables tooling; importer is highest leverage but larger effort |
 | 2026-02-09 | OWL dual representation (Phase B) complete | 22/22 lossless round-trip. Structural model for reasoning, JSON data properties for reconstruction. Isolated worlds prevent state leakage. |
 | 2026-02-10 | Rename OpenClaw → Agent Ontology | 79 files, 277 replacements. Env vars: AGENT_ONTOLOGY_*. OWL URI: agent-ontology.org. All 22 specs validate, 174/174 properties pass, 22/22 OWL round-trip. |
+| 2026-02-10 | AutoGen importer (Phase 2.3) complete | AST-based, supports v0.2 + v0.4 APIs, GroupChat to team+loop, tool registration patterns. Validates clean on both test files. |
+| 2026-02-10 | Benchmark evolution fix | Rewrote compute_fitness_benchmark to run inline instead of subprocess. All candidates now score properly (was: all BENCH_FAIL). |
+| 2026-02-10 | Self-improver spec added | 23rd spec: self-improvement loop with meta-review, strategy adjustment, re-execution, and convergence gate. |
+| 2026-02-10 | Spec-level state schema support | instantiate.py now honors state field: initial values, channel reducers as Annotated in LangGraph TypedDict. 182/182 property tests pass. |
