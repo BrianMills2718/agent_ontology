@@ -265,7 +265,7 @@ schemas:        # Data shapes flowing between components
 - `error` — Error flow routing to handler
 - `modify` / `observe` — Policy interactions
 
-Full type system: `ONTOLOGY.yaml`
+Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON Schema)
 
 ## Tools
 
@@ -361,7 +361,7 @@ OpenClaw uses a **reified hypergraph** constrained by an **ontology**:
 - **Reified hypergraph**: Any relationship can be a node, any node can participate in any number of relationships. This means templates, dynamic topology, conditional wiring, self-modification — all expressible.
 - **Ontology**: Constrains the hypergraph so code generators know what to expect. Defines types, required fields, and validation rules.
 
-See `SPEC.md` for the standalone format specification, `ROADMAP.md` for the long-term vision, and `ONTOLOGY.yaml` for the internal type system definition.
+See `SPEC.md` for the standalone format specification, `spec_schema.json` for machine-readable JSON Schema validation, `ROADMAP.md` for the long-term vision, and `ONTOLOGY.yaml` for the internal type system definition.
 
 ## Requirements
 
@@ -392,6 +392,7 @@ benchmarks/             # Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) a
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system (internal)
 SPEC.md                 # Formal spec format specification (standalone)
+spec_schema.json        # JSON Schema for machine-readable spec validation
 requirements.txt        # Python dependencies
 requirements-dev.txt    # Development/research dependencies
 validate.py             # Spec validator (25+ rules)

@@ -112,12 +112,8 @@ Add `image`, `audio`, `video` as recognized schema field types.
 - **Uncertainties**: Do we need to change the code generator? Multimodal is handled by the LLM API, not by schema types.
 - **Decision**: Defer unless a spec needs it.
 
-### Phase 1.3: JSON Schema for Spec Format — NEXT
-Generate a JSON Schema (`spec_schema.json`) from ONTOLOGY.yaml and SPEC.md. Enables machine-readable validation of YAML specs by any language, VS Code autocomplete, and cross-tool interop.
-
-- **Input**: ONTOLOGY.yaml + SPEC.md
-- **Output**: `spec_schema.json` — JSON Schema draft 2020-12
-- **Satisfaction criteria**: All 22 existing specs validate against the schema. VS Code shows autocomplete for entity/process/edge types.
+### Phase 1.3: JSON Schema for Spec Format — DONE (spec_schema.json)
+`spec_schema.json` — JSON Schema draft 2020-12, discriminated unions via `if/then` for all 8 entity types, 7 process types, 12 edge types. 22/22 specs validate. Enables VS Code autocomplete and cross-language validation.
 
 ### Phase 2: Import Bridge (Highest Leverage)
 **Goal**: Prove the interchange story by importing real agent code into specs.

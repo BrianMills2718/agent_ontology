@@ -1,5 +1,6 @@
 # Core (required for validation, analysis, and spec tools)
 pyyaml>=6.0
+jsonschema>=4.20.0
 
 # LLM providers (required for running generated agents)
 google-genai>=1.0.0
