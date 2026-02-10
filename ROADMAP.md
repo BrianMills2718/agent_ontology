@@ -286,22 +286,25 @@ Reasoner updates recommendations → LLM uses updated knowledge → ...
 - **Result**: 21/22 correct classifications. All canonical matches work (ReAct→ReasoningLoop, Self-Refine→CritiqueCycle, RAG→RetrievalAugmented, Debate→MultiAgentDebate, etc.)
 - **Key finding — the ceiling of structural matching**: BabyAGI is incorrectly classified as CritiqueCycle because its `pull_task → enrich` subgraph is topologically identical to Self-Refine's `generate → critique`. The structural matcher sees two agent-invoking steps in sequence inside a loop — it can't distinguish "generate then critique" from "execute then enrich" because it doesn't understand what the steps *do*, only how they connect. This is a concrete motivating example for Phase B-C: semantic annotations (step roles, data-flow constraints) or richer DL axioms would let the reasoner distinguish these. Pure topology has a ceiling; semantics is what the formal ontology adds.
 
-#### Phase A.5: RDF/SPARQL Experiment — does formalism actually help? (IN PROGRESS)
+#### Phase A.5: RDF Experiment — does formalism actually help? — DONE
 
-**Question**: Does modeling specs as RDF with reified edges and querying with SPARQL solve problems that structural matching can't? Specifically, can it distinguish Self-Refine from BabyAGI?
+**Question**: Does modeling specs as RDF with reified edges and querying with schema semantics solve problems that structural matching can't?
 
-**Approach**:
-1. Export 3 specs (Self-Refine, BabyAGI, ReAct) to standard RDF/Turtle using RDFLib
-2. Model edges as reified individuals (not just binary properties) — each edge gets its own node with `from`, `to`, `label`, `dataSchema` properties
-3. Write CritiqueCycle as a SPARQL query that uses edge semantics (labels, data schemas, data-flow dependencies)
-4. Test: does the query match Self-Refine but not BabyAGI?
+**Answer**: YES. Three levels of CritiqueCycle detection on 22 specs:
 
-**What we're really testing**: Whether the information already in our YAML (edge labels like "Generate draft" vs "Execute task", data schemas like `Draft`/`Feedback` vs `TaskResult`/`TaskContext`) is sufficient to disambiguate when modeled properly — or whether we'd need manual role annotation on top.
+| Level | Matches | False positives |
+|-------|---------|-----------------|
+| Structural (topology only) | 12 | 7 (babyagi, autogpt, plan_and_solve, etc.) |
+| Semantic (+ eval field names in schemas) | 5 | 0 |
+| Data-flow (+ shared schema fields) | 2 | 0 |
 
-**Decision criteria**:
-- If SPARQL + reified edges correctly disambiguates using existing YAML data → formal ontology path is justified, proceed to Phase B
-- If it requires manual role annotation → formalism adds structure but not intelligence, reconsider whether the complexity is worth it
-- If it doesn't help at all → YAML + structural matching is good enough, focus effort elsewhere
+**Key findings**:
+1. **No manual annotation needed.** The semantic signal was already in the YAML schema field names (`quality_score`, `weaknesses`, `specific_feedback` vs `result`, `context`). Reified edges make this information queryable.
+2. **rdflib SPARQL is too slow** for multi-join pattern queries (>5min on 695 triples). Python graph traversal over the same RDF data model runs in 13ms. A real triplestore (Jena Fuseki) would handle SPARQL fine, but rdflib is not viable for this.
+3. **The formal data model adds value.** The reified edge model (edges as first-class objects with properties including data schemas and field names) enables queries that flat graph topology cannot express.
+4. **Three tiers of confidence**: structural (broad), semantic (precise), data-flow (strict). Each tier adds signal without requiring more annotation.
+
+**Decision**: Formal data modeling is justified. The next question is infrastructure — do we invest in a triplestore (for SPARQL), or keep Python-native queries over the RDF data model?
 
 #### Phase B: Dual Representation
 - YAML specs remain the authoring format (human-friendly)
