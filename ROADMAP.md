@@ -99,22 +99,11 @@ Code generators are commodity (LangGraph, CrewAI will always run their own frame
 
 ## Plan: Order of Attack
 
-### Phase 1: Solidify the Ontology (CURRENT)
+### Phase 1: Solidify the Ontology — DONE
 **Goal**: Declare the ontology complete for v1.0 and write the formal specification.
 
-#### 1.1 Formal Spec Document
-Write a clean, standalone specification of the YAML format — independent of this repo's tooling. Like the OpenAPI spec document.
-
-- **Input**: ONTOLOGY.yaml + 22 example specs
-- **Output**: `SPEC.md` — a human-readable specification with:
-  - Format definition (entities, processes, edges, schemas)
-  - Type reference (all entity/process/edge types with fields)
-  - Validation rules
-  - Examples for each type
-  - Versioning policy
-- **Satisfaction criteria**: A developer who has never seen this repo can write a valid spec from SPEC.md alone, and `validate.py` accepts it.
-- **Uncertainties**: How formal should it be? JSON Schema level? Or prose + examples level?
-- **Questions**: Should we also produce a JSON Schema for the spec format (machine-readable validation)?
+#### 1.1 Formal Spec Document — DONE (a26ee15)
+`SPEC.md` — ~945 lines covering all 8 entity types, 7 process types, 12 edge types, schema format, 24 validation rules, conventions, and a complete Self-Refine example. Cross-validated against all 22 specs. A developer who has never seen this repo can write a valid spec from SPEC.md alone.
 
 #### 1.2 Multimodal Schema Types (Optional)
 Add `image`, `audio`, `video` as recognized schema field types.
@@ -122,6 +111,13 @@ Add `image`, `audio`, `video` as recognized schema field types.
 - **Satisfaction criteria**: Can write a spec with `{ name: screenshot, type: image }` and it validates. Generated code handles multimodal inputs.
 - **Uncertainties**: Do we need to change the code generator? Multimodal is handled by the LLM API, not by schema types.
 - **Decision**: Defer unless a spec needs it.
+
+### Phase 1.3: JSON Schema for Spec Format — NEXT
+Generate a JSON Schema (`spec_schema.json`) from ONTOLOGY.yaml and SPEC.md. Enables machine-readable validation of YAML specs by any language, VS Code autocomplete, and cross-tool interop.
+
+- **Input**: ONTOLOGY.yaml + SPEC.md
+- **Output**: `spec_schema.json` — JSON Schema draft 2020-12
+- **Satisfaction criteria**: All 22 existing specs validate against the schema. VS Code shows autocomplete for entity/process/edge types.
 
 ### Phase 2: Import Bridge (Highest Leverage)
 **Goal**: Prove the interchange story by importing real agent code into specs.
@@ -177,8 +173,8 @@ Add a `dspy_optimize.py` tool that takes a generated agent + training data -> op
 ### Phase 4: Polish & Ecosystem
 **Goal**: Make it easy for others to adopt.
 
-#### 4.1 JSON Schema for Spec Format
-Machine-readable validation of YAML specs, usable by any language.
+#### 4.1 JSON Schema for Spec Format — Moved to Phase 1.3
+Machine-readable validation of YAML specs, usable by any language. Pulled forward as prerequisite for importer work.
 
 #### 4.2 Web-based Spec Editor
 Extend spec-viewer.html with editing capabilities.
@@ -447,3 +443,6 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-09 | Three-layer authoring model: YAML + OWL + RDF | Author in YAML (ergonomic), meta-model in OWL (formal), export to RDF (queryable). Each layer serves different tools. |
 | 2026-02-09 | Abstraction hierarchy is the core value proposition | Patterns compress specs, specs compress code, code compresses runtime. Each level enables different analysis. |
 | 2026-02-09 | Architecture framework analogy (ArchiMate/C4) is relevant | Multiple viewpoints on one model is a solved problem in enterprise architecture. Learn from it. |
+| 2026-02-09 | Phase 1.1 (SPEC.md) complete | ~945 lines, cross-validated against all 22 specs, 3 gaps found and fixed |
+| 2026-02-09 | 5 bugs fixed from Codex audit | trace format mismatch, migrate loop→back_edge, fan-out transitions, crew output, quote escaping. 174/174 property tests pass. |
+| 2026-02-09 | JSON Schema (Phase 1.3) before LangGraph importer | Quick win that enables tooling; importer is highest leverage but larger effort |

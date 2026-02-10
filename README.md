@@ -328,7 +328,7 @@ agents/*.py            # Generated runnable agents (custom backend)
 agents_lg/*.py         # Generated runnable agents (LangGraph backend)
      |
      +---> test_agents.py    # Automated testing + multi-model comparison
-     +---> benchmark.py      # Benchmark suite (HotpotQA, GSM8K)
+     +---> benchmark.py      # Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval)
      +---> trace.json        # Runtime traces
               |
               v
