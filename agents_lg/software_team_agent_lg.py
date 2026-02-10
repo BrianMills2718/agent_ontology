@@ -271,13 +271,13 @@ class AgentState(TypedDict, total=False):
     acceptance_criteria: list
     api_contracts: str
     code: str
-    code_artifacts: list
+    code_artifacts: Annotated[list, operator.add]
     code_module: Any
     components: list
     create_prd_result: Any
     data_models: str
     design_system_result: Any
-    designs: list
+    designs: Annotated[list, operator.add]
     filename: str
     final_output: Any
     implement_code_result: Any
@@ -287,9 +287,9 @@ class AgentState(TypedDict, total=False):
     project_description: str
     quality_score: int
     query: Any
-    requirements: list
+    requirements: Annotated[list, operator.add]
     review_code_result: Any
-    reviews: list
+    reviews: Annotated[list, operator.add]
     revision_count: Any
     suggestions: list
     tech_stack: list
@@ -684,6 +684,10 @@ def run(initial_data=None):
 
     # Build initial state
     state = {}
+    state['requirements'] = []
+    state['designs'] = []
+    state['code_artifacts'] = []
+    state['reviews'] = []
     if initial_data:
         state.update(initial_data)
     state["_iteration"] = 0

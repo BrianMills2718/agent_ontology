@@ -663,6 +663,10 @@ MAX_ITERATIONS = int(os.environ.get("AGENT_ONTOLOGY_MAX_ITER", "100"))
 def run(initial_data=None):
     """Software Development Team — main execution loop"""
     state = AgentState()
+    state.data.setdefault('requirements', [])
+    state.data.setdefault('designs', [])
+    state.data.setdefault('code_artifacts', [])
+    state.data.setdefault('reviews', [])
     if initial_data:
         state.data.update(initial_data)
 

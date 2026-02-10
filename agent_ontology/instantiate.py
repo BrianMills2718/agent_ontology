@@ -916,6 +916,12 @@ def generate_agent(spec, persistent_stores=False):
     w(f'def run(initial_data=None):')
     w(f'    """{name} — main execution loop"""')
     w(f'    state = AgentState()')
+    # Apply spec-level state.initial defaults first, then overlay initial_data
+    state_cfg = spec.get("state", {})
+    state_initial = state_cfg.get("initial", {})
+    if state_initial:
+        for k, v in state_initial.items():
+            w(f'    state.data.setdefault({k!r}, {v!r})')
     w(f'    if initial_data:')
     w(f'        state.data.update(initial_data)')
     w(f'')
@@ -1711,6 +1717,15 @@ def generate_langgraph_agent(spec, persistent_stores=False):
     w('# ═══════════════════════════════════════════════════════════')
     w('')
 
+    # Build channel reducer map from spec-level state.channels
+    state_cfg = spec.get("state", {})
+    channel_reducers = {}  # field_name -> reducer type
+    for ch_def in state_cfg.get("channels", []):
+        ch_name = ch_def.get("name", "")
+        ch_reducer = ch_def.get("reducer", "replace")
+        if ch_name:
+            channel_reducers[ch_name] = ch_reducer
+
     # Collect all field names across schemas + internal fields
     all_fields = {}  # name -> python type annotation
     for s in schemas:
@@ -1721,17 +1736,22 @@ def generate_langgraph_agent(spec, persistent_stores=False):
                 continue
             # Map ontology types to Python
             if ftype == "string":
-                all_fields[fname] = "str"
+                py_type = "str"
             elif ftype == "integer":
-                all_fields[fname] = "int"
+                py_type = "int"
             elif ftype == "boolean":
-                all_fields[fname] = "bool"
+                py_type = "bool"
             elif ftype.startswith("list"):
-                all_fields[fname] = "list"
+                py_type = "list"
             elif ftype.startswith("enum["):
-                all_fields[fname] = "str"
+                py_type = "str"
             else:
-                all_fields[fname] = "Any"
+                py_type = "Any"
+            # Apply reducer annotation for channel fields
+            if fname in channel_reducers and channel_reducers[fname] == "append":
+                all_fields[fname] = "Annotated[list, operator.add]"
+            else:
+                all_fields[fname] = py_type
 
     # Add store fields
     for s in stores:
@@ -2499,6 +2519,11 @@ def generate_langgraph_agent(spec, persistent_stores=False):
     w(f'')
     w(f'    # Build initial state')
     w('    state = {}')
+    # Apply spec-level state.initial defaults
+    state_initial_lg = state_cfg.get("initial", {})
+    if state_initial_lg:
+        for k, v in state_initial_lg.items():
+            w(f'    state[{k!r}] = {v!r}')
     w(f'    if initial_data:')
     w(f'        state.update(initial_data)')
     w(f'    state["_iteration"] = 0')
