@@ -18,6 +18,38 @@ import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Pattern keywords for text-based detection
+_PATTERN_KEYWORDS = {
+    "reasoning_loop": ["reason", "react", "think and act", "tool use loop", "observe", "action loop"],
+    "critique_cycle": ["critique", "refine", "self-refine", "quality score", "iterative improvement"],
+    "debate": ["debate", "argue", "pro and con", "judge", "opposing views"],
+    "retrieval": ["retrieval", "rag", "retrieve", "vector search", "knowledge base", "document retrieval"],
+    "decomposition": ["decompose", "sub-problem", "plan and solve", "break down", "step-by-step plan"],
+    "fan_out_aggregate": ["parallel", "map reduce", "chunk", "aggregate", "fan-out", "concurrent"],
+    "reflection": ["reflect", "episodic memory", "self-reflection", "learn from mistakes", "retry with memory"],
+}
+
+# Map pattern names to their source spec files
+_PATTERN_SOURCE_SPECS = {
+    "reasoning_loop": "react.yaml",
+    "critique_cycle": "self_refine.yaml",
+    "debate": "debate.yaml",
+    "retrieval": "rag.yaml",
+    "decomposition": "plan_and_solve.yaml",
+    "fan_out_aggregate": "map_reduce.yaml",
+    "reflection": "reflexion.yaml",
+}
+
+
+def _scan_description_for_patterns(description):
+    """Detect which architectural patterns a description is asking for."""
+    text_lower = description.lower()
+    matches = []
+    for pname, keywords in _PATTERN_KEYWORDS.items():
+        if any(kw in text_lower for kw in keywords):
+            matches.append(pname)
+    return matches
+
 
 def load_ontology():
     """Load the ONTOLOGY.yaml as text to include in the prompt."""
@@ -26,10 +58,33 @@ def load_ontology():
         return f.read()
 
 
-def load_examples():
-    """Load example specs covering key patterns: loops, fan-out, gates."""
+def load_examples(detected_patterns=None):
+    """Load example specs. If patterns detected, prefer matching examples."""
+    if detected_patterns:
+        # Use pattern source specs as examples (up to 2)
+        examples = []
+        seen = set()
+        for pname in detected_patterns[:2]:
+            spec_file = _PATTERN_SOURCE_SPECS.get(pname)
+            if spec_file and spec_file not in seen:
+                path = os.path.join(SCRIPT_DIR, "specs", spec_file)
+                if os.path.exists(path):
+                    with open(path) as f:
+                        examples.append((spec_file, f.read()))
+                    seen.add(spec_file)
+        # Fill remaining slots with defaults
+        for name in ["react.yaml", "code_reviewer.yaml", "debate.yaml"]:
+            if len(examples) >= 2:
+                break
+            if name not in seen:
+                path = os.path.join(SCRIPT_DIR, "specs", name)
+                if os.path.exists(path):
+                    with open(path) as f:
+                        examples.append((name, f.read()))
+                    seen.add(name)
+        return examples
+    # Default: hardcoded examples
     examples = []
-    # react: tool-use loop; code_reviewer: fan-out pattern; debate: gates + multi-agent
     for name in ["react.yaml", "code_reviewer.yaml", "debate.yaml"]:
         path = os.path.join(SCRIPT_DIR, "specs", name)
         if os.path.exists(path):
@@ -38,26 +93,60 @@ def load_examples():
     return examples
 
 
-def build_prompt(description, ontology, examples):
+def _build_pattern_context(detected_patterns):
+    """Build pattern context string for the system prompt."""
+    if not detected_patterns:
+        return ""
+    try:
+        from patterns import get_pattern, pattern_info
+    except ImportError:
+        return ""
+
+    lines = ["\nDETECTED ARCHITECTURAL PATTERNS:"]
+    lines.append("Your description matches these known patterns. Use them as structural guidance:\n")
+    for pname in detected_patterns:
+        p = get_pattern(pname)
+        if not p:
+            continue
+        iface = p.get("interface", {})
+        procs = [pr["id"] for pr in p.get("processes", [])]
+        lines.append(f"  {pname}: {p.get('description', '')}")
+        lines.append(f"    Entry: {iface.get('entry', '?')}, Exits: {iface.get('exits', [])}")
+        lines.append(f"    Core processes: {', '.join(procs[:6])}")
+        lines.append(f"    Inputs: {iface.get('inputs', [])}, Outputs: {iface.get('outputs', [])}")
+        config = p.get("config", {})
+        if config:
+            lines.append(f"    Config params: {list(config.keys())}")
+        lines.append("")
+    lines.append("You should model your spec's structure on these patterns. Use similar")
+    lines.append("process IDs, edge topology, and schema design where applicable.")
+    return "\n".join(lines)
+
+
+def build_prompt(description, ontology, examples, detected_patterns=None):
     """Build the system and user prompts for spec generation."""
 
     example_text = ""
     for name, content in examples[:2]:
         example_text += f"\n--- Example: {name} ---\n{content}\n"
 
+    pattern_context = _build_pattern_context(detected_patterns) if detected_patterns else ""
+
     system = f"""You are an expert agent architecture analyst. You convert natural language
 descriptions of AI agent systems into formal OpenClaw YAML specifications.
 
 An OpenClaw spec defines an agent architecture using:
-- entities: agents (LLM-based), stores (persistence), tools (capabilities), humans, configs
+- entities: agents (LLM-based), stores (persistence), tools (capabilities), humans, configs,
+            channels (pub/sub), teams (agent groups), conversations (multi-turn dialogue)
 - processes: steps (computation), gates (decisions), checkpoints (human approval), spawns (sub-agents)
-- edges: flow (sequence), invoke (agent/tool call), loop (cycle), branch (conditional), read/write (store access)
+- edges: flow (sequence), invoke (agent/tool call), loop (cycle), branch (conditional),
+         read/write (store access), publish/subscribe (channel messaging), handoff (agent transfer)
 - schemas: data shapes flowing between components
 
 RULES:
 1. Every entity needs: id, type, label. Agents also need: model, system_prompt, input_schema, output_schema.
 2. Every process needs: id, type, label. Steps can have logic (Python code).
-3. Gates need: condition (human-readable), branches (2+ with condition and target).
+3. Gates need: condition (human-readable), branches (2+ with condition and target). Use default for else.
 4. Edges connect processes to processes (flow/loop) or processes to entities (invoke/read/write).
 5. Schemas define the data contracts between components.
 6. The spec needs: name, version, description, entry_point.
@@ -88,6 +177,16 @@ LOOP TERMINATION:
   - A gate that checks completion and branches to exit
 - Without termination, loops run forever. Always include a max iteration check.
 
+PUB/SUB CHANNELS:
+- Use channel entities + publish/subscribe edges when agents communicate via shared topics.
+- publish edges go from a step to a channel (with data schema).
+- subscribe edges go from a channel to a step (agent reads channel messages).
+- Always specify data schema on publish edges to avoid state explosion.
+
+HANDOFFS:
+- Use handoff edges between agents for peer-to-peer control transfer.
+- Handoff edges are metadata — actual routing is done by gate processes.
+{pattern_context}
 Output ONLY valid YAML. No markdown code fences. No explanatory text before or after.
 
 Here is the OpenClaw ontology (type system):
@@ -222,12 +321,17 @@ def main():
     print(f"Generating spec from description ({len(description)} chars)...")
     print(f"Model: {args.model}")
 
-    # Load ontology and examples
-    ontology = load_ontology()
-    examples = load_examples()
+    # Detect patterns in description
+    detected_patterns = _scan_description_for_patterns(description)
+    if detected_patterns:
+        print(f"Detected patterns: {', '.join(detected_patterns)}")
 
-    # Build prompt
-    system, user = build_prompt(description, ontology, examples)
+    # Load ontology and examples (pattern-aware)
+    ontology = load_ontology()
+    examples = load_examples(detected_patterns)
+
+    # Build prompt (with pattern context)
+    system, user = build_prompt(description, ontology, examples, detected_patterns)
 
     if args.dry_run:
         print("\n=== SYSTEM PROMPT ===")
@@ -279,6 +383,26 @@ Pay special attention to:
                     if valid:
                         break
                     print(output)
+
+    # Pattern compliance check
+    if detected_patterns:
+        try:
+            import yaml
+            from patterns import detect_patterns
+            spec = yaml.safe_load(yaml_text)
+            if spec:
+                found = detect_patterns(spec)
+                found_names = {p[0] for p in found}
+                matched = found_names & set(detected_patterns)
+                if matched:
+                    print(f"\nPattern compliance: {len(matched)}/{len(detected_patterns)} patterns detected in output")
+                    for pn in matched:
+                        print(f"  + {pn}")
+                missed = set(detected_patterns) - found_names
+                if missed:
+                    print(f"  Patterns not detected (may use different process IDs): {', '.join(missed)}")
+        except Exception:
+            pass  # Pattern check is best-effort
 
     # Output
     if args.output:
