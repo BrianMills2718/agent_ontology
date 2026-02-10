@@ -5,6 +5,7 @@ Spec: Mixture of Agents (MoA) architecture: multiple diverse proposer agents gen
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -274,7 +275,11 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
+    aggregate_responses_result: Any
+    call_analytical_result: Any
+    call_creative_result: Any
+    call_critical_result: Any
     confidence: Any
     current_layer: int
     final_quality: int
@@ -492,9 +497,7 @@ def node_call_analytical(state: AgentState) -> dict:
     proposer_analytical_msg = json.dumps(proposer_analytical_input, default=str)
     proposer_analytical_raw = invoke_proposer_analytical(proposer_analytical_msg, output_schema="ProposerOutput")
     proposer_analytical_result = parse_response(proposer_analytical_raw, "ProposerOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(proposer_analytical_result, "ProposerOutput"))
-    updates.update(proposer_analytical_result)
-    updates["proposer_output"] = proposer_analytical_result
+    updates["_schema_violations"] = len(validate_output(proposer_analytical_result, "ProposerOutput"))
     updates["call_analytical_result"] = proposer_analytical_result
     print(f"    ← Analytical Proposer: {proposer_analytical_result}")
 
@@ -530,9 +533,7 @@ def node_call_creative(state: AgentState) -> dict:
     proposer_creative_msg = json.dumps(proposer_creative_input, default=str)
     proposer_creative_raw = invoke_proposer_creative(proposer_creative_msg, output_schema="ProposerOutput")
     proposer_creative_result = parse_response(proposer_creative_raw, "ProposerOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(proposer_creative_result, "ProposerOutput"))
-    updates.update(proposer_creative_result)
-    updates["proposer_output"] = proposer_creative_result
+    updates["_schema_violations"] = len(validate_output(proposer_creative_result, "ProposerOutput"))
     updates["call_creative_result"] = proposer_creative_result
     print(f"    ← Creative Proposer: {proposer_creative_result}")
 
@@ -568,9 +569,7 @@ def node_call_critical(state: AgentState) -> dict:
     proposer_critical_msg = json.dumps(proposer_critical_input, default=str)
     proposer_critical_raw = invoke_proposer_critical(proposer_critical_msg, output_schema="ProposerOutput")
     proposer_critical_result = parse_response(proposer_critical_raw, "ProposerOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(proposer_critical_result, "ProposerOutput"))
-    updates.update(proposer_critical_result)
-    updates["proposer_output"] = proposer_critical_result
+    updates["_schema_violations"] = len(validate_output(proposer_critical_result, "ProposerOutput"))
     updates["call_critical_result"] = proposer_critical_result
     print(f"    ← Critical Proposer: {proposer_critical_result}")
 
@@ -591,8 +590,9 @@ def node_collect_proposals(state: AgentState) -> dict:
 
     # Logic from spec
     proposals = []
-    for key in ["analytical_response", "creative_response", "critical_response"]:
-        resp = state.get(key, "")
+    for key in ["call_analytical_result", "call_creative_result", "call_critical_result"]:
+        result = state.get(key, {})
+        resp = result.get("response", "") if isinstance(result, dict) else str(result)
         if resp:
             proposals.append(resp)
     updates["proposals"] = proposals
@@ -635,7 +635,7 @@ def node_aggregate_responses(state: AgentState) -> dict:
     aggregator_agent_msg = json.dumps(aggregator_agent_input, default=str)
     aggregator_agent_raw = invoke_aggregator_agent(aggregator_agent_msg, output_schema="AggregatorOutput")
     aggregator_agent_result = parse_response(aggregator_agent_raw, "AggregatorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(aggregator_agent_result, "AggregatorOutput"))
+    updates["_schema_violations"] = len(validate_output(aggregator_agent_result, "AggregatorOutput"))
     updates.update(aggregator_agent_result)
     updates["aggregator_output"] = aggregator_agent_result
     updates["aggregate_responses_result"] = aggregator_agent_result
@@ -796,6 +796,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

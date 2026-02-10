@@ -5,6 +5,7 @@ Spec: Meta-Prompting architecture: a meta-agent dynamically generates specialize
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -290,7 +291,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     analysis: str
     assigned_prompt: str
     completed_sub_tasks: Any
@@ -301,16 +302,19 @@ class AgentState(TypedDict, total=False):
     context: str
     current_sub_task: Any
     current_sub_task_idx: Any
+    decompose_task_result: Any
     dependency_context: list
     depends_on: list
     depth: int
     description: str
+    execute_worker_result: Any
     expertise: str
     final_answer: str
     final_completeness: int
     gaps_identified: list
     generated_prompt: str
     generated_prompts: list
+    integrate_results_result: Any
     integrated_answer: str
     is_complex: bool
     len: Any
@@ -320,6 +324,7 @@ class AgentState(TypedDict, total=False):
     pending_sub_tasks: Any
     prompt_library: dict
     prompt_text: str
+    recurse_decomposition_result: Any
     required_expertise: str
     result: str
     status: str
@@ -513,7 +518,7 @@ def node_decompose_task(state: AgentState) -> dict:
     meta_agent_msg = json.dumps(meta_agent_input, default=str)
     meta_agent_raw = invoke_meta_agent(meta_agent_msg, output_schema="TaskDecomposition")
     meta_agent_result = parse_response(meta_agent_raw, "TaskDecomposition")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(meta_agent_result, "TaskDecomposition"))
+    updates["_schema_violations"] = len(validate_output(meta_agent_result, "TaskDecomposition"))
     updates.update(meta_agent_result)
     updates["task_decomposition"] = meta_agent_result
     updates["decompose_task_result"] = meta_agent_result
@@ -637,9 +642,7 @@ def node_execute_worker(state: AgentState) -> dict:
     worker_agent_msg = json.dumps(worker_agent_input, default=str)
     worker_agent_raw = invoke_worker_agent(worker_agent_msg, output_schema="WorkerOutput")
     worker_agent_result = parse_response(worker_agent_raw, "WorkerOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(worker_agent_result, "WorkerOutput"))
-    updates.update(worker_agent_result)
-    updates["worker_output"] = worker_agent_result
+    updates["_schema_violations"] = len(validate_output(worker_agent_result, "WorkerOutput"))
     updates["execute_worker_result"] = worker_agent_result
     print(f"    ← Dynamic Worker Agent: {worker_agent_result}")
 
@@ -724,7 +727,7 @@ def node_integrate_results(state: AgentState) -> dict:
     integrator_agent_msg = json.dumps(integrator_agent_input, default=str)
     integrator_agent_raw = invoke_integrator_agent(integrator_agent_msg, output_schema="IntegratorOutput")
     integrator_agent_result = parse_response(integrator_agent_raw, "IntegratorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(integrator_agent_result, "IntegratorOutput"))
+    updates["_schema_violations"] = len(validate_output(integrator_agent_result, "IntegratorOutput"))
     updates.update(integrator_agent_result)
     updates["integrator_output"] = integrator_agent_result
     updates["integrate_results_result"] = integrator_agent_result
@@ -823,6 +826,16 @@ def route_gap_limit_check(state: AgentState) -> str:
         return "decompose_task"
 
 
+def route_loop_collect_worker_result(state: AgentState) -> str:
+    """Loop: Process next sub-task — current_sub_task_idx < len(pending_sub_tasks)"""
+    if state.get("_done"):
+        return "END"
+    if (state.get("current_sub_task_idx", 0)) < (state.get("len", 0)):
+        return "check_pending"
+    else:
+        return "END"
+
+
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
 # ═══════════════════════════════════════════════════════════
@@ -865,6 +878,14 @@ def build_graph():
     graph.add_edge("recurse_decomposition", "collect_worker_result")
     graph.add_edge("execute_worker", "collect_worker_result")
     graph.add_conditional_edges(
+        "collect_worker_result",
+        route_check_pending,
+        {
+            "prepare_worker": "prepare_worker",
+            "integrate_results": "integrate_results",
+        }
+    )
+    graph.add_conditional_edges(
         "negotiate_conflicts",
         route_check_completeness,
         {
@@ -897,6 +918,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

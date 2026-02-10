@@ -49,9 +49,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml google-genai openai anthropic chromadb
 
-      - name: Syntax check all agent files
+      - name: Syntax check custom backend agents
         run: |
           failed=0
           for f in agents/*.py; do
@@ -63,16 +63,34 @@ jobs:
             fi
           done
           if [ "$failed" -eq 1 ]; then
-            echo "One or more agent modules failed to import."
+            echo "One or more custom agent modules failed to import."
             exit 1
           fi
-          echo "All agent modules passed syntax check."
+          echo "All custom agent modules passed syntax check."
 
-  smoke-test:
-    name: Smoke Test (ReAct Agent)
+      - name: Install LangGraph dependencies
+        run: pip install langgraph langchain-core langchain-google-genai langchain-openai langchain-anthropic
+
+      - name: Syntax check LangGraph agents
+        run: |
+          failed=0
+          for f in agents_lg/*.py; do
+            module=$(basename "$f" .py)
+            echo "Checking agents_lg.${module} ..."
+            if ! python -c "import agents_lg.${module}"; then
+              echo "FAIL: agents_lg.${module}"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo "One or more LangGraph agent modules failed to import."
+            exit 1
+          fi
+          echo "All LangGraph agent modules passed syntax check."
+
+  property-tests:
+    name: Property-Based Structural Tests
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: [validate-specs, lint-specs, syntax-check-agents]
     steps:
       - uses: actions/checkout@v4
 
@@ -81,10 +99,34 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml google-genai openai anthropic chromadb langgraph langchain-core langchain-google-genai langchain-openai langchain-anthropic
 
-      - name: Run smoke test
+      - name: Run property tests
+        run: python test_properties.py
+
+  smoke-test:
+    name: Smoke Test (ReAct + Self-Refine)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [validate-specs, lint-specs, syntax-check-agents, property-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml google-genai openai anthropic chromadb
+
+      - name: Run smoke test (ReAct)
         if: env.GEMINI_API_KEY != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python test_agents.py --agent react --timeout 60
+
+      - name: Run smoke test (Self-Refine)
+        if: env.GEMINI_API_KEY != ''
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python test_agents.py --agent self_refine --timeout 60

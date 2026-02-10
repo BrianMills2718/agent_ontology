@@ -5,6 +5,7 @@ Spec: Plan-and-Solve agent that decomposes a problem into sub-problems, solves e
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -282,15 +283,17 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     confidence: int
     current_sub_description: Any
     current_sub_index: Any
+    decompose_result: Any
     depends_on: list
     description: str
     final_answer: str
     improvement_suggestions: list
     index: int
+    invoke_verifier_result: Any
     is_valid: bool
     issues: list
     max_retries: Any
@@ -298,10 +301,12 @@ class AgentState(TypedDict, total=False):
     problem: str
     retry_count: Any
     solution_text: str
+    solve_subproblem_result: Any
     solved_sub_solutions: list
     sub_description: str
     sub_problems: list
     synthesis_notes: str
+    synthesize_result: Any
     total_sub_problems: Any
 
 
@@ -447,7 +452,7 @@ def node_decompose(state: AgentState) -> dict:
     planner_msg = json.dumps(planner_input, default=str)
     planner_raw = invoke_planner(planner_msg, output_schema="Decomposition")
     planner_result = parse_response(planner_raw, "Decomposition")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(planner_result, "Decomposition"))
+    updates["_schema_violations"] = len(validate_output(planner_result, "Decomposition"))
     updates.update(planner_result)
     updates["decomposition"] = planner_result
     updates["decompose_result"] = planner_result
@@ -492,7 +497,7 @@ def node_solve_subproblem(state: AgentState) -> dict:
     solver_msg = json.dumps(solver_input, default=str)
     solver_raw = invoke_solver(solver_msg, output_schema="SubSolution")
     solver_result = parse_response(solver_raw, "SubSolution")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(solver_result, "SubSolution"))
+    updates["_schema_violations"] = len(validate_output(solver_result, "SubSolution"))
     updates.update(solver_result)
     updates["sub_solution"] = solver_result
     updates["solve_subproblem_result"] = solver_result
@@ -558,7 +563,7 @@ def node_invoke_verifier(state: AgentState) -> dict:
     verifier_msg = json.dumps(verifier_input, default=str)
     verifier_raw = invoke_verifier(verifier_msg, output_schema="VerificationResult")
     verifier_result = parse_response(verifier_raw, "VerificationResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(verifier_result, "VerificationResult"))
+    updates["_schema_violations"] = len(validate_output(verifier_result, "VerificationResult"))
     updates.update(verifier_result)
     updates["verification_result"] = verifier_result
     updates["invoke_verifier_result"] = verifier_result
@@ -598,7 +603,7 @@ def node_synthesize(state: AgentState) -> dict:
     synthesizer_msg = json.dumps(synthesizer_input, default=str)
     synthesizer_raw = invoke_synthesizer(synthesizer_msg, output_schema="SynthesizedAnswer")
     synthesizer_result = parse_response(synthesizer_raw, "SynthesizedAnswer")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(synthesizer_result, "SynthesizedAnswer"))
+    updates["_schema_violations"] = len(validate_output(synthesizer_result, "SynthesizedAnswer"))
     updates.update(synthesizer_result)
     updates["synthesized_answer"] = synthesizer_result
     updates["synthesize_result"] = synthesizer_result
@@ -703,6 +708,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

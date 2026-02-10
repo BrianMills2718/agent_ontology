@@ -5,6 +5,7 @@ Spec: A tutoring system that guides students through topics using probing questi
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -298,7 +299,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     answer_text: str
     attempt_count: int
     concept: Any
@@ -313,11 +314,13 @@ class AgentState(TypedDict, total=False):
     difficulty: str
     difficulty_level: str
     eval_input: Any
+    evaluate_response_result: Any
     expected_key_points: list
     explanation: str
     feedback_text: str
     full_transcript: list
     gen_input: Any
+    generate_question_result: Any
     hints: list
     history: list
     key_points: list
@@ -327,16 +330,19 @@ class AgentState(TypedDict, total=False):
     mastered_concepts: list
     misconceptions: list
     needs_review: Any
+    plan_curriculum_result: Any
     prerequisite_review: str
     prerequisites: list
     progress_percentage: Any
     question_text: str
     recommended_next_topics: list
+    remediate_result: Any
     review: list
     role: str
     session_store: dict
     student_answer: str
     suggested_question_types: list
+    summarize_session_result: Any
     summary_input: Any
     topic: str
     total_concepts: int
@@ -511,9 +517,7 @@ def node_plan_curriculum(state: AgentState) -> dict:
     curriculum_planner_msg = json.dumps(curriculum_planner_input, default=str)
     curriculum_planner_raw = invoke_curriculum_planner(curriculum_planner_msg, output_schema="LessonPlanOutput")
     curriculum_planner_result = parse_response(curriculum_planner_raw, "LessonPlanOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(curriculum_planner_result, "LessonPlanOutput"))
-    updates.update(curriculum_planner_result)
-    updates["lesson_plan_output"] = curriculum_planner_result
+    updates["_schema_violations"] = len(validate_output(curriculum_planner_result, "LessonPlanOutput"))
     updates["plan_curriculum_result"] = curriculum_planner_result
     print(f"    ← Curriculum Planner: {curriculum_planner_result}")
 
@@ -562,7 +566,7 @@ def node_generate_question(state: AgentState) -> dict:
     question_generator_msg = json.dumps(question_generator_input, default=str)
     question_generator_raw = invoke_question_generator(question_generator_msg, output_schema="TutorQuestionOutput")
     question_generator_result = parse_response(question_generator_raw, "TutorQuestionOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(question_generator_result, "TutorQuestionOutput"))
+    updates["_schema_violations"] = len(validate_output(question_generator_result, "TutorQuestionOutput"))
     updates.update(question_generator_result)
     updates["tutor_question_output"] = question_generator_result
     updates["generate_question_result"] = question_generator_result
@@ -627,7 +631,7 @@ def node_evaluate_response(state: AgentState) -> dict:
     evaluator_msg = json.dumps(evaluator_input, default=str)
     evaluator_raw = invoke_evaluator(evaluator_msg, output_schema="EvaluationOutput")
     evaluator_result = parse_response(evaluator_raw, "EvaluationOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(evaluator_result, "EvaluationOutput"))
+    updates["_schema_violations"] = len(validate_output(evaluator_result, "EvaluationOutput"))
     updates.update(evaluator_result)
     updates["evaluation_output"] = evaluator_result
     updates["evaluate_response_result"] = evaluator_result
@@ -719,9 +723,7 @@ def node_remediate(state: AgentState) -> dict:
     remediation_agent_msg = json.dumps(remediation_agent_input, default=str)
     remediation_agent_raw = invoke_remediation_agent(remediation_agent_msg, output_schema="RemediationOutput")
     remediation_agent_result = parse_response(remediation_agent_raw, "RemediationOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(remediation_agent_result, "RemediationOutput"))
-    updates.update(remediation_agent_result)
-    updates["remediation_output"] = remediation_agent_result
+    updates["_schema_violations"] = len(validate_output(remediation_agent_result, "RemediationOutput"))
     updates["remediate_result"] = remediation_agent_result
     print(f"    ← Remediation Specialist: {remediation_agent_result}")
 
@@ -761,7 +763,7 @@ def node_summarize_session(state: AgentState) -> dict:
     summary_agent_msg = json.dumps(summary_agent_input, default=str)
     summary_agent_raw = invoke_summary_agent(summary_agent_msg, output_schema="SessionSummaryOutput")
     summary_agent_result = parse_response(summary_agent_raw, "SessionSummaryOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(summary_agent_result, "SessionSummaryOutput"))
+    updates["_schema_violations"] = len(validate_output(summary_agent_result, "SessionSummaryOutput"))
     updates.update(summary_agent_result)
     updates["session_summary_output"] = summary_agent_result
     updates["summarize_session_result"] = summary_agent_result
@@ -869,6 +871,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

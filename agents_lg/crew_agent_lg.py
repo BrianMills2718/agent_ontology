@@ -5,6 +5,7 @@ Spec: Multi-agent collaboration system where specialized agents work together un
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -282,7 +283,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     agent: str
     agent_output: str
     agent_results: Any
@@ -290,6 +291,9 @@ class AgentState(TypedDict, total=False):
     approved: bool
     assigned_agent: Any
     assignments: list
+    call_researcher_result: Any
+    call_reviewer_agent_result: Any
+    call_writer_result: Any
     content_to_review: str
     context: list
     current_assignment: Any
@@ -300,12 +304,15 @@ class AgentState(TypedDict, total=False):
     key: str
     max_revisions: Any
     objective: str
+    plan_assignments_result: Any
     researcher: Any
     result: str
+    review_all_result: Any
     review_score: int
     revision_count: Any
     shared_workspace: dict
     synthesis: str
+    synthesize_result: Any
     task_description: str
     total_assignments: Any
     value: str
@@ -479,7 +486,7 @@ def node_plan_assignments(state: AgentState) -> dict:
     coordinator_msg = json.dumps(coordinator_input, default=str)
     coordinator_raw = invoke_coordinator(coordinator_msg, output_schema="AssignmentList")
     coordinator_result = parse_response(coordinator_raw, "AssignmentList")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(coordinator_result, "AssignmentList"))
+    updates["_schema_violations"] = len(validate_output(coordinator_result, "AssignmentList"))
     updates.update(coordinator_result)
     updates["assignment_list"] = coordinator_result
     updates["plan_assignments_result"] = coordinator_result
@@ -547,9 +554,7 @@ def node_call_researcher(state: AgentState) -> dict:
     researcher_msg = json.dumps(researcher_input, default=str)
     researcher_raw = invoke_researcher(researcher_msg, output_schema="AgentResult")
     researcher_result = parse_response(researcher_raw, "AgentResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(researcher_result, "AgentResult"))
-    updates.update(researcher_result)
-    updates["agent_result"] = researcher_result
+    updates["_schema_violations"] = len(validate_output(researcher_result, "AgentResult"))
     updates["call_researcher_result"] = researcher_result
     print(f"    ← Researcher: {researcher_result}")
 
@@ -571,9 +576,7 @@ def node_call_writer(state: AgentState) -> dict:
     writer_msg = json.dumps(writer_input, default=str)
     writer_raw = invoke_writer(writer_msg, output_schema="AgentResult")
     writer_result = parse_response(writer_raw, "AgentResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(writer_result, "AgentResult"))
-    updates.update(writer_result)
-    updates["agent_result"] = writer_result
+    updates["_schema_violations"] = len(validate_output(writer_result, "AgentResult"))
     updates["call_writer_result"] = writer_result
     print(f"    ← Writer: {writer_result}")
 
@@ -595,9 +598,7 @@ def node_call_reviewer_agent(state: AgentState) -> dict:
     reviewer_msg = json.dumps(reviewer_input, default=str)
     reviewer_raw = invoke_reviewer(reviewer_msg, output_schema="ReviewResult")
     reviewer_result = parse_response(reviewer_raw, "ReviewResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(reviewer_result, "ReviewResult"))
-    updates.update(reviewer_result)
-    updates["review_result"] = reviewer_result
+    updates["_schema_violations"] = len(validate_output(reviewer_result, "ReviewResult"))
     updates["call_reviewer_agent_result"] = reviewer_result
     print(f"    ← Reviewer: {reviewer_result}")
 
@@ -664,7 +665,7 @@ def node_review_all(state: AgentState) -> dict:
     reviewer_msg = json.dumps(reviewer_input, default=str)
     reviewer_raw = invoke_reviewer(reviewer_msg, output_schema="ReviewResult")
     reviewer_result = parse_response(reviewer_raw, "ReviewResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(reviewer_result, "ReviewResult"))
+    updates["_schema_violations"] = len(validate_output(reviewer_result, "ReviewResult"))
     updates.update(reviewer_result)
     updates["review_result"] = reviewer_result
     updates["review_all_result"] = reviewer_result
@@ -727,7 +728,7 @@ def node_synthesize(state: AgentState) -> dict:
     synthesizer_msg = json.dumps(synthesizer_input, default=str)
     synthesizer_raw = invoke_synthesizer(synthesizer_msg, output_schema="SynthesisOutput")
     synthesizer_result = parse_response(synthesizer_raw, "SynthesisOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(synthesizer_result, "SynthesisOutput"))
+    updates["_schema_violations"] = len(validate_output(synthesizer_result, "SynthesisOutput"))
     updates.update(synthesizer_result)
     updates["synthesis_output"] = synthesizer_result
     updates["synthesize_result"] = synthesizer_result
@@ -896,6 +897,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

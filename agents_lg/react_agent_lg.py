@@ -5,6 +5,7 @@ Spec: Reason + Act agent that interleaves thinking with tool use to solve proble
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -278,7 +279,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     action: str
     answer: str
     input: str
@@ -289,6 +290,7 @@ class AgentState(TypedDict, total=False):
     step_count: int
     step_num: int
     success: bool
+    think_or_act_result: Any
     thought: str
     tool_input: str
     tool_name: str
@@ -474,7 +476,7 @@ def node_think_or_act(state: AgentState) -> dict:
     reasoning_agent_msg = json.dumps(reasoning_agent_input, default=str)
     reasoning_agent_raw = invoke_reasoning_agent(reasoning_agent_msg, output_schema="ReActStep")
     reasoning_agent_result = parse_response(reasoning_agent_raw, "ReActStep")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(reasoning_agent_result, "ReActStep"))
+    updates["_schema_violations"] = len(validate_output(reasoning_agent_result, "ReActStep"))
     updates.update(reasoning_agent_result)
     updates["re_act_step"] = reasoning_agent_result
     updates["think_or_act_result"] = reasoning_agent_result
@@ -670,6 +672,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

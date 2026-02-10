@@ -5,6 +5,7 @@ Spec: Self-Refine agent with a generator-critic loop: generates output, critique
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -274,12 +275,14 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     changes_made: str
+    critique_result: Any
     current_output: Any
     feedback_history: list
     final_output: str
     final_score: int
+    generate_result: Any
     max_rounds: Any
     output_text: str
     previous_output: str
@@ -404,7 +407,7 @@ def node_generate(state: AgentState) -> dict:
     generator_msg = json.dumps(generator_input, default=str)
     generator_raw = invoke_generator(generator_msg, output_schema="GeneratorOutput")
     generator_result = parse_response(generator_raw, "GeneratorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(generator_result, "GeneratorOutput"))
+    updates["_schema_violations"] = len(validate_output(generator_result, "GeneratorOutput"))
     updates.update(generator_result)
     updates["generator_output"] = generator_result
     updates["generate_result"] = generator_result
@@ -443,7 +446,7 @@ def node_critique(state: AgentState) -> dict:
     critic_msg = json.dumps(critic_input, default=str)
     critic_raw = invoke_critic(critic_msg, output_schema="CriticOutput")
     critic_result = parse_response(critic_raw, "CriticOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(critic_result, "CriticOutput"))
+    updates["_schema_violations"] = len(validate_output(critic_result, "CriticOutput"))
     updates.update(critic_result)
     updates["critic_output"] = critic_result
     updates["critique_result"] = critic_result
@@ -528,6 +531,16 @@ def route_check_rounds(state: AgentState) -> str:
         return "finalize"
 
 
+def route_loop_refine(state: AgentState) -> str:
+    """Loop: Refinement loop — refinement_round < max_rounds"""
+    if state.get("_done"):
+        return "END"
+    if (state.get("refinement_round", 0)) < (state.get("max_rounds", 0)):
+        return "generate"
+    else:
+        return "END"
+
+
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
 # ═══════════════════════════════════════════════════════════
@@ -581,6 +594,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

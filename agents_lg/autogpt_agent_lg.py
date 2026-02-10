@@ -5,6 +5,7 @@ Spec: Goal-driven autonomous agent with planning, self-criticism, and iterative 
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -286,14 +287,17 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
+    act_result: Any
     action_result: str
     approved: bool
     completed_steps: Any
     constraints: list
     criticism_count: Any
+    criticize_result: Any
     current_step: str
     current_step_idx: Any
+    decompose_result: Any
     embedding: list
     feedback: str
     improvements: str
@@ -310,6 +314,7 @@ class AgentState(TypedDict, total=False):
     stored_memories: list
     success: bool
     text: str
+    think_result: Any
     total_steps: Any
     value: str
     workspace: dict
@@ -526,7 +531,7 @@ def node_decompose(state: AgentState) -> dict:
     planner_msg = json.dumps(planner_input, default=str)
     planner_raw = invoke_planner(planner_msg, output_schema="Plan")
     planner_result = parse_response(planner_raw, "Plan")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(planner_result, "Plan"))
+    updates["_schema_violations"] = len(validate_output(planner_result, "Plan"))
     updates.update(planner_result)
     updates["plan_schema"] = planner_result
     updates["decompose_result"] = planner_result
@@ -576,7 +581,7 @@ def node_think(state: AgentState) -> dict:
     thinker_msg = json.dumps(thinker_input, default=str)
     thinker_raw = invoke_thinker(thinker_msg, output_schema="Thought")
     thinker_result = parse_response(thinker_raw, "Thought")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(thinker_result, "Thought"))
+    updates["_schema_violations"] = len(validate_output(thinker_result, "Thought"))
     updates.update(thinker_result)
     updates["thought"] = thinker_result
     updates["think_result"] = thinker_result
@@ -600,7 +605,7 @@ def node_criticize(state: AgentState) -> dict:
     critic_msg = json.dumps(critic_input, default=str)
     critic_raw = invoke_critic(critic_msg, output_schema="Criticism")
     critic_result = parse_response(critic_raw, "Criticism")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(critic_result, "Criticism"))
+    updates["_schema_violations"] = len(validate_output(critic_result, "Criticism"))
     updates.update(critic_result)
     updates["criticism"] = critic_result
     updates["criticize_result"] = critic_result
@@ -663,7 +668,7 @@ def node_act(state: AgentState) -> dict:
     executor_msg = json.dumps(executor_input, default=str)
     executor_raw = invoke_executor(executor_msg, output_schema="ActionResult")
     executor_result = parse_response(executor_raw, "ActionResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(executor_result, "ActionResult"))
+    updates["_schema_violations"] = len(validate_output(executor_result, "ActionResult"))
     updates.update(executor_result)
     updates["action_result_schema"] = executor_result
     updates["act_result"] = executor_result
@@ -823,6 +828,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

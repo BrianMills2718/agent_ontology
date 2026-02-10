@@ -5,6 +5,7 @@ Spec: Tree-of-Thought agent that explores multiple reasoning paths, evaluates th
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -274,7 +275,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     all_thoughts: Any
     answer: str
     answer_score: int
@@ -284,6 +285,8 @@ class AgentState(TypedDict, total=False):
     current_parents: Any
     depth: int
     eval_index: Any
+    evaluate_thoughts_result: Any
+    generate_thoughts_result: Any
     generated_children: Any
     k_candidates: int
     max_depth: int
@@ -437,7 +440,7 @@ def node_generate_thoughts(state: AgentState) -> dict:
     thought_generator_msg = json.dumps(thought_generator_input, default=str)
     thought_generator_raw = invoke_thought_generator(thought_generator_msg, output_schema="GeneratedThoughts")
     thought_generator_result = parse_response(thought_generator_raw, "GeneratedThoughts")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(thought_generator_result, "GeneratedThoughts"))
+    updates["_schema_violations"] = len(validate_output(thought_generator_result, "GeneratedThoughts"))
     updates.update(thought_generator_result)
     updates["generated_thoughts"] = thought_generator_result
     updates["generate_thoughts_result"] = thought_generator_result
@@ -477,7 +480,7 @@ def node_evaluate_thoughts(state: AgentState) -> dict:
     thought_evaluator_msg = json.dumps(thought_evaluator_input, default=str)
     thought_evaluator_raw = invoke_thought_evaluator(thought_evaluator_msg, output_schema="EvaluationResult")
     thought_evaluator_result = parse_response(thought_evaluator_raw, "EvaluationResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(thought_evaluator_result, "EvaluationResult"))
+    updates["_schema_violations"] = len(validate_output(thought_evaluator_result, "EvaluationResult"))
     updates.update(thought_evaluator_result)
     updates["evaluation_result"] = thought_evaluator_result
     updates["evaluate_thoughts_result"] = thought_evaluator_result
@@ -580,6 +583,16 @@ def route_check_depth(state: AgentState) -> str:
         return "generate_thoughts"
 
 
+def route_loop_expand_thoughts(state: AgentState) -> str:
+    """Loop: Next depth level — current_depth < max_depth"""
+    if state.get("_done"):
+        return "END"
+    if (state.get("current_depth", 0)) < (state.get("max_depth", 0)):
+        return "check_depth"
+    else:
+        return "END"
+
+
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
 # ═══════════════════════════════════════════════════════════
@@ -606,6 +619,14 @@ def build_graph():
     )
     graph.add_edge("generate_thoughts", "evaluate_thoughts")
     graph.add_edge("evaluate_thoughts", "expand_thoughts")
+    graph.add_conditional_edges(
+        "expand_thoughts",
+        route_check_depth,
+        {
+            "generate_thoughts": "generate_thoughts",
+            "select_best": "select_best",
+        }
+    )
     graph.add_edge("select_best", "produce_answer")
     graph.add_edge("produce_answer", END)
 
@@ -623,6 +644,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

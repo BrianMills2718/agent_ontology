@@ -5,6 +5,7 @@ Spec: Task-driven autonomous agent that creates, prioritizes, and executes tasks
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -282,17 +283,20 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     completed_count: Any
     context: list
+    create_and_reprioritize_result: Any
     description: str
     embedding: list
+    enrich_result: Any
     existing_tasks: list
     id: int
     max_tasks: Any
     metadata: Any
     objective: str
     priority: int
+    pull_task_result: Any
     query: str
     result: str
     sources: list
@@ -502,7 +506,7 @@ def node_pull_task(state: AgentState) -> dict:
     execution_agent_msg = json.dumps(execution_agent_input, default=str)
     execution_agent_raw = invoke_execution_agent(execution_agent_msg, output_schema="ExecutionOutput")
     execution_agent_result = parse_response(execution_agent_raw, "ExecutionOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(execution_agent_result, "ExecutionOutput"))
+    updates["_schema_violations"] = len(validate_output(execution_agent_result, "ExecutionOutput"))
     updates.update(execution_agent_result)
     updates["execution_output"] = execution_agent_result
     updates["pull_task_result"] = execution_agent_result
@@ -549,7 +553,7 @@ def node_enrich(state: AgentState) -> dict:
     context_agent_msg = json.dumps(context_agent_input, default=str)
     context_agent_raw = invoke_context_agent(context_agent_msg, output_schema="ContextResult")
     context_agent_result = parse_response(context_agent_raw, "ContextResult")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(context_agent_result, "ContextResult"))
+    updates["_schema_violations"] = len(validate_output(context_agent_result, "ContextResult"))
     updates.update(context_agent_result)
     updates["context_result"] = context_agent_result
     updates["enrich_result"] = context_agent_result
@@ -593,7 +597,7 @@ def node_create_and_reprioritize(state: AgentState) -> dict:
     task_creation_agent_msg = json.dumps(task_creation_agent_input, default=str)
     task_creation_agent_raw = invoke_task_creation_agent(task_creation_agent_msg, output_schema="TaskList")
     task_creation_agent_result = parse_response(task_creation_agent_raw, "TaskList")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(task_creation_agent_result, "TaskList"))
+    updates["_schema_violations"] = len(validate_output(task_creation_agent_result, "TaskList"))
     updates.update(task_creation_agent_result)
     updates["task_list"] = task_creation_agent_result
     updates["create_and_reprioritize_result"] = task_creation_agent_result
@@ -606,7 +610,7 @@ def node_create_and_reprioritize(state: AgentState) -> dict:
     prioritization_agent_msg = json.dumps(prioritization_agent_input, default=str)
     prioritization_agent_raw = invoke_prioritization_agent(prioritization_agent_msg, output_schema="TaskList")
     prioritization_agent_result = parse_response(prioritization_agent_raw, "TaskList")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(prioritization_agent_result, "TaskList"))
+    updates["_schema_violations"] = len(validate_output(prioritization_agent_result, "TaskList"))
     updates.update(prioritization_agent_result)
     updates["task_list"] = prioritization_agent_result
     updates["create_and_reprioritize_result"] = prioritization_agent_result
@@ -618,6 +622,16 @@ def node_create_and_reprioritize(state: AgentState) -> dict:
 # ═══════════════════════════════════════════════════════════
 # Gate Routing Functions
 # ═══════════════════════════════════════════════════════════
+
+def route_loop_create_and_reprioritize(state: AgentState) -> str:
+    """Loop: Loop — tasks is not empty"""
+    if state.get("_done"):
+        return "END"
+    if bool(state.get("tasks")):
+        return "pull_task"
+    else:
+        return "END"
+
 
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
@@ -634,6 +648,14 @@ def build_graph():
 
     graph.add_edge("pull_task", "enrich")
     graph.add_edge("enrich", "create_and_reprioritize")
+    graph.add_conditional_edges(
+        "create_and_reprioritize",
+        route_loop_create_and_reprioritize,
+        {
+            "pull_task": "pull_task",
+            "END": END,
+        }
+    )
 
     return graph.compile()
 
@@ -649,6 +671,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

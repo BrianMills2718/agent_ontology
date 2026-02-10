@@ -5,6 +5,7 @@ Spec: Automated pipeline for generating, testing, and reviewing code from natura
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -274,14 +275,16 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     analyst_input: Any
+    analyze_spec_result: Any
     architecture_notes: str
     artifact_store: dict
     code: str
     code_artifact_output: Any
     dependencies: list
     final_package: Any
+    generate_artifacts_result: Any
     generator_input: Any
     prompt: str
     spec: str
@@ -428,7 +431,7 @@ def node_analyze_spec(state: AgentState) -> dict:
     spec_analyst_agent_msg = json.dumps(spec_analyst_agent_input, default=str)
     spec_analyst_agent_raw = invoke_spec_analyst_agent(spec_analyst_agent_msg, output_schema="TechnicalSpecOutput")
     spec_analyst_agent_result = parse_response(spec_analyst_agent_raw, "TechnicalSpecOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(spec_analyst_agent_result, "TechnicalSpecOutput"))
+    updates["_schema_violations"] = len(validate_output(spec_analyst_agent_result, "TechnicalSpecOutput"))
     updates.update(spec_analyst_agent_result)
     updates["technical_spec_output"] = spec_analyst_agent_result
     updates["analyze_spec_result"] = spec_analyst_agent_result
@@ -469,7 +472,7 @@ def node_generate_artifacts(state: AgentState) -> dict:
     code_generator_agent_msg = json.dumps(code_generator_agent_input, default=str)
     code_generator_agent_raw = invoke_code_generator_agent(code_generator_agent_msg, output_schema="CodeArtifactOutput")
     code_generator_agent_result = parse_response(code_generator_agent_raw, "CodeArtifactOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(code_generator_agent_result, "CodeArtifactOutput"))
+    updates["_schema_violations"] = len(validate_output(code_generator_agent_result, "CodeArtifactOutput"))
     updates.update(code_generator_agent_result)
     updates["code_artifact_output"] = code_generator_agent_result
     updates["generate_artifacts_result"] = code_generator_agent_result
@@ -482,7 +485,7 @@ def node_generate_artifacts(state: AgentState) -> dict:
     test_writer_agent_msg = json.dumps(test_writer_agent_input, default=str)
     test_writer_agent_raw = invoke_test_writer_agent(test_writer_agent_msg, output_schema="TestArtifactOutput")
     test_writer_agent_result = parse_response(test_writer_agent_raw, "TestArtifactOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(test_writer_agent_result, "TestArtifactOutput"))
+    updates["_schema_violations"] = len(validate_output(test_writer_agent_result, "TestArtifactOutput"))
     updates.update(test_writer_agent_result)
     updates["test_artifact_output"] = test_writer_agent_result
     updates["generate_artifacts_result"] = test_writer_agent_result
@@ -576,6 +579,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

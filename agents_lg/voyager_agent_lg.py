@@ -5,6 +5,7 @@ Spec: An open-ended exploration agent that autonomously proposes objectives, lea
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -282,17 +283,20 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     code: str
     coder_input: Any
     curriculum_input: Any
     description: str
     env_description: str
+    evaluate_result_result: Any
     feedback: str
+    generate_code_result: Any
     iteration_count: Any
     logs: str
     max_iterations: Any
     objective: str
+    propose_objective_result: Any
     reflection_feedback: str
     reflection_input: Any
     retrieved_skills: list
@@ -503,7 +507,7 @@ def node_propose_objective(state: AgentState) -> dict:
     curriculum_agent_msg = json.dumps(curriculum_agent_input, default=str)
     curriculum_agent_raw = invoke_curriculum_agent(curriculum_agent_msg, output_schema="ObjectiveOutput")
     curriculum_agent_result = parse_response(curriculum_agent_raw, "ObjectiveOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(curriculum_agent_result, "ObjectiveOutput"))
+    updates["_schema_violations"] = len(validate_output(curriculum_agent_result, "ObjectiveOutput"))
     updates.update(curriculum_agent_result)
     updates["objective_output"] = curriculum_agent_result
     updates["propose_objective_result"] = curriculum_agent_result
@@ -565,7 +569,7 @@ def node_generate_code(state: AgentState) -> dict:
     coder_agent_msg = json.dumps(coder_agent_input, default=str)
     coder_agent_raw = invoke_coder_agent(coder_agent_msg, output_schema="CodeOutput")
     coder_agent_result = parse_response(coder_agent_raw, "CodeOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(coder_agent_result, "CodeOutput"))
+    updates["_schema_violations"] = len(validate_output(coder_agent_result, "CodeOutput"))
     updates.update(coder_agent_result)
     updates["code_output"] = coder_agent_result
     updates["generate_code_result"] = coder_agent_result
@@ -638,7 +642,7 @@ def node_evaluate_result(state: AgentState) -> dict:
     reflector_agent_msg = json.dumps(reflector_agent_input, default=str)
     reflector_agent_raw = invoke_reflector_agent(reflector_agent_msg, output_schema="ReflectionOutput")
     reflector_agent_result = parse_response(reflector_agent_raw, "ReflectionOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(reflector_agent_result, "ReflectionOutput"))
+    updates["_schema_violations"] = len(validate_output(reflector_agent_result, "ReflectionOutput"))
     updates.update(reflector_agent_result)
     updates["reflection_output"] = reflector_agent_result
     updates["evaluate_result_result"] = reflector_agent_result
@@ -804,6 +808,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

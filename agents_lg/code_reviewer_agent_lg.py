@@ -5,6 +5,7 @@ Spec: Automated code review agent that analyzes pull requests with specialized r
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -282,7 +283,10 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
+    analyze_logic_result: Any
+    analyze_security_result: Any
+    analyze_style_result: Any
     description: str
     diff: str
     file: str
@@ -305,6 +309,7 @@ class AgentState(TypedDict, total=False):
     style_review: Any
     summary: str
     synth_input: Any
+    synthesize_review_result: Any
     synthesized_review: Any
 
 
@@ -489,9 +494,7 @@ def node_analyze_security(state: AgentState) -> dict:
     security_reviewer_msg = json.dumps(security_reviewer_input, default=str)
     security_reviewer_raw = invoke_security_reviewer(security_reviewer_msg, output_schema="SecurityReview")
     security_reviewer_result = parse_response(security_reviewer_raw, "SecurityReview")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(security_reviewer_result, "SecurityReview"))
-    updates.update(security_reviewer_result)
-    updates["security_review"] = security_reviewer_result
+    updates["_schema_violations"] = len(validate_output(security_reviewer_result, "SecurityReview"))
     updates["analyze_security_result"] = security_reviewer_result
     print(f"    ← Security Reviewer: {security_reviewer_result}")
 
@@ -528,9 +531,7 @@ def node_analyze_style(state: AgentState) -> dict:
     style_reviewer_msg = json.dumps(style_reviewer_input, default=str)
     style_reviewer_raw = invoke_style_reviewer(style_reviewer_msg, output_schema="StyleReview")
     style_reviewer_result = parse_response(style_reviewer_raw, "StyleReview")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(style_reviewer_result, "StyleReview"))
-    updates.update(style_reviewer_result)
-    updates["style_review"] = style_reviewer_result
+    updates["_schema_violations"] = len(validate_output(style_reviewer_result, "StyleReview"))
     updates["analyze_style_result"] = style_reviewer_result
     print(f"    ← Style Reviewer: {style_reviewer_result}")
 
@@ -567,9 +568,7 @@ def node_analyze_logic(state: AgentState) -> dict:
     logic_reviewer_msg = json.dumps(logic_reviewer_input, default=str)
     logic_reviewer_raw = invoke_logic_reviewer(logic_reviewer_msg, output_schema="LogicReview")
     logic_reviewer_result = parse_response(logic_reviewer_raw, "LogicReview")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(logic_reviewer_result, "LogicReview"))
-    updates.update(logic_reviewer_result)
-    updates["logic_review"] = logic_reviewer_result
+    updates["_schema_violations"] = len(validate_output(logic_reviewer_result, "LogicReview"))
     updates["analyze_logic_result"] = logic_reviewer_result
     print(f"    ← Logic Reviewer: {logic_reviewer_result}")
 
@@ -610,7 +609,7 @@ def node_synthesize_review(state: AgentState) -> dict:
     lead_reviewer_msg = json.dumps(lead_reviewer_input, default=str)
     lead_reviewer_raw = invoke_lead_reviewer(lead_reviewer_msg, output_schema="SynthesizedReview")
     lead_reviewer_result = parse_response(lead_reviewer_raw, "SynthesizedReview")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(lead_reviewer_result, "SynthesizedReview"))
+    updates["_schema_violations"] = len(validate_output(lead_reviewer_result, "SynthesizedReview"))
     updates.update(lead_reviewer_result)
     updates["synthesized_review"] = lead_reviewer_result
     updates["synthesize_review_result"] = lead_reviewer_result
@@ -761,6 +760,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

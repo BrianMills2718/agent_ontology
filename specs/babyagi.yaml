@@ -179,7 +179,7 @@ edges:
     from: create_and_reprioritize
     to: pull_task
     label: "Loop"
-    condition: "task_list is not empty"
+    condition: "tasks is not empty"
 
 # ── Schemas (data shapes) ──────────────────────────────────
 

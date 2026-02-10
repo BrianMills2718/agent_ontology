@@ -1236,6 +1236,7 @@ def generate_langgraph_agent(spec):
     w(f'"""')
     w('')
     w('import json')
+    w('import operator')
     w('import os')
     w('import sys')
     w('import time')
@@ -1553,10 +1554,19 @@ def generate_langgraph_agent(spec):
                                  'and', 'or', 'in', 'length', 'count') and token not in all_fields:
                     all_fields[token] = "Any"
 
+    # Add {pid}_result keys for all processes with agent invocations
+    for pid_key, inv_list in invoke_map.items():
+        for eid, edge in inv_list:
+            etype = entity_map.get(eid, {}).get("type")
+            if etype == "agent":
+                result_key = f"{pid_key}_result"
+                if result_key not in all_fields:
+                    all_fields[result_key] = "Any"
+
     # Internal state fields
     all_fields["_done"] = "bool"
     all_fields["_iteration"] = "int"
-    all_fields["_schema_violations"] = "int"
+    all_fields["_schema_violations"] = "Annotated[int, operator.add]"
     all_fields["_canned_responses"] = "list"
 
     w('class AgentState(TypedDict, total=False):')
@@ -1717,6 +1727,20 @@ def generate_langgraph_agent(spec):
     w('# ═══════════════════════════════════════════════════════════')
     w('')
 
+    # Detect fan-in groups: processes that share the same flow-edge target
+    # When multiple nodes converge on the same target, LangGraph runs them in
+    # parallel, so they must NOT flatten outputs (updates.update) or keys collide.
+    _flow_target_sources = {}  # target_pid -> set of source pids
+    for e in edges:
+        if e.get("type") == "flow":
+            src, tgt = e.get("from"), e.get("to")
+            if src and tgt:
+                _flow_target_sources.setdefault(tgt, set()).add(src)
+    _fanin_sources = set()  # pids that are part of a fan-in group
+    for tgt, srcs in _flow_target_sources.items():
+        if len(srcs) > 1:
+            _fanin_sources.update(srcs)
+
     for p in processes:
         pid = p["id"]
         ptype = p["type"]
@@ -1804,13 +1828,14 @@ def generate_langgraph_agent(spec):
                 if output_schema and output_schema in schema_map:
                     w(f'    {_safe_name(entity_id)}_raw = invoke_{_safe_name(entity_id)}({_safe_name(entity_id)}_msg, output_schema="{output_schema}")')
                     w(f'    {_safe_name(entity_id)}_result = parse_response({_safe_name(entity_id)}_raw, "{output_schema}")')
-                    w(f'    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output({_safe_name(entity_id)}_result, "{output_schema}"))')
-                    w(f'    updates.update({_safe_name(entity_id)}_result)')
-                    snake = _camel_to_snake(output_schema)
-                    schema_fields = {f.get("name") for f in schema_map.get(output_schema, {}).get("fields", [])}
-                    if snake in schema_fields:
-                        snake = f"{snake}_schema"
-                    w(f'    updates["{snake}"] = {_safe_name(entity_id)}_result')
+                    w(f'    updates["_schema_violations"] = len(validate_output({_safe_name(entity_id)}_result, "{output_schema}"))')
+                    if pid not in _fanin_sources:
+                        w(f'    updates.update({_safe_name(entity_id)}_result)')
+                        snake = _camel_to_snake(output_schema)
+                        schema_fields = {f.get("name") for f in schema_map.get(output_schema, {}).get("fields", [])}
+                        if snake in schema_fields:
+                            snake = f"{snake}_schema"
+                        w(f'    updates["{snake}"] = {_safe_name(entity_id)}_result')
                     w(f'    updates["{pid}_result"] = {_safe_name(entity_id)}_result')
                     w(f'    print(f"    ← {entity.get("label", entity_id)}: {{{_safe_name(entity_id)}_result}}")')
                 else:
@@ -1923,6 +1948,27 @@ def generate_langgraph_agent(spec):
         w('')
         w('')
 
+    # ── Section 10b: Routing functions for step-sourced loops ──
+    # Loop edges from step (non-gate) processes need routing functions
+    # to decide whether to loop back or terminate.
+    for pid, (loop_target, loop_edge) in loop_map.items():
+        p = process_map.get(pid)
+        if not p or p.get("type") == "gate":
+            continue  # Gate-sourced loops handled by gate routing functions
+        condition = loop_edge.get("condition", "_done is not True")
+        check_expr = _generate_gate_check_lg(condition)
+
+        w(f'def route_loop_{_safe_name(pid)}(state: AgentState) -> str:')
+        w(f'    """Loop: {loop_edge.get("label", "")} — {condition}"""')
+        w(f'    if state.get("_done"):')
+        w(f'        return "END"')
+        w(f'    if {check_expr}:')
+        w(f'        return "{_safe_name(loop_target)}"')
+        w(f'    else:')
+        w(f'        return "END"')
+        w('')
+        w('')
+
     # ── Section 11: Graph construction ──
     w('# ═══════════════════════════════════════════════════════════')
     w('# Graph Construction')
@@ -1974,12 +2020,42 @@ def generate_langgraph_agent(spec):
         # Handle loop edges
         if pid in loop_map:
             loop_target, loop_edge = loop_map[pid]
-            # This process has a loop — it means it can either go to its normal flow
-            # target or loop back. But the loop is typically controlled by a gate.
-            # If there's a direct flow target + loop, add the flow edge
-            if non_gate_targets:
+            p_type = process_map.get(pid, {}).get("type", "step")
+
+            if p_type == "gate":
+                # Gate-sourced loops: handled by gate routing functions
+                pass
+            elif non_gate_targets:
+                # Step with both flow targets and a loop — flow edges handle it
                 for (t, e) in non_gate_targets:
                     w(f'    graph.add_edge("{_safe_name(pid)}", "{_safe_name(t)}")')
+            elif gate_targets:
+                # Step with loop + gate target — use gate's conditional edges
+                for (gate_id, _) in gate_targets:
+                    gate_proc = process_map[gate_id]
+                    gate_branches = gate_proc.get("branches", [])
+                    branch_targets = {}
+                    for branch in gate_branches:
+                        target = branch["target"]
+                        branch_targets[_safe_name(target)] = _safe_name(target)
+                    w(f'    graph.add_conditional_edges(')
+                    w(f'        "{_safe_name(pid)}",')
+                    w(f'        route_{_safe_name(gate_id)},')
+                    w(f'        {{')
+                    for bname, btarget in branch_targets.items():
+                        w(f'            "{bname}": "{btarget}",')
+                    w(f'        }}')
+                    w(f'    )')
+            else:
+                # Step with only a loop edge — use loop routing function
+                w(f'    graph.add_conditional_edges(')
+                w(f'        "{_safe_name(pid)}",')
+                w(f'        route_loop_{_safe_name(pid)},')
+                w(f'        {{')
+                w(f'            "{_safe_name(loop_target)}": "{_safe_name(loop_target)}",')
+                w(f'            "END": END,')
+                w(f'        }}')
+                w(f'    )')
 
         elif gate_targets:
             # This node feeds into a gate — use conditional edges
@@ -2071,6 +2147,9 @@ def generate_langgraph_agent(spec):
     w('        self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})')
     w('        self.iteration = state_dict.get("_iteration", 0)')
     w('        self.schema_violations = state_dict.get("_schema_violations", 0)')
+    w('')
+    w('    def get(self, key, default=None):')
+    w('        return self.data.get(key, default)')
     w('')
     w('')
     w(f'MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))')

@@ -5,6 +5,7 @@ Spec: Anthropic's official CLI agent — interactive coding assistant with persi
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -406,7 +407,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     agent_id: str
     approaching: Any
     branch: str
@@ -431,6 +432,7 @@ class AgentState(TypedDict, total=False):
     limit: int
     line: int
     line_count: int
+    llm_call_result: Any
     main_branch: str
     matches: list
     max_tokens: int
@@ -466,6 +468,7 @@ class AgentState(TypedDict, total=False):
     semantic_memory: dict
     show_user: bool
     source: str
+    spawn_sub_agent_result: Any
     status: str
     stderr: str
     stdout: str
@@ -785,7 +788,7 @@ def node_llm_call(state: AgentState) -> dict:
     claude_msg = json.dumps(claude_input, default=str)
     claude_raw = invoke_claude(claude_msg, output_schema="ApiResponse")
     claude_result = parse_response(claude_raw, "ApiResponse")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(claude_result, "ApiResponse"))
+    updates["_schema_violations"] = len(validate_output(claude_result, "ApiResponse"))
     updates.update(claude_result)
     updates["api_response"] = claude_result
     updates["llm_call_result"] = claude_result
@@ -1013,6 +1016,26 @@ def route_check_context(state: AgentState) -> str:
         return "llm_call"
 
 
+def route_loop_persist(state: AgentState) -> str:
+    """Loop: Wait for next input — always"""
+    if state.get("_done"):
+        return "END"
+    if bool(state.get("always")):
+        return "idle"
+    else:
+        return "END"
+
+
+def route_loop_append(state: AgentState) -> str:
+    """Loop: Re-reason after denial — permission_denied"""
+    if state.get("_done"):
+        return "END"
+    if bool(state.get("permission_denied")):
+        return "llm_call"
+    else:
+        return "END"
+
+
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
 # ═══════════════════════════════════════════════════════════
@@ -1056,7 +1079,23 @@ def build_graph():
     graph.add_edge("prompt_user", "append")
     graph.add_edge("execute", "observe")
     graph.add_edge("observe", "append")
+    graph.add_conditional_edges(
+        "append",
+        route_check_context,
+        {
+            "llm_call": "llm_call",
+            "compact": "compact",
+        }
+    )
     graph.add_edge("compact", "llm_call")
+    graph.add_conditional_edges(
+        "persist",
+        route_loop_persist,
+        {
+            "idle": "idle",
+            "END": END,
+        }
+    )
     graph.add_edge("spawn_sub_agent", END)
     graph.add_edge("hook_governance", END)
     graph.add_edge("hook_malware", END)
@@ -1087,6 +1126,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

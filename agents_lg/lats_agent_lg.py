@@ -5,6 +5,7 @@ Spec: Iterative problem solving using Monte Carlo Tree Search (MCTS) combined wi
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -278,15 +279,18 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     action_generator_output: Any
     actions: list
     answer: str
     best_score: Any
     best_trajectory: str
     current_trajectory: Any
+    evaluate_node_result: Any
     evaluation_input: Any
+    expand_node_result: Any
     expansion_input: Any
+    format_output_result: Any
     formatter_input: Any
     is_terminal: bool
     iteration: int
@@ -464,7 +468,7 @@ def node_expand_node(state: AgentState) -> dict:
     action_generator_msg = json.dumps(action_generator_input, default=str)
     action_generator_raw = invoke_action_generator(action_generator_msg, output_schema="ActionGeneratorOutput")
     action_generator_result = parse_response(action_generator_raw, "ActionGeneratorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(action_generator_result, "ActionGeneratorOutput"))
+    updates["_schema_violations"] = len(validate_output(action_generator_result, "ActionGeneratorOutput"))
     updates.update(action_generator_result)
     updates["action_generator_output"] = action_generator_result
     updates["expand_node_result"] = action_generator_result
@@ -508,7 +512,7 @@ def node_evaluate_node(state: AgentState) -> dict:
     state_evaluator_msg = json.dumps(state_evaluator_input, default=str)
     state_evaluator_raw = invoke_state_evaluator(state_evaluator_msg, output_schema="StateEvaluatorOutput")
     state_evaluator_result = parse_response(state_evaluator_raw, "StateEvaluatorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(state_evaluator_result, "StateEvaluatorOutput"))
+    updates["_schema_violations"] = len(validate_output(state_evaluator_result, "StateEvaluatorOutput"))
     updates.update(state_evaluator_result)
     updates["state_evaluator_output"] = state_evaluator_result
     updates["evaluate_node_result"] = state_evaluator_result
@@ -575,7 +579,7 @@ def node_format_output(state: AgentState) -> dict:
     solution_formatter_msg = json.dumps(solution_formatter_input, default=str)
     solution_formatter_raw = invoke_solution_formatter(solution_formatter_msg, output_schema="FinalSolution")
     solution_formatter_result = parse_response(solution_formatter_raw, "FinalSolution")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(solution_formatter_result, "FinalSolution"))
+    updates["_schema_violations"] = len(validate_output(solution_formatter_result, "FinalSolution"))
     updates.update(solution_formatter_result)
     updates["final_solution"] = solution_formatter_result
     updates["format_output_result"] = solution_formatter_result
@@ -660,6 +664,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

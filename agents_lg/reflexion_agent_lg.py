@@ -5,6 +5,7 @@ Spec: Reflexion agent that attempts tasks, self-evaluates, generates verbal refl
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -286,15 +287,18 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     answer: str
+    attempt_task_result: Any
     episodes: list
     episodic_memory: list
     error_message: str
     error_type: str
+    evaluate_attempt_result: Any
     failure_reason: str
     final_answer: str
     final_score: Any
+    generate_reflection_result: Any
     max_trials: Any
     outcome: str
     prior_reflections: list
@@ -464,7 +468,7 @@ def node_attempt_task(state: AgentState) -> dict:
     actor_agent_msg = json.dumps(actor_agent_input, default=str)
     actor_agent_raw = invoke_actor_agent(actor_agent_msg, output_schema="ActorOutput")
     actor_agent_result = parse_response(actor_agent_raw, "ActorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(actor_agent_result, "ActorOutput"))
+    updates["_schema_violations"] = len(validate_output(actor_agent_result, "ActorOutput"))
     updates.update(actor_agent_result)
     updates["actor_output"] = actor_agent_result
     updates["attempt_task_result"] = actor_agent_result
@@ -503,7 +507,7 @@ def node_evaluate_attempt(state: AgentState) -> dict:
     evaluator_agent_msg = json.dumps(evaluator_agent_input, default=str)
     evaluator_agent_raw = invoke_evaluator_agent(evaluator_agent_msg, output_schema="EvaluatorOutput")
     evaluator_agent_result = parse_response(evaluator_agent_raw, "EvaluatorOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(evaluator_agent_result, "EvaluatorOutput"))
+    updates["_schema_violations"] = len(validate_output(evaluator_agent_result, "EvaluatorOutput"))
     updates.update(evaluator_agent_result)
     updates["evaluator_output"] = evaluator_agent_result
     updates["evaluate_attempt_result"] = evaluator_agent_result
@@ -543,7 +547,7 @@ def node_generate_reflection(state: AgentState) -> dict:
     self_reflection_agent_msg = json.dumps(self_reflection_agent_input, default=str)
     self_reflection_agent_raw = invoke_self_reflection_agent(self_reflection_agent_msg, output_schema="ReflectionOutput")
     self_reflection_agent_result = parse_response(self_reflection_agent_raw, "ReflectionOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(self_reflection_agent_result, "ReflectionOutput"))
+    updates["_schema_violations"] = len(validate_output(self_reflection_agent_result, "ReflectionOutput"))
     updates.update(self_reflection_agent_result)
     updates["reflection_output"] = self_reflection_agent_result
     updates["generate_reflection_result"] = self_reflection_agent_result
@@ -699,6 +703,16 @@ def route_check_trials_remaining(state: AgentState) -> str:
         return "finalize_failure"
 
 
+def route_loop_store_reflection(state: AgentState) -> str:
+    """Loop: Reflexion retry loop — trial < max_trials"""
+    if state.get("_done"):
+        return "END"
+    if (state.get("trial", 0)) < (state.get("max_trials", 0)):
+        return "attempt_task"
+    else:
+        return "END"
+
+
 # ═══════════════════════════════════════════════════════════
 # Graph Construction
 # ═══════════════════════════════════════════════════════════
@@ -767,6 +781,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

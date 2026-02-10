@@ -597,8 +597,9 @@ def process_collect_proposals(state):
 
     # Logic from spec
     proposals = []
-    for key in ["analytical_response", "creative_response", "critical_response"]:
-        resp = state.data.get(key, "")
+    for key in ["call_analytical_result", "call_creative_result", "call_critical_result"]:
+        result = state.data.get(key, {})
+        resp = result.get("response", "") if isinstance(result, dict) else str(result)
         if resp:
             proposals.append(resp)
     state.data["proposals"] = proposals

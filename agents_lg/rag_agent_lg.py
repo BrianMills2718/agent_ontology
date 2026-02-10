@@ -5,6 +5,7 @@ Spec: Retrieval-Augmented Generation agent that answers questions using a docume
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -286,7 +287,7 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     answer: str
     chunk_overlap: Any
     chunk_size: Any
@@ -298,11 +299,14 @@ class AgentState(TypedDict, total=False):
     document_text: str
     embedding: list
     filtered_passages: list
+    generate_answer_result: Any
+    judge_relevance_result: Any
     metadata: Any
     original_query: str
     passages: list
     query: str
     relevance_scores: list
+    rewrite_query_result: Any
     rewritten_query: str
     scores: list
     search_query: str
@@ -495,7 +499,7 @@ def node_rewrite_query(state: AgentState) -> dict:
     query_rewriter_msg = json.dumps(query_rewriter_input, default=str)
     query_rewriter_raw = invoke_query_rewriter(query_rewriter_msg, output_schema="RewrittenQuery")
     query_rewriter_result = parse_response(query_rewriter_raw, "RewrittenQuery")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(query_rewriter_result, "RewrittenQuery"))
+    updates["_schema_violations"] = len(validate_output(query_rewriter_result, "RewrittenQuery"))
     updates.update(query_rewriter_result)
     updates["rewritten_query_schema"] = query_rewriter_result
     updates["rewrite_query_result"] = query_rewriter_result
@@ -547,7 +551,7 @@ def node_judge_relevance(state: AgentState) -> dict:
     relevance_judge_msg = json.dumps(relevance_judge_input, default=str)
     relevance_judge_raw = invoke_relevance_judge(relevance_judge_msg, output_schema="JudgeOutput")
     relevance_judge_result = parse_response(relevance_judge_raw, "JudgeOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(relevance_judge_result, "JudgeOutput"))
+    updates["_schema_violations"] = len(validate_output(relevance_judge_result, "JudgeOutput"))
     updates.update(relevance_judge_result)
     updates["judge_output"] = relevance_judge_result
     updates["judge_relevance_result"] = relevance_judge_result
@@ -587,7 +591,7 @@ def node_generate_answer(state: AgentState) -> dict:
     generator_msg = json.dumps(generator_input, default=str)
     generator_raw = invoke_generator(generator_msg, output_schema="GeneratedAnswer")
     generator_result = parse_response(generator_raw, "GeneratedAnswer")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(generator_result, "GeneratedAnswer"))
+    updates["_schema_violations"] = len(validate_output(generator_result, "GeneratedAnswer"))
     updates.update(generator_result)
     updates["generated_answer"] = generator_result
     updates["generate_answer_result"] = generator_result
@@ -759,6 +763,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))

@@ -5,6 +5,7 @@ Spec: A multi-agent debate system with pro/con agents moderated by a judge agent
 """
 
 import json
+import operator
 import os
 import sys
 import time
@@ -275,14 +276,18 @@ class AgentState(TypedDict, total=False):
     _continue_debate: Any
     _done: bool
     _iteration: int
-    _schema_violations: int
+    _schema_violations: Annotated[int, operator.add]
     argument: str
+    con_argument_result: Any
     con_position: str
     con_score: int
     debate_history: list
     debate_history_store: list
+    judge_evaluation_result: Any
     max_rounds: Any
+    moderate_topic_result: Any
     position: str
+    pro_argument_result: Any
     pro_position: str
     pro_score: int
     proposition: str
@@ -432,7 +437,7 @@ def node_moderate_topic(state: AgentState) -> dict:
     moderator_agent_msg = json.dumps(moderator_agent_input, default=str)
     moderator_agent_raw = invoke_moderator_agent(moderator_agent_msg, output_schema="DebateSetup")
     moderator_agent_result = parse_response(moderator_agent_raw, "DebateSetup")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(moderator_agent_result, "DebateSetup"))
+    updates["_schema_violations"] = len(validate_output(moderator_agent_result, "DebateSetup"))
     updates.update(moderator_agent_result)
     updates["debate_setup"] = moderator_agent_result
     updates["moderate_topic_result"] = moderator_agent_result
@@ -491,7 +496,7 @@ def node_pro_argument(state: AgentState) -> dict:
     pro_agent_msg = json.dumps(pro_agent_input, default=str)
     pro_agent_raw = invoke_pro_agent(pro_agent_msg, output_schema="ArgumentOutput")
     pro_agent_result = parse_response(pro_agent_raw, "ArgumentOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(pro_agent_result, "ArgumentOutput"))
+    updates["_schema_violations"] = len(validate_output(pro_agent_result, "ArgumentOutput"))
     updates.update(pro_agent_result)
     updates["argument_output"] = pro_agent_result
     updates["pro_argument_result"] = pro_agent_result
@@ -529,7 +534,7 @@ def node_con_argument(state: AgentState) -> dict:
     con_agent_msg = json.dumps(con_agent_input, default=str)
     con_agent_raw = invoke_con_agent(con_agent_msg, output_schema="ArgumentOutput")
     con_agent_result = parse_response(con_agent_raw, "ArgumentOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(con_agent_result, "ArgumentOutput"))
+    updates["_schema_violations"] = len(validate_output(con_agent_result, "ArgumentOutput"))
     updates.update(con_agent_result)
     updates["argument_output"] = con_agent_result
     updates["con_argument_result"] = con_agent_result
@@ -615,7 +620,7 @@ def node_judge_evaluation(state: AgentState) -> dict:
     judge_agent_msg = json.dumps(judge_agent_input, default=str)
     judge_agent_raw = invoke_judge_agent(judge_agent_msg, output_schema="JudgmentOutput")
     judge_agent_result = parse_response(judge_agent_raw, "JudgmentOutput")
-    updates["_schema_violations"] = state.get("_schema_violations", 0) + len(validate_output(judge_agent_result, "JudgmentOutput"))
+    updates["_schema_violations"] = len(validate_output(judge_agent_result, "JudgmentOutput"))
     updates.update(judge_agent_result)
     updates["judgment_output"] = judge_agent_result
     updates["judge_evaluation_result"] = judge_agent_result
@@ -773,6 +778,9 @@ class _StateCompat:
         self.data.update({k: v for k, v in state_dict.items() if k.startswith("_")})
         self.iteration = state_dict.get("_iteration", 0)
         self.schema_violations = state_dict.get("_schema_violations", 0)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
 
 MAX_ITERATIONS = int(os.environ.get("OPENCLAW_MAX_ITER", "100"))
