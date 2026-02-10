@@ -154,42 +154,146 @@ def compute_fitness(test_result):
     return round(score, 1)
 
 
-def compute_fitness_benchmark(agent_path, suite, examples=5):
-    """Compute fitness via benchmark suite. Returns score 0-200."""
-    agent_name = os.path.basename(agent_path).replace("_agent.py", "")
-    result = subprocess.run(
-        [sys.executable, os.path.join(SCRIPT_DIR, "benchmark.py"),
-         "--suite", suite,
-         "--agent", agent_name,
-         "--examples", str(examples),
-         "--json"],
-        capture_output=True, text=True, cwd=SCRIPT_DIR,
-        timeout=300,
+def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=120,
+                              base_agent_type=None):
+    """Compute fitness via benchmark suite inline. Returns (score, test_result_dict).
+
+    Loads agent module directly (must be importable via sys.path),
+    runs it on benchmark examples, and scores the results.
+    base_agent_type: the original agent type (e.g. "self_refine") for input formatting.
+    """
+    import signal
+    import builtins
+
+    # Lazy imports from benchmarks subpackage
+    from .benchmarks.scoring import (
+        extract_answer, score_hotpotqa, score_gsm8k,
+        score_arc, score_humaneval,
     )
-    if result.returncode != 0:
-        return 0.0
+
+    # Use base_agent_type for formatting inputs (evolved agents share base schema)
+    agent_type = base_agent_type or agent_module_name.replace("_agent", "")
+
+    # Load dataset
+    datasets_dir = os.path.join(SCRIPT_DIR, "benchmarks", "datasets")
+    dataset_path = os.path.join(datasets_dir, f"{suite}.json")
+    try:
+        with open(dataset_path) as f:
+            dataset_meta = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0.0, {"status": "BENCH_FAIL", "llm_calls": 0, "duration_ms": 0}
+
+    dataset_examples = dataset_meta["examples"][:examples]
+
+    # Import module
+    try:
+        if agent_module_name in sys.modules:
+            del sys.modules[agent_module_name]
+        mod = importlib.import_module(agent_module_name)
+    except Exception as e:
+        return 0.0, {"status": "IMPORT_ERROR", "llm_calls": 0, "duration_ms": 0, "error": str(e)}
+
+    # Score each example
+    scores_em = []
+    scores_f1 = []
+    total_calls = 0
+    total_duration_ms = 0
+
+    original_input = builtins.input
+    builtins.input = lambda prompt="": "skip"
+
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Timed out after {timeout_sec}s")
 
     try:
-        data = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
-        return 0.0
+        for example in dataset_examples:
+            # Format input — try the base agent type for formatting
+            inputs = _format_benchmark_input(agent_type, example, suite)
 
-    # Extract scores — handle both dict and list formats
-    if isinstance(data, list):
-        data = data[0] if data else {}
+            # Reset trace
+            if hasattr(mod, 'TRACE'):
+                mod.TRACE.clear()
 
-    em = data.get("avg_em", data.get("exact_match", 0.0))
-    f1 = data.get("avg_f1", data.get("f1", 0.0))
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_sec)
+            t0 = time.time()
+            try:
+                state = mod.run(inputs)
+                elapsed_ms = int((time.time() - t0) * 1000)
+                calls = len(mod.TRACE) if hasattr(mod, 'TRACE') else 0
+                total_calls += calls
+                total_duration_ms += elapsed_ms
 
-    # Combine: EM weighted higher
-    score = (em * 0.7 + f1 * 0.3) * 200
+                # Extract answer
+                state_data = state.data if hasattr(state, "data") else {}
+                predicted = extract_answer(state_data)
 
-    # Efficiency bonus: fewer calls = better
-    avg_calls = data.get("avg_calls", 0)
+                # Score
+                expected = example["answer"]
+                if suite == "hotpotqa":
+                    s = score_hotpotqa(predicted, str(expected))
+                elif suite == "gsm8k":
+                    s = score_gsm8k(predicted, expected)
+                elif suite == "arc":
+                    s = score_arc(predicted, expected)
+                elif suite == "humaneval":
+                    s = score_humaneval(predicted, example)
+                else:
+                    s = {"em": 1.0 if str(expected).lower() in predicted.lower() else 0.0}
+
+                scores_em.append(s.get("em", 0.0))
+                if "f1" in s:
+                    scores_f1.append(s["f1"])
+
+            except TimeoutError:
+                scores_em.append(0.0)
+                total_duration_ms += int((time.time() - t0) * 1000)
+            except Exception:
+                scores_em.append(0.0)
+                total_duration_ms += int((time.time() - t0) * 1000)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+    finally:
+        builtins.input = original_input
+
+    if not scores_em:
+        return 0.0, {"status": "BENCH_FAIL", "llm_calls": 0, "duration_ms": 0}
+
+    # Compute fitness
+    em_mean = sum(scores_em) / len(scores_em)
+    f1_mean = sum(scores_f1) / len(scores_f1) if scores_f1 else 0.0
+
+    # Combine: EM weighted higher, scale to 200
+    score = (em_mean * 0.7 + f1_mean * 0.3) * 200
+
+    # Efficiency bonus: fewer avg calls = better
+    avg_calls = total_calls / len(dataset_examples) if dataset_examples else 0
     if avg_calls > 0:
         score += max(0, 20 - avg_calls)
 
-    return round(score, 1)
+    test_result = {
+        "status": "PASS" if score > 0 else "BENCH_FAIL",
+        "llm_calls": total_calls,
+        "duration_ms": total_duration_ms,
+    }
+
+    return round(score, 1), test_result
+
+
+def _format_benchmark_input(agent_type, example, dataset_name):
+    """Format a benchmark example into agent input.
+
+    Tries format_input from compatibility module first, falls back to generic.
+    """
+    try:
+        from .benchmarks.compatibility import format_input
+        return format_input(agent_type, example, dataset_name)
+    except Exception:
+        pass
+    # Generic fallback
+    question = example["question"]
+    return {"query": question, "task": question, "problem": question}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -264,6 +368,8 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
     _init_lineage(base_spec, generation=0)
 
     base_name = base_spec.get("name", "agent").lower().replace(" ", "_")
+    # Derive base agent type from spec filename for benchmark input formatting
+    base_agent_type = os.path.basename(base_spec_path).replace(".yaml", "")
     work_dir = tempfile.mkdtemp(prefix="evolve_")
 
     history = []
@@ -364,14 +470,12 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
 
             # Score fitness
             if benchmark_suite:
-                fitness = compute_fitness_benchmark(
-                    agent_path, benchmark_suite, benchmark_examples
+                module_name = f"{name}_agent"
+                fitness, test_result = compute_fitness_benchmark(
+                    module_name, benchmark_suite, benchmark_examples,
+                    timeout_sec=timeout_sec,
+                    base_agent_type=base_agent_type,
                 )
-                test_result = {
-                    "status": "PASS" if fitness > 0 else "BENCH_FAIL",
-                    "llm_calls": 0,
-                    "duration_ms": 0,
-                }
             else:
                 module_name = f"{name}_agent"
                 test_result = run_agent_test(module_name, test_inputs, timeout_sec)
