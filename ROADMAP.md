@@ -278,13 +278,13 @@ Reasoner updates recommendations → LLM uses updated knowledge → ...
 
 ### Phased Approach
 
-#### Phase A: OWL Prototype (exploratory)
-- Translate core ontology types to OWL (Turtle format)
-- Define 2-3 patterns as DL concepts (SelfRefine, ReAct, RAG)
-- Load existing specs as OWL instances
-- Run HermiT/Pellet reasoner to auto-classify specs
-- **Goal**: Prove that automatic classification works on our 22 specs
-- **Success criteria**: Reasoner correctly identifies patterns in specs without using process ID names
+#### Phase A: OWL Prototype (exploratory) — DONE
+- Translate core ontology types to OWL — `ontology_owl.py` (owlready2)
+- Define 9 patterns as DL concepts (ReasoningLoop, CritiqueCycle, RetrievalAugmented, FanOut, HumanInLoop, MultiAgentDebate, PubSub, Handoff, MemoryBacked)
+- Load all 22 specs as OWL instances
+- Structural pattern matching (Java/Pellet not available in current env)
+- **Result**: 21/22 correct classifications. All canonical matches work (ReAct→ReasoningLoop, Self-Refine→CritiqueCycle, RAG→RetrievalAugmented, Debate→MultiAgentDebate, etc.)
+- **Key finding — the ceiling of structural matching**: BabyAGI is incorrectly classified as CritiqueCycle because its `pull_task → enrich` subgraph is topologically identical to Self-Refine's `generate → critique`. The structural matcher sees two agent-invoking steps in sequence inside a loop — it can't distinguish "generate then critique" from "execute then enrich" because it doesn't understand what the steps *do*, only how they connect. This is a concrete motivating example for Phase B-C: semantic annotations (step roles, data-flow constraints) or richer DL axioms would let the reasoner distinguish these. Pure topology has a ceiling; semantics is what the formal ontology adds.
 
 #### Phase B: Dual Representation
 - YAML specs remain the authoring format (human-friendly)
