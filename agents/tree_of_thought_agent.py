@@ -652,7 +652,13 @@ def run(initial_data=None):
                 _fn = PROCESSES.get(_ft)
                 if _fn:
                     _fn(state)
-            current = TRANSITIONS.get(_targets[-1])
+            # Collect unique next-hops from all fan-out targets
+            _next_set = []
+            for _ft in _targets:
+                _nt = TRANSITIONS.get(_ft)
+                if _nt is not None and _nt not in _next_set:
+                    _next_set.append(_nt)
+            current = _next_set[0] if len(_next_set) == 1 else (_next_set if _next_set else None)
 
         if current is None or state.data.get("_done"):
             print("\n  [DONE] Reached terminal state.")

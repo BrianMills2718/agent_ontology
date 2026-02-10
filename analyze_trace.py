@@ -26,15 +26,22 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 def load_trace(path: str) -> list[dict]:
-    """Load and validate a trace.json file. Returns list of call records."""
+    """Load and validate a trace.json file. Returns list of call records.
+
+    Accepts both raw JSON arrays and the wrapped format
+    ``{"metrics": {...}, "trace": [...]}``.
+    """
     p = Path(path)
     if not p.exists():
         print(f"Error: file not found: {path}", file=sys.stderr)
         sys.exit(1)
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
+    # Handle wrapped format: {"metrics": ..., "trace": [...]}
+    if isinstance(data, dict) and "trace" in data:
+        data = data["trace"]
     if not isinstance(data, list):
-        print(f"Error: expected a JSON array in {path}", file=sys.stderr)
+        print(f"Error: expected a JSON array (or {{\"trace\": [...]}} dict) in {path}", file=sys.stderr)
         sys.exit(1)
     return data
 

@@ -118,21 +118,10 @@ def migrate_1_1_to_2_0(spec):
     """Migrate from 1.1 to 2.0.
 
     Changes:
-      - Rename edge type `loop` to `back_edge` throughout.
       - Add `tags: []` to every entity.
       - Ensure all schemas have a `description` field.
     """
     changes = []
-
-    # -- Rename edge type loop -> back_edge --
-    for edge in spec.get("edges", []):
-        if edge.get("type") == "loop":
-            edge["type"] = "back_edge"
-            label = edge.get("label", "")
-            src = edge.get("from", "?")
-            dst = edge.get("to", "?")
-            desc = f"'{label}'" if label else f"{src} -> {dst}"
-            changes.append(f"  ~ Renamed edge type loop -> back_edge on {desc}")
 
     # -- Add tags: [] to every entity --
     for entity in spec.get("entities", []):

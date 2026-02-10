@@ -169,7 +169,7 @@ processes:
     logic: |
       idx = state.data.get("current_assignment_idx", 0)
       assignment = state.data.get("current_assignment", {})
-      result_text = state.data.get("agent_output", state.data.get("result", ""))
+      result_text = state.data.get("agent_output", state.data.get("result", state.data.get("improvements", "")))
       agent_results = state.data.get("agent_results", {})
       agent_results[f"assignment_{idx}"] = result_text
       state.data["agent_results"] = agent_results

@@ -616,7 +616,7 @@ def node_collect_result(state: AgentState) -> dict:
     # Logic from spec
     idx = state.get("current_assignment_idx", 0)
     assignment = state.get("current_assignment", {})
-    result_text = state.get("agent_output", state.get("result", ""))
+    result_text = state.get("agent_output", state.get("result", state.get("improvements", "")))
     agent_results = state.get("agent_results", {})
     agent_results[f"assignment_{idx}"] = result_text
     updates["agent_results"] = agent_results
