@@ -22,72 +22,92 @@ Nobody does all six today. This is the gap.
 # 1. Validate a spec
 python3 validate.py specs/react.yaml
 
-# 2. Generate a runnable agent
+# 2. Generate a runnable agent (custom backend)
 python3 instantiate.py specs/react.yaml
 
-# 3. Run it (requires API keys in .env.local)
+# 3. Generate a LangGraph agent
+python3 instantiate.py specs/react.yaml --backend langgraph
+
+# 4. Batch-generate all agents (both backends)
+python3 instantiate.py --all specs/ -o agents/
+python3 instantiate.py --all specs/ -o agents_lg/ --backend langgraph
+
+# 5. Run it (requires API keys in .env.local)
 export $(cat .env.local | xargs)
 python3 agents/react_agent.py
 
-# 4. View specs in the browser
+# 6. View specs in the browser
 python3 -m http.server 8000
 # Open http://localhost:8000/spec-viewer.html
 
-# 5. Analyze the trace
+# 7. Analyze the trace
 python3 analyze_trace.py trace.json
 
-# 6. Score spec complexity
+# 8. Score spec complexity
 python3 complexity.py --all specs/
 
-# 7. Run all agent tests
+# 9. Run all agent tests
 python3 test_agents.py
 
-# 8. Override model for all agents
+# 10. Override model for all agents
 python3 test_agents.py --model gpt-4o --agent react
 
-# 9. Compare models side-by-side
+# 11. Compare models side-by-side
 python3 test_agents.py --compare-models gemini-3-flash-preview gpt-4o-mini gpt-4o
 
-# 10. Mutate and evolve a spec
+# 12. Mutate and evolve a spec
 python3 mutate.py specs/react.yaml --random -n 3
 python3 evolve.py specs/react.yaml --generations 2 --population 4
 
-# 11. E2E specgen pipeline test
+# 13. Evolve with crossover and benchmark fitness
+python3 evolve.py specs/react.yaml --generations 3 --population 6 --crossover --benchmark gsm8k
+
+# 14. E2E specgen pipeline test
 python3 test_specgen.py --fix
 
-# 12. Analyze spec coverage of ontology features
+# 15. Analyze spec coverage of ontology features
 python3 coverage.py --all specs/
 
-# 13. Lint specs for anti-patterns
+# 16. Lint specs for anti-patterns
 python3 lint.py --all specs/ --severity warn
 
-# 14. Classify agent topologies
+# 17. Classify agent topologies
 python3 topology.py --all specs/
 
-# 15. Compare two spec versions
+# 18. Compare two spec versions
 python3 spec_diff.py specs/react.yaml specs/autogpt.yaml
 
-# 16. Project health dashboard
+# 19. Project health dashboard
 python3 dashboard.py specs/
 python3 dashboard.py --brief specs/
 
-# 17. Export Mermaid flowcharts
+# 20. Export Mermaid flowcharts
 python3 mermaid.py specs/react.yaml
 python3 mermaid.py --all specs/
 
-# 18. Spec similarity and clustering
+# 21. Spec similarity and clustering
 python3 similarity.py --all specs/ --top 5 --clusters 5
 
-# 19. Migrate specs to new version
+# 22. Migrate specs to new version
 python3 migrate.py --all specs/ --to 1.1 --dry-run
 python3 migrate.py --list-versions
 
-# 20. Run property-based tests (no API keys needed)
+# 23. Run property-based tests (no API keys needed)
 python3 test_properties.py
 
-# 21. Generate comparative analysis report
+# 24. Generate comparative analysis report
 python3 comparative_report.py --all specs/
 python3 comparative_report.py --all specs/ --json
+
+# 25. Compose patterns into new agents
+python3 compose.py compose_specs/react_refine.yaml -o specs/react_refine.yaml --validate
+
+# 26. Detect patterns in existing specs
+python3 -c "from patterns import detect_patterns; import yaml; print(detect_patterns(yaml.safe_load(open('specs/react.yaml'))))"
+
+# 27. Run benchmark suites
+python3 benchmark.py --suite gsm8k --agent self_refine --examples 3
+python3 benchmark.py --suite hotpotqa --agent react --examples 5
 ```
 
 ## The Pipeline
@@ -121,8 +141,9 @@ Validates against `ONTOLOGY.yaml` with 25+ rules:
 
 ### Step 3: Visualize
 
-Open `spec-viewer.html` in a browser (via HTTP server). Four views:
+Open `spec-viewer.html` in a browser (via HTTP server). Five views:
 
+- **Overview** — Simplified architecture diagram with BFS spine layout. Steps and agents are collapsed into single nodes. Entity connections shown as single lines per (process, entity) pair — click for sidebar details showing edge types, labels, and return schemas. Draggable nodes.
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
@@ -133,13 +154,20 @@ Supports trace overlay: load a `trace.json` to see execution counts, durations, 
 ### Step 4: Instantiate
 
 ```bash
+# Custom backend (state machine)
 python3 instantiate.py specs/react.yaml
+
+# LangGraph backend (StateGraph)
+python3 instantiate.py specs/react.yaml --backend langgraph
 ```
 
-Generates a complete Python agent with:
+Two backends available:
+
+**Custom backend** (default) generates a complete Python agent with:
 - State machine (PROCESSES dict + TRANSITIONS dict)
 - **Fan-out support**: Multiple outgoing flow edges run all branches sequentially
 - **Namespaced state**: Agent outputs stored under `state.data["schema_name"]` and `state.data["process_id_result"]` to prevent field collisions
+- **Edge-driven store access**: Store reads generated from `read` edges (before logic blocks), writes from `write` edges (after invocations). Supports `query_key` for parameterized reads.
 - Schema-aware LLM calls (input extraction, output parsing, structured prompts)
 - Gate condition evaluation (parsed from human-readable conditions)
 - Trace logging with metrics (LLM calls, duration, schema compliance, token estimates)
@@ -149,6 +177,13 @@ Generates a complete Python agent with:
 - LLM retry with exponential backoff (3 attempts)
 - Runtime schema validation (field presence + type checking)
 - Configurable `MAX_ITERATIONS` via `OPENCLAW_MAX_ITER` env var
+
+**LangGraph backend** (`--backend langgraph`) generates agents using LangGraph's `StateGraph`:
+- Steps → nodes, gates → routing functions + conditional edges, flow → edges, loops → back-edges
+- LangChain ChatModels (`ChatGoogleGenerativeAI`, `ChatAnthropic`, `ChatOpenAI`)
+- TypedDict-based state with fields derived from schemas + logic block analysis
+- Gate chaining support (gate → gate inserts pass-through node)
+- All 20 specs generate valid Python; verified E2E on multiple agents
 
 ## Agent Catalog
 
@@ -227,15 +262,17 @@ Full type system: `ONTOLOGY.yaml`
 | Tool | Purpose | Usage |
 |------|---------|-------|
 | `validate.py` | Check spec against ontology | `python3 validate.py spec.yaml` |
-| `instantiate.py` | Generate runnable Python agent | `python3 instantiate.py spec.yaml` |
+| `instantiate.py` | Generate runnable agent (custom or LangGraph) | `python3 instantiate.py spec.yaml [--backend langgraph]` |
 | `specgen.py` | Generate spec from description | `python3 specgen.py desc.md -o spec.yaml --validate --fix` |
-| `spec-viewer.html` | Interactive visualization | Serve via HTTP, open in browser |
+| `spec-viewer.html` | Interactive visualization (5 views) | Serve via HTTP, open in browser |
 | `test_agents.py` | Automated agent testing | `python3 test_agents.py --agent react` |
 | `analyze_trace.py` | Trace analysis and comparison | `python3 analyze_trace.py trace.json` |
 | `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
-| `mutate.py` | Spec mutation engine | `python3 mutate.py spec.yaml --random -n 5` |
-| `evolve.py` | Evolutionary search | `python3 evolve.py spec.yaml --generations 3 --population 5` |
-| `benchmark.py` | Benchmark suite | `python3 benchmark.py --agent react --json` |
+| `mutate.py` | Spec mutation engine (field + pattern-level) | `python3 mutate.py spec.yaml --random -n 5` |
+| `evolve.py` | Evolutionary search with crossover | `python3 evolve.py spec.yaml --generations 3 --crossover` |
+| `benchmark.py` | Benchmark suite (HotpotQA, GSM8K) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
+| `patterns.py` | Pattern library (7 patterns) | `from patterns import detect_patterns, PATTERNS` |
+| `compose.py` | Compose patterns into new specs | `python3 compose.py compose_spec.yaml -o spec.yaml` |
 | `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
 | `spec_diff.py` | Structured spec comparison | `python3 spec_diff.py old.yaml new.yaml` |
 | `coverage.py` | Ontology feature coverage | `python3 coverage.py --all specs/` |
@@ -245,7 +282,7 @@ Full type system: `ONTOLOGY.yaml`
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
-| `test_properties.py` | Property-based structural tests | `python3 test_properties.py` |
+| `test_properties.py` | Property-based structural tests (158+) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 
 ## Architecture
@@ -254,13 +291,15 @@ Full type system: `ONTOLOGY.yaml`
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (15 agents)
+specs/*.yaml           # Agent specifications (20 agents)
      |
-     +---> validate.py       # Validation (20+ rules, graph analysis)
-     +---> instantiate.py    # Code generation -> agents/*.py
+     +---> validate.py       # Validation (25+ rules, graph analysis)
+     +---> instantiate.py    # Code generation -> agents/*.py or agents_lg/*.py
      +---> complexity.py     # Complexity scoring (10 metrics)
-     +---> mutate.py         # Spec mutation engine (8 operators)
+     +---> mutate.py         # Spec mutation engine (field + pattern-level)
      +---> evolve.py         # Evolutionary search (mutate → test → select)
+     +---> patterns.py       # Pattern library (7 reusable patterns)
+     +---> compose.py        # Compose patterns into new specs
      +---> coverage.py       # Ontology feature coverage report
      +---> lint.py           # Anti-pattern detection (10 rules)
      +---> topology.py       # Control-flow topology classifier
@@ -270,17 +309,26 @@ specs/*.yaml           # Agent specifications (15 agents)
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
      +---> comparative_report.py  # Cross-spec comparative analysis
-     +---> test_properties.py     # Property-based structural tests
-     +---> spec-viewer.html  # Visualization (4 views + trace overlay)
+     +---> test_properties.py     # Property-based structural tests (158+)
+     +---> spec-viewer.html  # Visualization (5 views + trace overlay)
 
-agents/*.py            # Generated runnable agents
+agents/*.py            # Generated runnable agents (custom backend)
+agents_lg/*.py         # Generated runnable agents (LangGraph backend)
      |
      +---> test_agents.py    # Automated testing + multi-model comparison
-     +---> benchmark.py      # Benchmark suite with standardized tasks
+     +---> benchmark.py      # Benchmark suite (HotpotQA, GSM8K)
      +---> trace.json        # Runtime traces
               |
               v
          analyze_trace.py    # Trace analysis + comparison
+
+compose_specs/*.yaml   # Pattern composition recipes
+     |
+     v
+compose.py             # Pattern → spec composition
+     |
+     v
+specs/*.yaml           # Composed specs (validated)
 
 test_descriptions/*.md # Natural language agent descriptions
      |
@@ -310,6 +358,7 @@ See `VISION.md` for the full rationale and `ONTOLOGY.yaml` for the complete type
 - `google-genai` (for running generated agents with Gemini): `pip install google-genai`
 - `openai` (for specgen and OpenAI model agents): `pip install openai`
 - `anthropic` (optional, for Claude model agents): `pip install anthropic`
+- `langgraph`, `langchain-core`, `langchain-google-genai`, `langchain-openai`, `langchain-anthropic` (optional, for LangGraph backend agents)
 - Modern browser (for spec-viewer)
 
 API keys go in `.env.local`:
@@ -323,15 +372,17 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 
 ```
 specs/                  # Agent specifications (YAML, 20 specs)
-agents/                 # Generated runnable agents (Python)
+agents/                 # Generated runnable agents (custom backend)
+agents_lg/              # Generated runnable agents (LangGraph backend)
+compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing
-benchmarks/             # Benchmark task configs
+benchmarks/             # Benchmark datasets (HotpotQA, GSM8K) and scoring
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
 validate.py             # Spec validator (25+ rules)
-instantiate.py          # Code generator (fan-out, namespacing, retry, schema validation)
+instantiate.py          # Code generator (custom + LangGraph backends)
 specgen.py              # Description-to-spec pipeline
-spec-viewer.html        # Interactive multi-view visualization + trace overlay
+spec-viewer.html        # Interactive multi-view visualization (5 views + trace overlay)
 test_agents.py          # Automated test harness + multi-model comparison
 test_specgen.py         # E2E specgen pipeline testing
 analyze_trace.py        # Trace analysis and comparison
@@ -345,11 +396,13 @@ mermaid.py              # Mermaid flowchart export
 similarity.py           # Spec similarity & clustering
 migrate.py              # Spec version migration
 comparative_report.py   # Cross-spec comparative analysis
-test_properties.py      # Property-based structural tests (139 tests)
+test_properties.py      # Property-based structural tests (158+ tests)
+patterns.py             # Pattern library (7 reusable architectural patterns)
+compose.py              # Pattern composition operator
 gaps.md                 # Ontology expressiveness gap analysis
 .github/workflows/      # CI: validate, lint, syntax-check, smoke-test
-mutate.py               # Spec mutation engine (8 operators)
-evolve.py               # Evolutionary search over agent architectures
-benchmark.py            # Benchmark suite with standardized evaluation tasks
+mutate.py               # Spec mutation engine (field + pattern-level operators)
+evolve.py               # Evolutionary search with crossover + benchmark fitness
+benchmark.py            # Benchmark suite (HotpotQA, GSM8K) with multi-run stats
 trace.json              # LLM call traces from last agent run
 ```

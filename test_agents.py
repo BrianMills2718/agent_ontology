@@ -104,6 +104,19 @@ TEST_INPUTS = {
             "Addition is the inverse of subtraction",
         ],
     },
+    "reflexion": {
+        "task": "What is the capital of France?",
+        "success_criteria": "The answer must name the capital city of France.",
+        "max_trials": 2,
+    },
+    "mixture_of_agents": {
+        "query": "Explain the pros and cons of renewable energy in 3 sentences.",
+        "max_layers": 1,
+    },
+    "meta_prompting": {
+        "task": "Summarize the key principles of good software design.",
+        "max_depth": 1,
+    },
 }
 
 # ── Validation criteria per agent ──
@@ -244,6 +257,29 @@ def validate_socratic_tutor(state):
         issues.append("No transcript recorded")
     return issues
 
+def validate_reflexion(state):
+    """Reflexion should attempt trials and produce a final answer."""
+    issues = []
+    if state.data.get("trial", 0) < 1:
+        issues.append("No trials attempted")
+    if not state.data.get("final_answer") and not state.data.get("answer"):
+        issues.append("No final answer produced")
+    return issues
+
+def validate_mixture_of_agents(state):
+    """Mixture of Agents should aggregate proposer responses."""
+    issues = []
+    if not state.data.get("final_response") and not state.data.get("synthesized_response"):
+        issues.append("No final or synthesized response produced")
+    return issues
+
+def validate_meta_prompting(state):
+    """Meta-Prompting should decompose task and produce a final answer."""
+    issues = []
+    if not state.data.get("final_answer") and not state.data.get("integrated_answer"):
+        issues.append("No final or integrated answer produced")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -261,6 +297,9 @@ VALIDATORS = {
     "multi_agent_codegen": validate_multi_agent_codegen,
     "map_reduce": validate_map_reduce,
     "socratic_tutor": validate_socratic_tutor,
+    "reflexion": validate_reflexion,
+    "mixture_of_agents": validate_mixture_of_agents,
+    "meta_prompting": validate_meta_prompting,
 }
 
 # ── Timeout context manager ──
@@ -379,6 +418,7 @@ AGENT_NAMES = [
     "tree_of_thought", "plan_and_solve", "self_refine",
     "lats", "voyager", "multi_agent_codegen",
     "map_reduce", "socratic_tutor",
+    "reflexion", "mixture_of_agents", "meta_prompting",
 ]
 
 DEFAULT_COMPARE_MODELS = [
