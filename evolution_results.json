@@ -1,0 +1,428 @@
+[
+  {
+    "generation": 1,
+    "candidates": 5,
+    "results": [
+      {
+        "name": "base",
+        "status": "PASS",
+        "fitness": 160.1,
+        "llm_calls": 2,
+        "duration_ms": 31791,
+        "mutations": [],
+        "error": null,
+        "lineage": {
+          "parents": [],
+          "generation": 0,
+          "mutations": [],
+          "patterns": [
+            "critique_cycle"
+          ]
+        }
+      },
+      {
+        "name": "gen1_base_mut1",
+        "status": "PASS",
+        "fitness": 160.1,
+        "llm_calls": 2,
+        "duration_ms": 31842,
+        "mutations": [
+          "swap_process_order"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "swap_process_order"
+          ],
+          "patterns": [
+            "critique_cycle"
+          ]
+        }
+      },
+      {
+        "name": "gen1_base_mut2",
+        "status": "PASS",
+        "fitness": 166.5,
+        "llm_calls": 2,
+        "duration_ms": 18912,
+        "mutations": [
+          "swap_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "swap_pattern"
+          ],
+          "patterns": [
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen1_base_mut3",
+        "status": "PASS",
+        "fitness": 160.4,
+        "llm_calls": 2,
+        "duration_ms": 31156,
+        "mutations": [
+          "remove_process"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "remove_process"
+          ],
+          "patterns": [
+            "critique_cycle"
+          ]
+        }
+      },
+      {
+        "name": "gen1_base_mut4",
+        "status": "PASS",
+        "fitness": 162.7,
+        "llm_calls": 2,
+        "duration_ms": 26619,
+        "mutations": [
+          "insert_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "insert_pattern"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate"
+          ]
+        }
+      }
+    ],
+    "survivors": [
+      "gen1_base_mut2",
+      "gen1_base_mut4"
+    ],
+    "best_fitness": 166.5,
+    "best_name": "gen1_base_mut2"
+  },
+  {
+    "generation": 2,
+    "candidates": 6,
+    "results": [
+      {
+        "name": "gen1_base_mut2",
+        "status": "PASS",
+        "fitness": 168.3,
+        "llm_calls": 2,
+        "duration_ms": 15378,
+        "mutations": [],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "swap_pattern"
+          ],
+          "patterns": [
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen2_gen1_base_mut2_cx_gen1_base_mut4_1",
+        "status": "PASS",
+        "fitness": 165.1,
+        "llm_calls": 2,
+        "duration_ms": 21755,
+        "mutations": [
+          "crossover"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut2",
+            "gen1_base_mut4"
+          ],
+          "generation": 2,
+          "mutations": [
+            "crossover"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate",
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen2_gen1_base_mut2_mut2",
+        "status": "PASS",
+        "fitness": 164.5,
+        "llm_calls": 2,
+        "duration_ms": 23047,
+        "mutations": [
+          "add_review_step"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut2"
+          ],
+          "generation": 2,
+          "mutations": [
+            "add_review_step"
+          ],
+          "patterns": [
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen1_base_mut4",
+        "status": "PASS",
+        "fitness": 159.6,
+        "llm_calls": 2,
+        "duration_ms": 32745,
+        "mutations": [],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "insert_pattern"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate"
+          ]
+        }
+      },
+      {
+        "name": "gen2_gen1_base_mut4_mut1",
+        "status": "PASS",
+        "fitness": 161.0,
+        "llm_calls": 2,
+        "duration_ms": 29945,
+        "mutations": [
+          "remove_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut4"
+          ],
+          "generation": 2,
+          "mutations": [
+            "remove_pattern"
+          ],
+          "patterns": [
+            "critique_cycle"
+          ]
+        }
+      },
+      {
+        "name": "gen2_gen1_base_mut4_mut2",
+        "status": "PASS",
+        "fitness": 149.5,
+        "llm_calls": 2,
+        "duration_ms": 53022,
+        "mutations": [
+          "modify_prompt"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut4"
+          ],
+          "generation": 2,
+          "mutations": [
+            "modify_prompt"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate"
+          ]
+        }
+      }
+    ],
+    "survivors": [
+      "gen1_base_mut2",
+      "gen2_gen1_base_mut2_cx_gen1_base_mut4_1"
+    ],
+    "best_fitness": 168.3,
+    "best_name": "gen1_base_mut2"
+  },
+  {
+    "generation": 3,
+    "candidates": 6,
+    "results": [
+      {
+        "name": "gen1_base_mut2",
+        "status": "PASS",
+        "fitness": 164.6,
+        "llm_calls": 2,
+        "duration_ms": 22802,
+        "mutations": [],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "base"
+          ],
+          "generation": 1,
+          "mutations": [
+            "swap_pattern"
+          ],
+          "patterns": [
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen3_gen1_base_mut2_mut1",
+        "status": "PASS",
+        "fitness": 159.1,
+        "llm_calls": 2,
+        "duration_ms": 33844,
+        "mutations": [
+          "swap_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut2"
+          ],
+          "generation": 3,
+          "mutations": [
+            "swap_pattern"
+          ],
+          "patterns": [
+            "critique_cycle"
+          ]
+        }
+      },
+      {
+        "name": "gen3_gen1_base_mut2_mut2",
+        "status": "PASS",
+        "fitness": 136.0,
+        "llm_calls": 7,
+        "duration_ms": 153192,
+        "mutations": [
+          "insert_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut2"
+          ],
+          "generation": 3,
+          "mutations": [
+            "insert_pattern"
+          ],
+          "patterns": [
+            "debate",
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen2_gen1_base_mut2_cx_gen1_base_mut4_1",
+        "status": "PASS",
+        "fitness": 161.5,
+        "llm_calls": 2,
+        "duration_ms": 28993,
+        "mutations": [],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen1_base_mut2",
+            "gen1_base_mut4"
+          ],
+          "generation": 2,
+          "mutations": [
+            "crossover"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate",
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen3_gen2_gen1_base_mut2_cx_gen1_base_mut4_1_mut1",
+        "status": "PASS",
+        "fitness": 160.3,
+        "llm_calls": 2,
+        "duration_ms": 31421,
+        "mutations": [
+          "duplicate_with_variation"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen2_gen1_base_mut2_cx_gen1_base_mut4_1"
+          ],
+          "generation": 3,
+          "mutations": [
+            "duplicate_with_variation"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "debate",
+            "reflection"
+          ]
+        }
+      },
+      {
+        "name": "gen3_gen2_gen1_base_mut2_cx_gen1_base_mut4_1_mut2",
+        "status": "PASS",
+        "fitness": 160.1,
+        "llm_calls": 2,
+        "duration_ms": 31810,
+        "mutations": [
+          "remove_pattern"
+        ],
+        "error": null,
+        "lineage": {
+          "parents": [
+            "gen2_gen1_base_mut2_cx_gen1_base_mut4_1"
+          ],
+          "generation": 3,
+          "mutations": [
+            "remove_pattern"
+          ],
+          "patterns": [
+            "critique_cycle",
+            "reflection"
+          ]
+        }
+      }
+    ],
+    "survivors": [
+      "gen1_base_mut2",
+      "gen2_gen1_base_mut2_cx_gen1_base_mut4_1"
+    ],
+    "best_fitness": 164.6,
+    "best_name": "gen1_base_mut2"
+  }
+]
