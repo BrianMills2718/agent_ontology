@@ -100,20 +100,47 @@ The integration: Agent Ontology specs describe the patterns of artifact interact
 
 ## Current State
 
-- 22 agent specs covering major architectural patterns
+- 23 agent specs covering major architectural patterns (including self-improver)
 - Import from LangGraph and CrewAI source code (AST-based + LLM-augmented)
 - Code generation targeting 2 backends (custom executor, LangGraph)
-- **21/21 runnable specs pass automated tests** (+ 1 description-only spec)
+- **22/22 runnable specs pass automated tests** (+ 1 description-only spec)
 - OWL Description Logic bridge with 9 structural pattern classifiers, lossless round-trip
 - Evolutionary search with mutation, crossover, and benchmark fitness
 - Analysis suite: validate, lint, topology, complexity, similarity, patterns, coverage, verify, recommend
 - PyPI-ready package with 18 CLI entry points
-- 174/174 property tests, 8 round-trip tests
+- 182/182 property tests, 8 round-trip tests
+
+### Pillar 2 Proof: Self-Modifying Agent
+
+The `self_improver` agent (spec: `specs/self_improver.yaml`) demonstrates Pillar 2 in practice:
+
+1. **Reads** a target agent spec (any YAML spec from the library)
+2. **Analyzes** it using the toolchain: `lint_spec()` finds 8 warnings, `verify_spec()` finds 8 issues, `detect_patterns()` identifies the critique_cycle pattern
+3. **Diagnoses** via LLM: correctly identifies data plumbing as the primary weakness ("spec never persists or maps agent outputs into shared state")
+4. **Proposes** a structured mutation: `add_store` with specific implementation details
+5. **Mutates** via LLM: generates a complete modified YAML spec
+6. **Validates** symbolically: the validator catches that the LLM dropped the schemas section (9 errors)
+7. **Rejects** the invalid mutation and finalizes with the original spec
+
+This is the neurosymbolic feedback loop in action: neural creativity (LLM proposes improvements) constrained by symbolic validation (23 structural rules catch mistakes). The agent successfully analyzed a real spec, identified genuine architectural weaknesses, and the validation correctly caught a flawed mutation.
+
+### Pillar 3 Proof: Evolutionary Optimization
+
+The `evolve.py` tool runs evolutionary search over agent architectures:
+
+- **3 generations**, 17 total candidates evaluated on `self_refine` base spec
+- **Best variant**: `insert_pattern(reflexion)` achieved fitness 168.3 (+5.1% over base at 160.1)
+  - Survived all 3 generations as the fittest individual
+  - The reflexion pattern adds trial-evaluate-reflect loops, making the agent more robust
+- **Crossover worked**: combining reflexion + debate variants (from different parents) produced viable offspring at fitness 165.1
+- **Pattern diversity**: critique_cycle, reflection, and debate patterns all appeared in surviving candidates
+- **Failure modes were informative**: debate insertion scored only 136.0 because the debate agents received no topic (data plumbing — exactly the issue our analysis tools detect)
+- **Mutation types exercised**: swap_process_order, insert_pattern, remove_pattern, remove_process, change_model, modify_prompt, duplicate_with_variation
 
 ## Open Questions
 
-- What is the right granularity for specs in the ecology? Per-artifact? Per-agent-cluster? Per-firm?
-- How should specs reference ecology-specific primitives (kernel_state, kernel_actions, invoke, scrip)?
-- Can agents reliably self-modify via spec manipulation, or does the representation need to be simpler?
+- Can agents reliably self-modify via spec manipulation? Initial evidence: the self-improver correctly identifies weaknesses but LLMs struggle to produce valid large YAML mutations. Smaller, targeted mutations may work better.
 - What DSPy integration looks like — optimize prompts within spec constraints, or treat the whole spec as a DSPy program?
+- How to close the loop between evolution and real-world fitness? Current pass/fail + efficiency scoring is coarse. Benchmark-based evolution (GSM8K, HotpotQA) provides ground truth.
+- Should mutations be constrained to one operation at a time (add one store, change one gate condition) for higher validity rates?
 - How to measure "level of agency" in a subgraph of artifact interactions — is pattern detection sufficient, or do we need information-theoretic measures?
