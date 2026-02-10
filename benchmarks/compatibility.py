@@ -8,13 +8,14 @@ dataset examples into the agent's expected input schema.
 
 # Agent -> list of compatible datasets
 COMPATIBILITY = {
-    "react":          ["hotpotqa", "gsm8k"],
-    "rag":            ["hotpotqa"],
-    "plan_and_solve":           ["gsm8k"],
-    "self_refine":              ["gsm8k"],
-    "tree_of_thought":          ["gsm8k"],
-    "lats":           ["hotpotqa", "gsm8k"],
-    "reflexion":                ["gsm8k"],
+    "react":             ["hotpotqa", "gsm8k", "arc"],
+    "rag":               ["hotpotqa"],
+    "plan_and_solve":    ["gsm8k", "arc"],
+    "self_refine":       ["gsm8k", "humaneval"],
+    "tree_of_thought":   ["gsm8k", "arc"],
+    "lats":              ["hotpotqa", "gsm8k"],
+    "reflexion":         ["gsm8k"],
+    "multi_agent_codegen": ["humaneval"],
 }
 
 # Dataset -> list of compatible agents (derived from COMPATIBILITY)
@@ -65,6 +66,12 @@ def format_input(agent_name, example, dataset_name):
 
     elif agent_name == "reflexion":
         return {"task": question}
+
+    elif agent_name == "multi_agent_codegen":
+        return {
+            "project_description": question,
+            "language": "Python",
+        }
 
     else:
         # Generic fallback

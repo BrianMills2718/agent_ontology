@@ -506,6 +506,7 @@ def run_suite_benchmark(agent_name, example, dataset_name, dataset_meta,
     from benchmarks.compatibility import format_input
     from benchmarks.scoring import (
         extract_answer, score_hotpotqa, score_gsm8k,
+        score_arc, score_humaneval, extract_code,
     )
 
     module_name = f"agents.{agent_name}_agent"
@@ -587,6 +588,10 @@ def run_suite_benchmark(agent_name, example, dataset_name, dataset_meta,
             result["scores"] = score_hotpotqa(predicted, str(expected))
         elif dataset_name == "gsm8k":
             result["scores"] = score_gsm8k(predicted, expected)
+        elif dataset_name == "arc":
+            result["scores"] = score_arc(predicted, expected)
+        elif dataset_name == "humaneval":
+            result["scores"] = score_humaneval(predicted, example)
         else:
             result["scores"] = {"em": 1.0 if str(expected).lower() in predicted.lower() else 0.0}
 
@@ -664,9 +669,12 @@ def run_suite(dataset_name, agent_filter=None, n_runs=1, max_examples=None,
                     if status == "DONE":
                         em = result["scores"].get("em", 0)
                         f1 = result["scores"].get("f1")
+                        pass1 = result["scores"].get("pass_at_1")
                         score_str = f"EM={em:.0f}"
                         if f1 is not None:
                             score_str += f" F1={f1:.2f}"
+                        if pass1 is not None:
+                            score_str = f"pass@1={pass1:.0f}"
                         print(f" {score_str} ({result['llm_calls']} calls, {format_duration(result['duration_s'])})")
                     elif status == "TIMEOUT":
                         print(f" TIMEOUT")

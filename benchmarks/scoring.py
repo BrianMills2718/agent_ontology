@@ -160,3 +160,137 @@ def score_gsm8k(predicted, expected_number):
     return {
         "em": exact_match_number(predicted, expected_number),
     }
+
+
+def extract_choice_letter(text):
+    """Extract a multiple-choice answer letter (A-D) from text.
+
+    Tries patterns in order:
+      1. "the answer is X" / "answer: X"
+      2. Standalone letter at end of text
+      3. First letter followed by ) in the text
+      4. First standalone A/B/C/D
+    """
+    text = str(text).strip()
+
+    # Pattern 1: "the answer is X" / "answer: X" / "answer is X"
+    m = re.search(r'(?:the\s+)?answer\s*(?:is|:|=)\s*([A-Da-d])\b', text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+
+    # Pattern 2: Standalone letter at end
+    m = re.search(r'\b([A-Da-d])\s*[.)]*\s*$', text)
+    if m:
+        return m.group(1).upper()
+
+    # Pattern 3: "X)" pattern (choice format)
+    m = re.search(r'\b([A-Da-d])\)', text)
+    if m:
+        return m.group(1).upper()
+
+    # Pattern 4: First standalone A/B/C/D
+    m = re.search(r'\b([A-D])\b', text)
+    if m:
+        return m.group(1)
+
+    return None
+
+
+def exact_match_choice(predicted, expected_letter):
+    """Extract choice letter from predicted text, compare to expected.
+    Returns 0.0 or 1.0."""
+    pred_letter = extract_choice_letter(predicted)
+    if pred_letter is None:
+        return 0.0
+    return 1.0 if pred_letter.upper() == str(expected_letter).upper() else 0.0
+
+
+def score_arc(predicted, expected_letter):
+    """Score an ARC prediction. Returns dict with em."""
+    return {
+        "em": exact_match_choice(predicted, expected_letter),
+    }
+
+
+def extract_code(text):
+    """Extract Python code from agent output.
+
+    Tries patterns:
+      1. Code block (```python ... ```)
+      2. Code block (``` ... ```)
+      3. def function_name(...): pattern
+      4. Raw text as code
+    """
+    text = str(text).strip()
+
+    # Pattern 1: ```python block
+    m = re.search(r'```python\s*\n(.*?)```', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Pattern 2: ``` block
+    m = re.search(r'```\s*\n(.*?)```', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Pattern 3: starts with def
+    m = re.search(r'(def\s+\w+\(.*?\).*)', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    return text
+
+
+def execute_code_with_tests(code_str, test_cases_str, timeout=5):
+    """Execute generated code and run test cases.
+
+    Returns dict with:
+      - passed: bool
+      - error: str or None
+      - tests_run: int
+      - tests_passed: int
+    """
+    import subprocess
+    import tempfile
+    import os
+
+    # Build the test script
+    script = f"{code_str}\n\n{test_cases_str}\nprint('ALL_TESTS_PASSED')\n"
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(script)
+        tmp_path = f.name
+
+    try:
+        result = subprocess.run(
+            ['python3', tmp_path],
+            capture_output=True, text=True, timeout=timeout
+        )
+        passed = 'ALL_TESTS_PASSED' in result.stdout
+        error = result.stderr.strip() if result.returncode != 0 else None
+        # Count tests
+        tests = [l for l in test_cases_str.strip().split('\n') if l.strip().startswith('assert')]
+        return {
+            "passed": passed,
+            "error": error,
+            "tests_run": len(tests),
+            "tests_passed": len(tests) if passed else 0,
+        }
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "error": "timeout", "tests_run": 0, "tests_passed": 0}
+    except Exception as e:
+        return {"passed": False, "error": str(e), "tests_run": 0, "tests_passed": 0}
+    finally:
+        os.unlink(tmp_path)
+
+
+def score_humaneval(predicted, example):
+    """Score a HumanEval prediction. Returns dict with pass_at_1."""
+    code = extract_code(predicted)
+    test_cases = example.get("test_cases", "")
+    if not test_cases:
+        return {"pass_at_1": 0.0}
+    result = execute_code_with_tests(code, test_cases)
+    return {
+        "pass_at_1": 1.0 if result["passed"] else 0.0,
+    }
