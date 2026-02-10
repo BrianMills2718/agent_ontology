@@ -105,7 +105,10 @@ python3 compose.py compose_specs/react_refine.yaml -o specs/react_refine.yaml --
 # 26. Detect patterns in existing specs
 python3 -c "from patterns import detect_patterns; import yaml; print(detect_patterns(yaml.safe_load(open('specs/react.yaml'))))"
 
-# 27. Run benchmark suites
+# 27. Import a LangGraph agent into an OpenClaw spec
+python3 import_langgraph.py agents_lg/react_agent_lg.py -o specs/imported_react.yaml --validate
+
+# 28. Run benchmark suites
 python3 benchmark.py --suite gsm8k --agent self_refine --examples 3
 python3 benchmark.py --suite hotpotqa --agent react --examples 5
 python3 benchmark.py --suite arc --agent react --examples 5
@@ -294,6 +297,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
 | `test_properties.py` | Property-based structural tests (174+) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
+| `import_langgraph.py` | Import LangGraph StateGraph → YAML spec | `python3 import_langgraph.py agent.py -o spec.yaml` |
 | `ontology_owl.py` | OWL/DL pattern classification (experimental) | `python3 ontology_owl.py` |
 | `ontology_rdf.py` | RDF export + semantic pattern queries (experimental) | `python3 ontology_rdf.py` |
 
@@ -415,6 +419,7 @@ comparative_report.py   # Cross-spec comparative analysis
 test_properties.py      # Property-based structural tests (174+ tests)
 patterns.py             # Pattern library (7 reusable architectural patterns)
 compose.py              # Pattern composition operator
+import_langgraph.py     # Import LangGraph StateGraph Python files → YAML specs
 ontology_owl.py         # OWL/DL pattern classification (experimental)
 ontology_rdf.py         # RDF export + semantic pattern queries (experimental)
 gaps.md                 # Ontology expressiveness gap analysis

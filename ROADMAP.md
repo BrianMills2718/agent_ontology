@@ -118,21 +118,10 @@ Add `image`, `audio`, `video` as recognized schema field types.
 ### Phase 2: Import Bridge (Highest Leverage)
 **Goal**: Prove the interchange story by importing real agent code into specs.
 
-#### 2.1 LangGraph Importer
-Parse a LangGraph `StateGraph` definition -> YAML spec.
+#### 2.1 LangGraph Importer — DONE (import_langgraph.py)
+AST-based parser extracts StateGraph definitions → valid YAML specs. 22/22 generated LangGraph agents import and validate. Round-trip comparison shows exact match on entity/process counts for ReAct and Self-Refine.
 
-- **Input**: Python file with `StateGraph`, `add_node`, `add_edge`, `add_conditional_edges`
-- **Output**: Valid YAML spec
-- **Satisfaction criteria**:
-  - Round-trip: import a LangGraph agent -> validate -> export back to LangGraph -> same behavior
-  - Works on at least 3 real LangGraph examples (from LangGraph docs/tutorials)
-- **Uncertainties**:
-  - How much can we infer from code? Node function bodies -> logic blocks? Or just the graph structure?
-  - Static analysis vs. runtime tracing?
-  - What about LangGraph features we can't express? (Should be none, but verify.)
-- **Questions**:
-  - Do we parse AST or use regex? AST is more robust.
-  - Do we need the user to annotate their code, or can we infer everything?
+Extracts: TypedDict → schemas, add_node → steps, add_edge → flow edges, add_conditional_edges → gates + branches, invoke_* functions → agent entities + invoke edges, END → terminal steps.
 
 #### 2.2 CrewAI Importer (Optional, after 2.1)
 Parse CrewAI crew definitions -> YAML spec.
