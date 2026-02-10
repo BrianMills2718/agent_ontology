@@ -294,6 +294,8 @@ Full type system: `ONTOLOGY.yaml`
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
 | `test_properties.py` | Property-based structural tests (174+) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
+| `ontology_owl.py` | OWL/DL pattern classification (experimental) | `python3 ontology_owl.py` |
+| `ontology_rdf.py` | RDF export + semantic pattern queries (experimental) | `python3 ontology_rdf.py` |
 
 ## Architecture
 
@@ -359,17 +361,17 @@ OpenClaw uses a **reified hypergraph** constrained by an **ontology**:
 - **Reified hypergraph**: Any relationship can be a node, any node can participate in any number of relationships. This means templates, dynamic topology, conditional wiring, self-modification — all expressible.
 - **Ontology**: Constrains the hypergraph so code generators know what to expect. Defines types, required fields, and validation rules.
 
-See `VISION.md` for the full rationale and `ONTOLOGY.yaml` for the complete type system.
+See `ROADMAP.md` for the long-term vision (formal ontology, neuro-symbolic reasoning) and `ONTOLOGY.yaml` for the complete type system.
 
 ## Requirements
 
 - Python 3.8+
-- `pyyaml` (`pip install pyyaml`)
-- `google-genai` (for running generated agents with Gemini): `pip install google-genai`
-- `openai` (for specgen and OpenAI model agents): `pip install openai`
-- `anthropic` (optional, for Claude model agents): `pip install anthropic`
-- `langgraph`, `langchain-core`, `langchain-google-genai`, `langchain-openai`, `langchain-anthropic` (optional, for LangGraph backend agents)
 - Modern browser (for spec-viewer)
+
+```bash
+pip install -r requirements.txt           # Core + LLM providers + LangGraph
+pip install -r requirements-dev.txt       # Adds OWL/RDF experimental tools
+```
 
 API keys go in `.env.local`:
 ```bash
@@ -389,6 +391,8 @@ test_descriptions/      # Natural language descriptions for specgen testing
 benchmarks/             # Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) and scoring
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
+requirements.txt        # Python dependencies
+requirements-dev.txt    # Development/research dependencies
 validate.py             # Spec validator (25+ rules)
 instantiate.py          # Code generator (custom + LangGraph backends)
 specgen.py              # Description-to-spec pipeline (pattern-aware)
@@ -409,7 +413,10 @@ comparative_report.py   # Cross-spec comparative analysis
 test_properties.py      # Property-based structural tests (174+ tests)
 patterns.py             # Pattern library (7 reusable architectural patterns)
 compose.py              # Pattern composition operator
+ontology_owl.py         # OWL/DL pattern classification (experimental)
+ontology_rdf.py         # RDF export + semantic pattern queries (experimental)
 gaps.md                 # Ontology expressiveness gap analysis
+ROADMAP.md              # Strategic roadmap and long-term vision
 .github/workflows/      # CI: validate, lint, syntax-check, smoke-test
 mutate.py               # Spec mutation engine (field + pattern-level operators)
 evolve.py               # Evolutionary search with crossover + benchmark fitness

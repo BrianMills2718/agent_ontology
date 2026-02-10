@@ -1,7 +1,7 @@
 # OpenClaw Roadmap
 
 **Date:** 2026-02-09
-**Current state:** v0.2 ontology, 22 specs, 27 tools, 2 code gen backends
+**Current state:** v0.2 ontology, 22 specs, 25 tools, 2 code gen backends
 
 ---
 
