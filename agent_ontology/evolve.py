@@ -29,10 +29,9 @@ import tempfile
 import importlib
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
 
 import mutate
-import validate as validator_module
+from . import validate as validator_module
 
 
 def validate_spec_text(yaml_text):

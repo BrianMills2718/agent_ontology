@@ -709,7 +709,7 @@ def main():
     # Validate
     if args.validate:
         try:
-            from validate import validate_spec, load_ontology
+            from .validate import validate_spec, load_ontology
             ontology = load_ontology()
             errors, warnings = validate_spec(spec, ontology)
             if errors:

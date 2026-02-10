@@ -98,7 +98,7 @@ def _build_pattern_context(detected_patterns):
     if not detected_patterns:
         return ""
     try:
-        from patterns import get_pattern, pattern_info
+        from .patterns import get_pattern, pattern_info
     except ImportError:
         return ""
 
@@ -388,7 +388,7 @@ Pay special attention to:
     if detected_patterns:
         try:
             import yaml
-            from patterns import detect_patterns
+            from .patterns import detect_patterns
             spec = yaml.safe_load(yaml_text)
             if spec:
                 found = detect_patterns(spec)

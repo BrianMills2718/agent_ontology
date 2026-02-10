@@ -837,30 +837,30 @@
 <body>
     <div id="canvas-wrap">
         <div id="header">
-            <h1>Open<span>Claw</span> Spec Viewer</h1>
+            <h1>Agent <span>Ontology</span> Spec Viewer</h1>
             <select id="spec-select">
-                <option value="specs/claude-code.yaml">Claude Code</option>
-                <option value="specs/babyagi.yaml">BabyAGI</option>
-                <option value="specs/react.yaml">ReAct</option>
-                <option value="specs/rag.yaml">RAG</option>
-                <option value="specs/autogpt.yaml">AutoGPT</option>
-                <option value="specs/crew.yaml">CrewAI</option>
-                <option value="specs/code_reviewer.yaml">Code Reviewer</option>
-                <option value="specs/babyagi_autogen.yaml">BabyAGI (auto)</option>
-                <option value="specs/debate.yaml">Debate</option>
-                <option value="specs/tree_of_thought.yaml">Tree of Thought</option>
-                <option value="specs/plan_and_solve.yaml">Plan and Solve</option>
-                <option value="specs/self_refine.yaml">Self Refine</option>
-                <option value="specs/voyager.yaml">Voyager</option>
-                <option value="specs/lats.yaml">LATS</option>
-                <option value="specs/multi_agent_codegen.yaml">Multi-Agent Codegen</option>
-                <option value="specs/map_reduce.yaml">MapReduce</option>
-                <option value="specs/socratic_tutor.yaml">Socratic Tutor</option>
-                <option value="specs/reflexion.yaml">Reflexion</option>
-                <option value="specs/mixture_of_agents.yaml">Mixture of Agents</option>
-                <option value="specs/meta_prompting.yaml">Meta Prompting</option>
-                <option value="specs/customer_support_swarm.yaml">Customer Support Swarm</option>
-                <option value="specs/software_team.yaml">Software Team</option>
+                <option value="agent_ontology/specs/claude-code.yaml">Claude Code</option>
+                <option value="agent_ontology/specs/babyagi.yaml">BabyAGI</option>
+                <option value="agent_ontology/specs/react.yaml">ReAct</option>
+                <option value="agent_ontology/specs/rag.yaml">RAG</option>
+                <option value="agent_ontology/specs/autogpt.yaml">AutoGPT</option>
+                <option value="agent_ontology/specs/crew.yaml">CrewAI</option>
+                <option value="agent_ontology/specs/code_reviewer.yaml">Code Reviewer</option>
+                <option value="agent_ontology/specs/babyagi_autogen.yaml">BabyAGI (auto)</option>
+                <option value="agent_ontology/specs/debate.yaml">Debate</option>
+                <option value="agent_ontology/specs/tree_of_thought.yaml">Tree of Thought</option>
+                <option value="agent_ontology/specs/plan_and_solve.yaml">Plan and Solve</option>
+                <option value="agent_ontology/specs/self_refine.yaml">Self Refine</option>
+                <option value="agent_ontology/specs/voyager.yaml">Voyager</option>
+                <option value="agent_ontology/specs/lats.yaml">LATS</option>
+                <option value="agent_ontology/specs/multi_agent_codegen.yaml">Multi-Agent Codegen</option>
+                <option value="agent_ontology/specs/map_reduce.yaml">MapReduce</option>
+                <option value="agent_ontology/specs/socratic_tutor.yaml">Socratic Tutor</option>
+                <option value="agent_ontology/specs/reflexion.yaml">Reflexion</option>
+                <option value="agent_ontology/specs/mixture_of_agents.yaml">Mixture of Agents</option>
+                <option value="agent_ontology/specs/meta_prompting.yaml">Meta Prompting</option>
+                <option value="agent_ontology/specs/customer_support_swarm.yaml">Customer Support Swarm</option>
+                <option value="agent_ontology/specs/software_team.yaml">Software Team</option>
             </select>
             <div class="tab-bar">
                 <button class="tab-btn active" data-view="graph">Graph</button>
@@ -3087,14 +3087,14 @@ function clearTraceData() {
 // =====================================================================
 
 const ALL_SPEC_PATHS = [
-    'specs/claude-code.yaml', 'specs/babyagi.yaml', 'specs/react.yaml',
-    'specs/rag.yaml', 'specs/autogpt.yaml', 'specs/crew.yaml',
-    'specs/code_reviewer.yaml', 'specs/babyagi_autogen.yaml', 'specs/debate.yaml',
-    'specs/tree_of_thought.yaml', 'specs/plan_and_solve.yaml', 'specs/self_refine.yaml',
-    'specs/voyager.yaml', 'specs/lats.yaml', 'specs/multi_agent_codegen.yaml',
-    'specs/map_reduce.yaml', 'specs/socratic_tutor.yaml', 'specs/reflexion.yaml',
-    'specs/mixture_of_agents.yaml', 'specs/meta_prompting.yaml',
-    'specs/customer_support_swarm.yaml', 'specs/software_team.yaml'
+    'agent_ontology/specs/claude-code.yaml', 'agent_ontology/specs/babyagi.yaml', 'agent_ontology/specs/react.yaml',
+    'agent_ontology/specs/rag.yaml', 'agent_ontology/specs/autogpt.yaml', 'agent_ontology/specs/crew.yaml',
+    'agent_ontology/specs/code_reviewer.yaml', 'agent_ontology/specs/babyagi_autogen.yaml', 'agent_ontology/specs/debate.yaml',
+    'agent_ontology/specs/tree_of_thought.yaml', 'agent_ontology/specs/plan_and_solve.yaml', 'agent_ontology/specs/self_refine.yaml',
+    'agent_ontology/specs/voyager.yaml', 'agent_ontology/specs/lats.yaml', 'agent_ontology/specs/multi_agent_codegen.yaml',
+    'agent_ontology/specs/map_reduce.yaml', 'agent_ontology/specs/socratic_tutor.yaml', 'agent_ontology/specs/reflexion.yaml',
+    'agent_ontology/specs/mixture_of_agents.yaml', 'agent_ontology/specs/meta_prompting.yaml',
+    'agent_ontology/specs/customer_support_swarm.yaml', 'agent_ontology/specs/software_team.yaml'
 ];
 let allSpecs = null;
 
@@ -3275,7 +3275,7 @@ document.getElementById('trace-file-input').addEventListener('change', (ev) => {
 });
 document.getElementById('trace-clear-btn').addEventListener('click', clearTraceData);
 
-loadSpec('specs/claude-code.yaml');
+loadSpec('agent_ontology/specs/claude-code.yaml');
 </script>
 </body>
 </html>

@@ -817,7 +817,7 @@ def swap_pattern(spec):
 
     # Namespace and insert the replacement
     prefix = target_prefix or replacement_name[:3]
-    from compose import _namespace_pattern
+    from .compose import _namespace_pattern
     ns_replacement = _namespace_pattern(replacement, prefix)
 
     spec["processes"].extend(ns_replacement["processes"])
@@ -879,7 +879,7 @@ def insert_pattern(spec):
 
     # Namespace it
     prefix = f"ins_{_short_id()}"
-    from compose import _namespace_pattern
+    from .compose import _namespace_pattern
     ns_pattern = _namespace_pattern(pattern, prefix)
 
     # Break the flow edge: from -> pattern_entry ... pattern_exits -> to
@@ -1032,7 +1032,7 @@ def crossover(spec_a, spec_b):
         # Get the source pattern from A's spec subgraph
         donor_pattern = pat_mod.get_pattern(donor_pname)
         prefix = f"cx_{_short_id()}"
-        from compose import _namespace_pattern
+        from .compose import _namespace_pattern
         ns_pattern = _namespace_pattern(donor_pattern, prefix)
 
         # Find a flow edge in B to insert at
@@ -1117,7 +1117,7 @@ def crossover(spec_a, spec_b):
 
     # Insert A's version
     prefix = b_prefix or f"cx_{_short_id()}"
-    from compose import _namespace_pattern
+    from .compose import _namespace_pattern
     ns_pattern = _namespace_pattern(donor_pattern, prefix)
 
     result["processes"].extend(ns_pattern["processes"])

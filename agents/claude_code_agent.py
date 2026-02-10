@@ -574,7 +574,20 @@ def invoke_sub_agent(user_message, output_schema=None):
 
 def tool_bash(input_text):
     """Bash: """
-    return f"[tool Bash not implemented for input: {input_text}]"
+    import subprocess
+    try:
+        result = subprocess.run(
+            input_text, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout
+        if result.returncode != 0:
+            output += f"\nSTDERR: {result.stderr}" if result.stderr else ""
+            output += f"\nExit code: {result.returncode}"
+        return output or "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Command timed out (30s)"
+    except Exception as e:
+        return f"Shell error: {e}"
 
 
 def tool_read(input_text):
@@ -642,7 +655,45 @@ def tool_notebook_edit(input_text):
 
 def tool_mcp_tools(input_text):
     """MCP Tools: """
-    return f"[tool MCP Tools not implemented for input: {input_text}]"
+    """Dispatch to MCP server tools."""
+    import subprocess
+    import json as _json
+
+    # Parse input: expect JSON with {server, tool, args} or plain text
+    try:
+        req = _json.loads(input_text) if input_text.strip().startswith("{") else {"tool": input_text}
+    except _json.JSONDecodeError:
+        req = {"tool": input_text}
+
+    server = req.get("server", "puppeteer")
+    tool_name = req.get("tool", "")
+    tool_args = req.get("args", {})
+
+    # MCP JSON-RPC call via stdio transport
+    rpc_request = _json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": tool_args}
+    })
+
+    mcp_cmd = os.environ.get(f"MCP_SERVER_{server.upper()}", f"npx -y @modelcontextprotocol/server-{server}")
+    try:
+        result = subprocess.run(
+            mcp_cmd.split(),
+            input=rpc_request,
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            resp = _json.loads(result.stdout)
+            return _json.dumps(resp.get("result", resp), indent=2)
+        return f"MCP call to {server}/{tool_name} returned: {result.stderr or result.stdout}"
+    except FileNotFoundError:
+        return f"MCP server '{server}' not found. Set MCP_SERVER_{server.upper()} env var or install the server."
+    except subprocess.TimeoutExpired:
+        return f"MCP call to {server}/{tool_name} timed out (30s)"
+    except Exception as e:
+        return f"MCP error: {e}"
 
 
 

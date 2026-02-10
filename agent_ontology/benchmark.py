@@ -832,9 +832,10 @@ Examples:
     )
     args = parser.parse_args()
 
-    # Ensure we can import agents
-    if PROJECT_ROOT not in sys.path:
-        sys.path.insert(0, PROJECT_ROOT)
+    # Ensure we can import agents from project root
+    _repo_root = os.path.dirname(PROJECT_ROOT)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
 
     # ── Suite mode ──
     if args.suite:

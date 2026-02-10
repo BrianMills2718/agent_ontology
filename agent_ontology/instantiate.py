@@ -20,7 +20,7 @@ def load_yaml(path):
         return yaml.safe_load(f)
 
 
-def generate_agent(spec):
+def generate_agent(spec, persistent_stores=False):
     """Generate a complete Python agent script from a spec."""
     name = spec["name"]
     entities = spec.get("entities", [])
@@ -392,13 +392,22 @@ def generate_agent(spec):
         has_vector = any(s.get("store_type") == "vector" for s in stores)
         if has_vector:
             w('')
-            w('# ── ChromaDB Vector Store (falls back to in-memory list) ──')
-            w('try:')
-            w('    import chromadb')
-            w('    _chroma_client = chromadb.Client()')
-            w('    _USE_CHROMA = True')
-            w('except ImportError:')
-            w('    _USE_CHROMA = False')
+            if persistent_stores:
+                w('# ── ChromaDB Vector Store (persistent) ──')
+                w('try:')
+                w('    import chromadb')
+                w('    _chroma_client = chromadb.PersistentClient(path=os.path.join(os.path.dirname(__file__), ".store_data", "chroma"))')
+                w('    _USE_CHROMA = True')
+                w('except ImportError:')
+                w('    _USE_CHROMA = False')
+            else:
+                w('# ── ChromaDB Vector Store (falls back to in-memory list) ──')
+                w('try:')
+                w('    import chromadb')
+                w('    _chroma_client = chromadb.Client()')
+                w('    _USE_CHROMA = True')
+                w('except ImportError:')
+                w('    _USE_CHROMA = False')
             w('')
             w('')
             w('class _ChromaVectorStore:')
@@ -448,6 +457,43 @@ def generate_agent(spec):
             w('')
             w('')
 
+        # Emit SQLite KV store helper if persistent and any kv/blackboard stores
+        has_kv = any(s.get("store_type", "kv") in ("kv", "blackboard") for s in stores)
+        if persistent_stores and has_kv:
+            w('')
+            w('# ── SQLite Key-Value Store (persistent) ──')
+            w('import sqlite3 as _sqlite3')
+            w('')
+            w('')
+            w('class _SQLiteKVStore:')
+            w('    """Key-value store backed by SQLite."""')
+            w('    def __init__(self, name):')
+            w('        db_dir = os.path.join(os.path.dirname(__file__), ".store_data")')
+            w('        os.makedirs(db_dir, exist_ok=True)')
+            w('        self._conn = _sqlite3.connect(os.path.join(db_dir, f"{name}.db"))')
+            w('        self._conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")')
+            w('        self._conn.commit()')
+            w('        print(f"    [SQLite] store \'{name}\' ready")')
+            w('')
+            w('    def read(self, key=None):')
+            w('        import json as _json')
+            w('        if key is None:')
+            w('            rows = self._conn.execute("SELECT key, value FROM kv").fetchall()')
+            w('            return {k: _json.loads(v) for k, v in rows}')
+            w('        row = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()')
+            w('        return _json.loads(row[0]) if row else None')
+            w('')
+            w('    def write(self, value, key=None):')
+            w('        import json as _json')
+            w('        if key is not None:')
+            w('            self._conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, _json.dumps(value)))')
+            w('        else:')
+            w('            # Store as single value under "_default" key')
+            w('            self._conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", ("_default", _json.dumps(value)))')
+            w('        self._conn.commit()')
+            w('')
+            w('')
+
         w('')
         for s in stores:
             sid = s["id"]
@@ -459,11 +505,24 @@ def generate_agent(spec):
             if stype == "vector":
                 w(f'        self._store = _ChromaVectorStore("{_safe_name(sid)}")')
             elif stype == "file":
-                path = s.get("config", {}).get("path", f"/tmp/{sid}.jsonl")
-                w(f'        self.path = os.path.expanduser("{path}")')
-                w(f'        self.data = []')
+                if persistent_stores:
+                    path = s.get("config", {}).get("path", f".store_data/{sid}.jsonl")
+                    w(f'        self.path = os.path.join(os.path.dirname(__file__), "{path}")')
+                    w(f'        os.makedirs(os.path.dirname(self.path), exist_ok=True)')
+                    w(f'        self.data = []')
+                    w(f'        if os.path.exists(self.path):')
+                    w(f'            import json as _json')
+                    w(f'            with open(self.path) as f:')
+                    w(f'                self.data = [_json.loads(line) for line in f if line.strip()]')
+                    w(f'            print(f"    [File] loaded {{len(self.data)}} entries from {{self.path}}")')
+                else:
+                    path = s.get("config", {}).get("path", f"/tmp/{sid}.jsonl")
+                    w(f'        self.path = os.path.expanduser("{path}")')
+                    w(f'        self.data = []')
             elif stype == "queue":
                 w(f'        self.queue = []')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        self._store = _SQLiteKVStore("{_safe_name(sid)}")')
             else:
                 w(f'        self.data = {{}}')
             w('')
@@ -472,6 +531,8 @@ def generate_agent(spec):
                 w(f'        return self._store.read(query=key)')
             elif stype == "queue":
                 w(f'        return self.queue[0] if self.queue else None')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        return self._store.read(key)')
             else:
                 w(f'        return self.data if key is None else self.data.get(key)')
             w('')
@@ -482,6 +543,12 @@ def generate_agent(spec):
                 w(f'        self.queue.append(value)')
             elif stype == "file":
                 w(f'        self.data.append(value)')
+                if persistent_stores:
+                    w(f'        import json as _json')
+                    w(f'        with open(self.path, "a") as f:')
+                    w(f'            f.write(_json.dumps(value) + "\\n")')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        self._store.write(value, key=key)')
             else:
                 w(f'        if key is not None:')
                 w(f'            self.data[key] = value')
@@ -1194,6 +1261,66 @@ def _generate_tool_function(tool, w):
         w('    except Exception as e:')
         w('        return f"Calculation error: {e}"')
 
+    elif tool.get("tool_type") == "mcp":
+        # MCP (Model Context Protocol) tool client
+        servers = tool.get("config", {}).get("servers", [])
+        w('    """Dispatch to MCP server tools."""')
+        w('    import subprocess')
+        w('    import json as _json')
+        w('')
+        w('    # Parse input: expect JSON with {server, tool, args} or plain text')
+        w('    try:')
+        w('        req = _json.loads(input_text) if input_text.strip().startswith("{") else {"tool": input_text}')
+        w('    except _json.JSONDecodeError:')
+        w('        req = {"tool": input_text}')
+        w('')
+        w(f'    server = req.get("server", "{servers[0] if servers else "default"}")')
+        w('    tool_name = req.get("tool", "")')
+        w('    tool_args = req.get("args", {})')
+        w('')
+        w('    # MCP JSON-RPC call via stdio transport')
+        w('    rpc_request = _json.dumps({')
+        w('        "jsonrpc": "2.0",')
+        w('        "id": 1,')
+        w('        "method": "tools/call",')
+        w('        "params": {"name": tool_name, "arguments": tool_args}')
+        w('    })')
+        w('')
+        w('    mcp_cmd = os.environ.get(f"MCP_SERVER_{server.upper()}", f"npx -y @modelcontextprotocol/server-{server}")')
+        w('    try:')
+        w('        result = subprocess.run(')
+        w('            mcp_cmd.split(),')
+        w('            input=rpc_request,')
+        w('            capture_output=True, text=True, timeout=30')
+        w('        )')
+        w('        if result.returncode == 0 and result.stdout.strip():')
+        w('            resp = _json.loads(result.stdout)')
+        w('            return _json.dumps(resp.get("result", resp), indent=2)')
+        w('        return f"MCP call to {server}/{tool_name} returned: {result.stderr or result.stdout}"')
+        w('    except FileNotFoundError:')
+        w('        return f"MCP server \'{server}\' not found. Set MCP_SERVER_{server.upper()} env var or install the server."')
+        w('    except subprocess.TimeoutExpired:')
+        w('        return f"MCP call to {server}/{tool_name} timed out (30s)"')
+        w('    except Exception as e:')
+        w('        return f"MCP error: {e}"')
+
+    elif tool.get("tool_type") == "shell":
+        # Shell command execution
+        w('    import subprocess')
+        w('    try:')
+        w('        result = subprocess.run(')
+        w('            input_text, shell=True, capture_output=True, text=True, timeout=30')
+        w('        )')
+        w('        output = result.stdout')
+        w('        if result.returncode != 0:')
+        w('            output += f"\\nSTDERR: {result.stderr}" if result.stderr else ""')
+        w('            output += f"\\nExit code: {result.returncode}"')
+        w('        return output or "(no output)"')
+        w('    except subprocess.TimeoutExpired:')
+        w('        return "Command timed out (30s)"')
+        w('    except Exception as e:')
+        w('        return f"Shell error: {e}"')
+
     else:
         # Generic stub for unknown tools
         w(f'    return f"[tool {label} not implemented for input: {{input_text}}]"')
@@ -1256,7 +1383,7 @@ def _camel_to_snake(name):
     return s.lower()
 
 
-def generate_langgraph_agent(spec):
+def generate_langgraph_agent(spec, persistent_stores=False):
     """Generate a LangGraph-based Python agent script from a spec.
 
     Parallel to generate_agent() but outputs code using LangGraph's StateGraph
@@ -1682,12 +1809,20 @@ def generate_langgraph_agent(spec):
         has_vector = any(s.get("store_type") == "vector" for s in stores)
         if has_vector:
             w('')
-            w('try:')
-            w('    import chromadb')
-            w('    _chroma_client = chromadb.Client()')
-            w('    _USE_CHROMA = True')
-            w('except ImportError:')
-            w('    _USE_CHROMA = False')
+            if persistent_stores:
+                w('try:')
+                w('    import chromadb')
+                w('    _chroma_client = chromadb.PersistentClient(path=os.path.join(os.path.dirname(__file__), ".store_data", "chroma"))')
+                w('    _USE_CHROMA = True')
+                w('except ImportError:')
+                w('    _USE_CHROMA = False')
+            else:
+                w('try:')
+                w('    import chromadb')
+                w('    _chroma_client = chromadb.Client()')
+                w('    _USE_CHROMA = True')
+                w('except ImportError:')
+                w('    _USE_CHROMA = False')
             w('')
             w('')
             w('class _ChromaVectorStore:')
@@ -1731,6 +1866,38 @@ def generate_langgraph_agent(spec):
             w('            self._fallback.append(value if isinstance(value, dict) else {"text": text, "metadata": clean_meta})')
             w('')
 
+        # Emit SQLite KV helper for persistent LangGraph stores
+        has_kv = any(s.get("store_type", "kv") in ("kv", "blackboard") for s in stores)
+        if persistent_stores and has_kv:
+            w('')
+            w('import sqlite3 as _sqlite3')
+            w('')
+            w('')
+            w('class _SQLiteKVStore:')
+            w('    def __init__(self, name):')
+            w('        db_dir = os.path.join(os.path.dirname(__file__), ".store_data")')
+            w('        os.makedirs(db_dir, exist_ok=True)')
+            w('        self._conn = _sqlite3.connect(os.path.join(db_dir, f"{name}.db"))')
+            w('        self._conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")')
+            w('        self._conn.commit()')
+            w('')
+            w('    def read(self, key=None):')
+            w('        import json as _json')
+            w('        if key is None:')
+            w('            rows = self._conn.execute("SELECT key, value FROM kv").fetchall()')
+            w('            return {k: _json.loads(v) for k, v in rows}')
+            w('        row = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()')
+            w('        return _json.loads(row[0]) if row else None')
+            w('')
+            w('    def write(self, value, key=None):')
+            w('        import json as _json')
+            w('        if key is not None:')
+            w('            self._conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, _json.dumps(value)))')
+            w('        else:')
+            w('            self._conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", ("_default", _json.dumps(value)))')
+            w('        self._conn.commit()')
+            w('')
+
         w('')
         for s in stores:
             sid = s["id"]
@@ -1743,6 +1910,8 @@ def generate_langgraph_agent(spec):
                 w(f'        self._store = _ChromaVectorStore("{_safe_name(sid)}")')
             elif stype == "queue":
                 w(f'        self.queue = []')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        self._store = _SQLiteKVStore("{_safe_name(sid)}")')
             else:
                 w(f'        self.data = {{}}')
             w('')
@@ -1751,6 +1920,8 @@ def generate_langgraph_agent(spec):
                 w(f'        return self._store.read(query=key)')
             elif stype == "queue":
                 w(f'        return self.queue[0] if self.queue else None')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        return self._store.read(key)')
             else:
                 w(f'        return self.data if key is None else self.data.get(key)')
             w('')
@@ -1759,6 +1930,8 @@ def generate_langgraph_agent(spec):
                 w(f'        self._store.write(value, key=key)')
             elif stype == "queue":
                 w(f'        self.queue.append(value)')
+            elif persistent_stores and stype in ("kv", "blackboard"):
+                w(f'        self._store.write(value, key=key)')
             else:
                 w(f'        if key is not None:')
                 w(f'            self.data[key] = value')
@@ -2636,7 +2809,8 @@ def run_validation(spec_path):
     return not has_errors, output.strip()
 
 
-def instantiate_one(spec_path, output_path, dry_run=False, validate=False, backend="custom"):
+def instantiate_one(spec_path, output_path, dry_run=False, validate=False, backend="custom",
+                    persistent_stores=False):
     """Instantiate a single spec. Returns True on success."""
     spec = load_yaml(spec_path)
     name = spec.get("name", os.path.basename(spec_path))
@@ -2655,9 +2829,9 @@ def instantiate_one(spec_path, output_path, dry_run=False, validate=False, backe
                 print(f"  {line.strip()}")
 
     if backend == "langgraph":
-        code = generate_langgraph_agent(spec)
+        code = generate_langgraph_agent(spec, persistent_stores=persistent_stores)
     else:
-        code = generate_agent(spec)
+        code = generate_agent(spec, persistent_stores=persistent_stores)
 
     if dry_run or not output_path:
         print(code)
@@ -2688,6 +2862,8 @@ def main():
     parser.add_argument("--stats", action="store_true", help="Show spec stats without generating")
     parser.add_argument("--backend", choices=["custom", "langgraph"], default="custom",
                         help="Code generation backend (default: custom)")
+    parser.add_argument("--persistent-stores", action="store_true",
+                        help="Generate persistent store backends (SQLite for kv, ChromaDB persistent for vector, file I/O for file)")
     args = parser.parse_args()
 
     if args.stats:
@@ -2723,7 +2899,8 @@ def main():
             out_name = fname.replace(".yaml", suffix).replace("-", "_")
             out_path = os.path.join(out_dir, out_name)
             ok = instantiate_one(spec_path, out_path, args.dry_run, args.validate,
-                                 backend=args.backend)
+                                 backend=args.backend,
+                                 persistent_stores=args.persistent_stores)
             if ok:
                 success += 1
             else:
@@ -2734,9 +2911,9 @@ def main():
         # Single spec mode
         spec = load_yaml(args.spec)
         if args.backend == "langgraph":
-            code = generate_langgraph_agent(spec)
+            code = generate_langgraph_agent(spec, persistent_stores=args.persistent_stores)
         else:
-            code = generate_agent(spec)
+            code = generate_agent(spec, persistent_stores=args.persistent_stores)
 
         if args.validate:
             ok, msg = run_validation(args.spec)

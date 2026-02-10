@@ -22,11 +22,11 @@ from datetime import datetime
 from pathlib import Path
 from statistics import mean, median
 
-from complexity import analyze_spec, load_yaml
-from coverage import analyze_coverage, ENTITY_TYPES, PROCESS_TYPES, EDGE_TYPES, FEATURE_FLAGS
-from topology import analyze_topology
-from lint import lint_spec
-from validate import validate_spec
+from .complexity import analyze_spec, load_yaml
+from .coverage import analyze_coverage, ENTITY_TYPES, PROCESS_TYPES, EDGE_TYPES, FEATURE_FLAGS
+from .topology import analyze_topology
+from .lint import lint_spec
+from .validate import validate_spec
 
 # ---------------------------------------------------------------------------
 # ANSI color helpers

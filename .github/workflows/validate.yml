@@ -16,11 +16,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pyyaml
+      - name: Install package
+        run: pip install -e .
 
       - name: Validate all specs
-        run: python validate.py --all specs/
+        run: python -m agent_ontology.validate --all agent_ontology/specs/
 
   lint-specs:
     name: Lint YAML Specs
@@ -32,11 +32,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pyyaml
+      - name: Install package
+        run: pip install -e .
 
       - name: Lint all specs
-        run: python lint.py --all specs/ --severity warn
+        run: python -m agent_ontology.lint --all agent_ontology/specs/ --severity warn
 
   syntax-check-agents:
     name: Syntax Check Agent Modules
@@ -48,8 +48,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pyyaml google-genai openai anthropic chromadb
+      - name: Install package with all extras
+        run: pip install -e ".[all]"
 
       - name: Syntax check custom backend agents
         run: |
@@ -67,9 +67,6 @@ jobs:
             exit 1
           fi
           echo "All custom agent modules passed syntax check."
-
-      - name: Install LangGraph dependencies
-        run: pip install langgraph langchain-core langchain-google-genai langchain-openai langchain-anthropic
 
       - name: Syntax check LangGraph agents
         run: |
@@ -98,11 +95,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pyyaml google-genai openai anthropic chromadb langgraph langchain-core langchain-google-genai langchain-openai langchain-anthropic
+      - name: Install package with all extras
+        run: pip install -e ".[all]"
 
       - name: Run property tests
-        run: python test_properties.py
+        run: python tests/test_properties.py
 
   smoke-test:
     name: Smoke Test (ReAct + Self-Refine)
@@ -116,17 +113,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pyyaml google-genai openai anthropic chromadb
+      - name: Install package with agent extras
+        run: pip install -e ".[agents]"
 
       - name: Run smoke test (ReAct)
         if: env.GEMINI_API_KEY != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python test_agents.py --agent react --timeout 60
+        run: python tests/test_agents.py --agent react --timeout 60
 
       - name: Run smoke test (Self-Refine)
         if: env.GEMINI_API_KEY != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python test_agents.py --agent self_refine --timeout 60
+        run: python tests/test_agents.py --agent self_refine --timeout 60

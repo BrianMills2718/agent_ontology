@@ -19,9 +19,7 @@ import sys
 import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
-
-from patterns import get_pattern, PATTERN_LIBRARY, compatible_patterns
+from .patterns import get_pattern, PATTERN_LIBRARY, compatible_patterns
 
 
 # ════════════════════════════════════════════════════════════════════

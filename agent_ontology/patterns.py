@@ -422,6 +422,106 @@ def detect_patterns(spec):
 
 
 # ════════════════════════════════════════════════════════════════════
+# OWL / DL Structural Pattern Detection
+# ════════════════════════════════════════════════════════════════════
+
+# Mapping from OWL DL pattern class names → patterns.py canonical names
+_OWL_TO_PATTERN = {
+    "ReasoningLoop": "reasoning_loop",
+    "CritiqueCycle": "critique_cycle",
+    "MultiAgentDebate": "debate",
+    "RetrievalAugmented": "retrieval",
+    "FanOut": "fan_out_aggregate",
+    "MemoryBacked": "reflection",
+    # OWL-only patterns (no patterns.py library equivalent)
+    "HumanInLoop": "human_in_loop",
+    "PubSub": "pub_sub",
+    "Handoff": "handoff",
+}
+
+
+def detect_patterns_structural(spec, spec_path=None):
+    """Detect patterns using OWL structural classification (graph topology).
+
+    Uses classify_structural() from ontology_owl.py which analyzes the actual
+    graph structure (loops, invocations, reads/writes, fan-out) rather than
+    matching process ID strings.
+
+    Returns a list of (pattern_name, method) tuples where method is 'owl-structural'.
+    Falls back to ID-based detect_patterns() if OWL modules aren't available.
+    """
+    try:
+        from .owl_bridge import build_bridge_ontology_in_world, spec_to_owl
+        from .ontology_owl import classify_structural
+        from owlready2 import World
+
+        world = World()
+        onto = build_bridge_ontology_in_world(world)
+        spec_inst = spec_to_owl(onto, spec if spec_path is None else spec_path)
+        results = classify_structural(onto, [spec_inst])
+
+        detected = []
+        for spec_name, owl_patterns in results.items():
+            for owl_pat in owl_patterns:
+                canon = _OWL_TO_PATTERN.get(owl_pat, owl_pat.lower())
+                detected.append((canon, "owl-structural"))
+        return detected
+
+    except Exception:
+        # Fall back to ID-based detection
+        id_results = detect_patterns(spec)
+        return [(name, "id-match") for name, _, _ in id_results]
+
+
+def detect_patterns_combined(spec, spec_path=None):
+    """Detect patterns using both OWL structural and ID-based methods.
+
+    Returns a list of dicts with:
+      - name: canonical pattern name
+      - method: 'owl-structural', 'id-match', or 'both'
+      - matched_ids: set of matched process IDs (for id-match)
+      - prefix: namespace prefix (for id-match)
+    """
+    # Run ID-based detection
+    id_results = detect_patterns(spec)
+    id_map = {name: (pids, prefix) for name, pids, prefix in id_results}
+
+    # Run OWL structural detection
+    owl_results = set()
+    try:
+        from .owl_bridge import build_bridge_ontology_in_world, spec_to_owl
+        from .ontology_owl import classify_structural
+        from owlready2 import World
+
+        world = World()
+        onto = build_bridge_ontology_in_world(world)
+        spec_inst = spec_to_owl(onto, spec if spec_path is None else spec_path)
+        results = classify_structural(onto, [spec_inst])
+        for spec_name, owl_patterns in results.items():
+            for owl_pat in owl_patterns:
+                canon = _OWL_TO_PATTERN.get(owl_pat, owl_pat.lower())
+                owl_results.add(canon)
+    except Exception:
+        pass
+
+    # Merge results
+    all_names = set(id_map.keys()) | owl_results
+    combined = []
+    for name in sorted(all_names):
+        in_id = name in id_map
+        in_owl = name in owl_results
+        method = "both" if (in_id and in_owl) else ("owl-structural" if in_owl else "id-match")
+        pids, prefix = id_map.get(name, (set(), ""))
+        combined.append({
+            "name": name,
+            "method": method,
+            "matched_ids": pids,
+            "prefix": prefix,
+        })
+    return combined
+
+
+# ════════════════════════════════════════════════════════════════════
 # CLI
 # ════════════════════════════════════════════════════════════════════
 
@@ -440,7 +540,11 @@ def main():
     parser.add_argument("--compat", nargs=2, metavar=("A", "B"),
                         help="Check if pattern A's outputs feed pattern B's inputs")
     parser.add_argument("--detect", metavar="SPEC",
-                        help="Detect patterns in a spec file")
+                        help="Detect patterns in a spec file (ID-based)")
+    parser.add_argument("--detect-structural", metavar="SPEC",
+                        help="Detect patterns using OWL structural classification")
+    parser.add_argument("--detect-all", metavar="SPEC",
+                        help="Detect patterns using both ID-based and OWL structural methods")
 
     args = parser.parse_args()
 
@@ -463,6 +567,24 @@ def main():
             for pname, pids, prefix in results:
                 prefix_str = f" (prefix: {prefix})" if prefix else ""
                 print(f"  {pname}{prefix_str}: {len(pids)} processes matched")
+        else:
+            print("  No patterns detected")
+    elif args.detect_structural:
+        spec = yaml.safe_load(open(args.detect_structural))
+        results = detect_patterns_structural(spec, args.detect_structural)
+        if results:
+            for pname, method in results:
+                print(f"  {pname} [{method}]")
+        else:
+            print("  No patterns detected")
+    elif args.detect_all:
+        spec = yaml.safe_load(open(args.detect_all))
+        results = detect_patterns_combined(spec, args.detect_all)
+        if results:
+            for r in results:
+                ids_str = f" ({len(r['matched_ids'])} IDs)" if r['matched_ids'] else ""
+                prefix_str = f" prefix={r['prefix']}" if r['prefix'] else ""
+                print(f"  {r['name']:25s} [{r['method']}]{ids_str}{prefix_str}")
         else:
             print("  No patterns detected")
     else:

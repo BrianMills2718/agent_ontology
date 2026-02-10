@@ -15,13 +15,15 @@ import sys
 import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SPECS_DIR = os.path.join(SCRIPT_DIR, "specs")
-ONTOLOGY_PATH = os.path.join(SCRIPT_DIR, "ONTOLOGY.yaml")
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+PACKAGE_DIR = os.path.join(PROJECT_ROOT, "agent_ontology")
+SPECS_DIR = os.path.join(PACKAGE_DIR, "specs")
+ONTOLOGY_PATH = os.path.join(PACKAGE_DIR, "ONTOLOGY.yaml")
 
-# Import validate_spec from validate.py
-sys.path.insert(0, SCRIPT_DIR)
-from validate import validate_spec, load_yaml
-from instantiate import generate_agent, generate_langgraph_agent
+# Ensure project root is on sys.path so agent_ontology package is importable
+sys.path.insert(0, PROJECT_ROOT)
+from agent_ontology.validate import validate_spec, load_yaml
+from agent_ontology.instantiate import generate_agent, generate_langgraph_agent
 
 
 # ---------------------------------------------------------------------------

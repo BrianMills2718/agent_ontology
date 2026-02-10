@@ -26,6 +26,11 @@ import traceback
 from contextlib import contextmanager
 from io import StringIO
 
+# Ensure project root is on sys.path so agents package is importable
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
 # ── Test fixtures: canned inputs for each agent ──
 
 TEST_INPUTS = {
@@ -414,8 +419,8 @@ def run_agent_test(agent_name, timeout_sec=120, dry_run=False):
             result["status"] = "PASS"
 
         # Save trace
-        trace_path = f"traces/{agent_name}_trace.json"
-        os.makedirs("traces", exist_ok=True)
+        trace_path = os.path.join(PROJECT_ROOT, "traces", f"{agent_name}_trace.json")
+        os.makedirs(os.path.join(PROJECT_ROOT, "traces"), exist_ok=True)
         if hasattr(mod, 'TRACE'):
             with open(trace_path, "w") as f:
                 json.dump(mod.TRACE, f, indent=2)

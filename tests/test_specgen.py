@@ -19,7 +19,9 @@ import tempfile
 import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DESCRIPTIONS_DIR = os.path.join(SCRIPT_DIR, "test_descriptions")
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+PACKAGE_DIR = os.path.join(PROJECT_ROOT, "agent_ontology")
+DESCRIPTIONS_DIR = os.path.join(PROJECT_ROOT, "test_descriptions")
 
 
 def find_descriptions(specific=None):
@@ -49,7 +51,7 @@ def run_specgen(desc_path, output_path, fix=False, model="gemini-3-flash-preview
     """Run specgen.py on a description file. Returns (ok, duration_ms, output)."""
     cmd = [
         sys.executable,
-        os.path.join(SCRIPT_DIR, "specgen.py"),
+        os.path.join(PACKAGE_DIR, "specgen.py"),
         desc_path,
         "-o", output_path,
         "--validate",
@@ -59,7 +61,7 @@ def run_specgen(desc_path, output_path, fix=False, model="gemini-3-flash-preview
         cmd.append("--fix")
 
     t0 = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=SCRIPT_DIR, timeout=180)
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=PACKAGE_DIR, timeout=180)
     duration_ms = int((time.time() - t0) * 1000)
 
     combined = (result.stdout + result.stderr).strip()
@@ -70,8 +72,8 @@ def run_specgen(desc_path, output_path, fix=False, model="gemini-3-flash-preview
 def validate_spec(spec_path):
     """Validate a spec file. Returns (ok, output)."""
     result = subprocess.run(
-        [sys.executable, os.path.join(SCRIPT_DIR, "validate.py"), spec_path],
-        capture_output=True, text=True, cwd=SCRIPT_DIR
+        [sys.executable, os.path.join(PACKAGE_DIR, "validate.py"), spec_path],
+        capture_output=True, text=True, cwd=PACKAGE_DIR
     )
     combined = (result.stdout + result.stderr).strip()
     has_errors = "ERROR" in combined or result.returncode != 0
@@ -81,8 +83,8 @@ def validate_spec(spec_path):
 def instantiate_spec(spec_path, agent_path):
     """Instantiate a spec to Python. Returns (ok, output)."""
     result = subprocess.run(
-        [sys.executable, os.path.join(SCRIPT_DIR, "instantiate.py"), spec_path, "-o", agent_path],
-        capture_output=True, text=True, cwd=SCRIPT_DIR
+        [sys.executable, os.path.join(PACKAGE_DIR, "instantiate.py"), spec_path, "-o", agent_path],
+        capture_output=True, text=True, cwd=PACKAGE_DIR
     )
     combined = (result.stdout + result.stderr).strip()
     return result.returncode == 0, combined

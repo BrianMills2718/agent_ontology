@@ -26,7 +26,6 @@ import yaml
 import glob
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
 
 from owlready2 import *
 
@@ -43,7 +42,7 @@ def build_bridge_ontology():
     - Data properties for storing raw YAML values
     - Order-preserving properties for lossless reconstruction
     """
-    from ontology_owl import build_ontology
+    from .ontology_owl import build_ontology
     onto = build_ontology()
 
     with onto:
@@ -656,7 +655,7 @@ def classify_all(specs_dir=None):
     Uses the OWL structural model for pattern detection.
     Returns {spec_name: [pattern_names]}.
     """
-    from ontology_owl import classify_structural
+    from .ontology_owl import classify_structural
 
     if specs_dir is None:
         specs_dir = os.path.join(SCRIPT_DIR, "specs")
