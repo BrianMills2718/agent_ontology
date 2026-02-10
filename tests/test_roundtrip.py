@@ -20,6 +20,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_ontology"))
 
 from agent_ontology.import_langgraph import import_langgraph
+from agent_ontology.import_autogen import import_autogen
+from agent_ontology.import_openai_agents import import_openai_agents
 from agent_ontology.validate import validate_spec, load_yaml, ONTOLOGY_PATH
 
 _ontology = load_yaml(ONTOLOGY_PATH)
@@ -371,10 +373,300 @@ def test_lg_command():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Test AutoGen Files
+# ═══════════════════════════════════════════════════════════════
+
+AG_V02_GROUPCHAT = """\
+import autogen
+
+llm_config = {"model": "gpt-4o", "temperature": 0}
+
+assistant = autogen.AssistantAgent(
+    name="research_assistant",
+    system_message="You are a helpful research assistant.",
+    llm_config=llm_config,
+)
+
+coder = autogen.AssistantAgent(
+    name="coder",
+    system_message="You write Python code to solve problems.",
+    llm_config=llm_config,
+)
+
+user_proxy = autogen.UserProxyAgent(
+    name="user_proxy",
+    human_input_mode="TERMINATE",
+    code_execution_config={"work_dir": "coding", "use_docker": False},
+)
+
+@user_proxy.register_for_execution()
+@assistant.register_for_llm(description="Search the web")
+def web_search(query: str) -> str:
+    return f"Results for: {query}"
+
+groupchat = autogen.GroupChat(
+    agents=[assistant, coder, user_proxy],
+    messages=[],
+    max_round=12,
+    speaker_selection_method="auto",
+)
+
+manager = autogen.GroupChatManager(
+    groupchat=groupchat,
+    llm_config=llm_config,
+)
+
+user_proxy.initiate_chat(manager, message="Research sorting algorithms")
+"""
+
+AG_V04_TEAMS = """\
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import TextMentionTermination
+from autogen_core.tools import FunctionTool
+from autogen_ext.models import OpenAIChatCompletionClient
+
+model_client = OpenAIChatCompletionClient(model="gpt-4o")
+
+def calculator(expression: str) -> str:
+    return str(eval(expression))
+
+calc_tool = FunctionTool(calculator, description="A calculator tool")
+
+planner = AssistantAgent(
+    name="planner",
+    model_client=model_client,
+    system_message="You plan tasks.",
+    tools=[calc_tool],
+)
+
+executor = AssistantAgent(
+    name="executor",
+    model_client=model_client,
+    system_message="You execute tasks.",
+    handoffs=["planner"],
+)
+
+team = RoundRobinGroupChat(
+    participants=[planner, executor],
+    max_turns=10,
+)
+"""
+
+
+def _import_and_check_autogen(source_code, test_name, expected_checks=None):
+    """Import AutoGen source code, validate spec, and check properties."""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(source_code)
+        f.flush()
+        source_path = f.name
+
+    try:
+        spec = import_autogen(Path(source_path))
+        assert spec is not None, f"{test_name}: import returned None"
+        assert "entry_point" in spec, f"{test_name}: missing entry_point"
+        assert len(spec.get("processes", [])) > 0, f"{test_name}: no processes"
+
+        errors, warnings = validate_spec(spec, _ontology, source_path)
+        assert len(errors) == 0, f"{test_name}: validation errors: {errors}"
+
+        if expected_checks:
+            for check_name, check_fn in expected_checks.items():
+                assert check_fn(spec), f"{test_name}: check '{check_name}' failed"
+
+        return spec, errors, warnings
+    finally:
+        Path(source_path).unlink(missing_ok=True)
+
+
+def test_ag_v02_groupchat():
+    """AutoGen v0.2 GroupChat with tool registration."""
+    spec, _, _ = _import_and_check_autogen(AG_V02_GROUPCHAT, "ag_v02_groupchat", {
+        "has_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) >= 3,
+        "has_tool": lambda s: any(e["type"] == "tool" for e in s["entities"]),
+        "has_team": lambda s: any(e["type"] == "team" for e in s["entities"]),
+        "has_handoff_or_invoke": lambda s: any(
+            e["type"] in ("handoff", "invoke") for e in s["edges"]
+        ),
+    })
+    print(f"  PASS ag_v02_groupchat: {len(spec['entities'])} entities, {len(spec['edges'])} edges")
+
+
+def test_ag_v04_teams():
+    """AutoGen v0.4 with FunctionTool and teams."""
+    spec, _, _ = _import_and_check_autogen(AG_V04_TEAMS, "ag_v04_teams", {
+        "has_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) >= 2,
+        "has_tool": lambda s: any(e["type"] == "tool" for e in s["entities"]),
+        "has_team": lambda s: any(e["type"] == "team" for e in s["entities"]),
+    })
+    print(f"  PASS ag_v04_teams: {len(spec['entities'])} entities, {len(spec['edges'])} edges")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Test OpenAI Agents SDK Files
+# ═══════════════════════════════════════════════════════════════
+
+OAI_HANDOFF = """\
+from agents import Agent, Runner, function_tool, WebSearchTool
+
+@function_tool
+def get_weather(city: str) -> str:
+    \"\"\"Get the weather for a city.\"\"\"
+    return f"Weather in {city}: sunny"
+
+web_search = WebSearchTool()
+
+billing_agent = Agent(
+    name="billing_agent",
+    instructions="You handle billing.",
+    model="gpt-4o",
+    tools=[get_weather],
+)
+
+support_agent = Agent(
+    name="support_agent",
+    instructions="You handle support.",
+    model="gpt-4o",
+    tools=[web_search],
+)
+
+triage_agent = Agent(
+    name="triage_agent",
+    instructions="Route to specialists.",
+    model="gpt-4o",
+    handoffs=[billing_agent, support_agent],
+)
+
+billing_agent.handoffs.append(triage_agent)
+
+result = Runner.run_sync(triage_agent, "billing question")
+"""
+
+OAI_PIPELINE = """\
+from pydantic import BaseModel
+from agents import Agent, Runner, function_tool, input_guardrail, GuardrailFunctionOutput
+import asyncio
+
+class AnalysisResult(BaseModel):
+    findings: str
+    confidence: float
+
+@function_tool
+def search_db(query: str) -> str:
+    \"\"\"Search the database.\"\"\"
+    return "results"
+
+@input_guardrail
+async def safety_check(ctx, agent, input):
+    return GuardrailFunctionOutput(output_info="safe", tripwire_triggered=False)
+
+researcher = Agent(
+    name="researcher",
+    instructions="Research topics.",
+    model="gpt-4o",
+    tools=[search_db],
+    output_type=AnalysisResult,
+    input_guardrails=[safety_check],
+)
+
+writer = Agent(name="writer", instructions="Write content.", model="gpt-4o")
+critic_a = Agent(name="critic_a", instructions="Critique technically.", model="gpt-4o")
+critic_b = Agent(name="critic_b", instructions="Critique readability.", model="gpt-4o")
+
+async def main():
+    r1 = await Runner.run(researcher, "quantum computing")
+    r2 = await Runner.run(writer, r1.final_output)
+    ca, cb = await asyncio.gather(
+        Runner.run(critic_a, r2.final_output),
+        Runner.run(critic_b, r2.final_output),
+    )
+
+asyncio.run(main())
+"""
+
+OAI_ORCHESTRATOR = """\
+from agents import Agent, Runner
+
+sub_agent_a = Agent(name="sub_a", instructions="Do task A.", model="gpt-4o")
+sub_agent_b = Agent(name="sub_b", instructions="Do task B.", model="gpt-4o")
+
+orchestrator = Agent(
+    name="orchestrator",
+    instructions="Coordinate sub-agents.",
+    model="gpt-4o",
+    tools=[
+        sub_agent_a.as_tool(tool_name="task_a", tool_description="Delegate task A"),
+        sub_agent_b.as_tool(tool_name="task_b", tool_description="Delegate task B"),
+    ],
+)
+
+result = Runner.run_sync(orchestrator, "do both tasks")
+"""
+
+
+def _import_and_check_oai(source_code, test_name, expected_checks=None):
+    """Import OpenAI Agents SDK source code, validate spec, and check properties."""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(source_code)
+        f.flush()
+        source_path = f.name
+
+    try:
+        spec = import_openai_agents(Path(source_path))
+        assert spec is not None, f"{test_name}: import returned None"
+        assert "entry_point" in spec, f"{test_name}: missing entry_point"
+        assert len(spec.get("processes", [])) > 0, f"{test_name}: no processes"
+
+        errors, warnings = validate_spec(spec, _ontology, source_path)
+        assert len(errors) == 0, f"{test_name}: validation errors: {errors}"
+
+        if expected_checks:
+            for check_name, check_fn in expected_checks.items():
+                assert check_fn(spec), f"{test_name}: check '{check_name}' failed"
+
+        return spec, errors, warnings
+    finally:
+        Path(source_path).unlink(missing_ok=True)
+
+
+def test_oai_handoff():
+    """OpenAI Agents SDK handoff pattern."""
+    spec, _, _ = _import_and_check_oai(OAI_HANDOFF, "oai_handoff", {
+        "has_3_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) == 3,
+        "has_tools": lambda s: len([e for e in s["entities"] if e["type"] == "tool"]) == 2,
+        "has_handoff_edges": lambda s: len([e for e in s["edges"] if e["type"] == "handoff"]) >= 2,
+        "has_invoke": lambda s: any(e["type"] == "invoke" for e in s["edges"]),
+    })
+    print(f"  PASS oai_handoff: {len(spec['entities'])} entities, {len(spec['edges'])} edges")
+
+
+def test_oai_pipeline():
+    """OpenAI Agents SDK pipeline with guardrails and fan-out."""
+    spec, _, _ = _import_and_check_oai(OAI_PIPELINE, "oai_pipeline", {
+        "has_4_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) == 4,
+        "has_tool": lambda s: any(e["type"] == "tool" for e in s["entities"]),
+        "has_policy": lambda s: any(p["type"] == "policy" for p in s["processes"]),
+        "has_fan_out": lambda s: any(p["id"].startswith("fan_out") for p in s["processes"]),
+        "has_schema": lambda s: any(sc["name"] == "AnalysisResult" for sc in s.get("schemas", [])),
+    })
+    print(f"  PASS oai_pipeline: {len(spec['entities'])} entities, {len(spec['processes'])} processes")
+
+
+def test_oai_orchestrator():
+    """OpenAI Agents SDK agent-as-tool orchestrator pattern."""
+    spec, _, _ = _import_and_check_oai(OAI_ORCHESTRATOR, "oai_orchestrator", {
+        "has_3_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) == 3,
+        "has_invoke": lambda s: any(e["type"] == "invoke" for e in s["edges"]),
+    })
+    print(f"  PASS oai_orchestrator: {len(spec['entities'])} entities, {len(spec['edges'])} edges")
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 
 ALL_TESTS = [
+    # LangGraph
     test_lg_class_based,
     test_lg_add_sequence,
     test_lg_send_fanout,
@@ -383,6 +675,13 @@ ALL_TESTS = [
     test_lg_subgraph,
     test_lg_conditional,
     test_lg_command,
+    # AutoGen
+    test_ag_v02_groupchat,
+    test_ag_v04_teams,
+    # OpenAI Agents SDK
+    test_oai_handoff,
+    test_oai_pipeline,
+    test_oai_orchestrator,
 ]
 
 
