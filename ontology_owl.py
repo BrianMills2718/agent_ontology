@@ -441,6 +441,22 @@ def load_spec_as_instances(onto, spec_path):
                             if target_inst not in gate_inst.loops_to:
                                 gate_inst.loops_to.append(target_inst)
 
+        # Also detect backward FLOW edges (not just gate branches).
+        # e.g., code_reviewer: wait_for_new_commits → intake_pr is a flow edge
+        # that creates a cycle.
+        for edge in spec.get("edges", []):
+            if edge["type"] == "flow":
+                src_id = edge.get("from", "")
+                tgt_id = edge.get("to", "")
+                src_order = proc_order.get(src_id, 999)
+                tgt_order = proc_order.get(tgt_id, 999)
+                if tgt_order < src_order:  # backward edge
+                    src_inst = process_instances.get(src_id)
+                    tgt_inst = process_instances.get(tgt_id)
+                    if src_inst and tgt_inst and isinstance(tgt_inst, onto.Step):
+                        if tgt_inst not in src_inst.loops_to:
+                            src_inst.loops_to.append(tgt_inst)
+
     return spec_inst
 
 
@@ -554,40 +570,55 @@ def classify_structural(onto, spec_instances):
 
         # Collect ALL loop targets from any process (not just gates — loop edges
         # can originate from steps too, e.g. self_refine: refine --loop--> generate)
-        all_loop_targets = set()
-        loops_to_map = {}  # target -> list of sources that loop to it
+        all_loop_targets = set()  # direct targets of backward edges
         for p in processes:
             for tgt in p.loops_to:
                 all_loop_targets.add(tgt)
-                loops_to_map.setdefault(tgt, []).append(p)
-        # Also include gate branches that create cycles (detected in loader)
         for g in gates:
             for tgt in g.loops_to:
                 all_loop_targets.add(tgt)
-                loops_to_map.setdefault(tgt, []).append(g)
+
+        # Compute full loop body: all steps reachable from any loop target via BFS.
+        # This captures steps INSIDE a loop, not just the loop entry point.
+        # e.g., in LATS: select_node is the target, but expand_node and
+        # evaluate_node (which invoke agents) are in the loop body too.
+        loop_body = set()
+        for target in all_loop_targets:
+            for node in bfs_steps_in_loop(target):
+                loop_body.add(node)
 
         # ── ReasoningLoop ──────────────────────────────────────────
-        # A step S invokes an agent, and some process anywhere in the
-        # spec loops back to S (creating a cycle through S).
+        # A step S invokes an agent and is within a loop body.
         for s in steps:
             if not any(isinstance(i, onto.Agent) for i in s.invokes):
                 continue
-            if s in all_loop_targets:
+            if s in loop_body:
                 patterns.append("ReasoningLoop")
                 break
 
         # ── CritiqueCycle ──────────────────────────────────────────
         # Sequential generate→critique chain: step A flows_to step B,
-        # BOTH invoke agents (different roles), and some process loops
-        # back to A or B. The A→B direct flow distinguishes this from debate.
+        # BOTH invoke agents (different roles), BOTH are in a loop body,
+        # and there's a gate downstream of B that loops back toward A.
+        # The A→B direct flow distinguishes this from debate.
         for sa in steps:
+            if sa not in loop_body:
+                continue
             if not any(isinstance(i, onto.Agent) for i in sa.invokes):
                 continue
             for sb_or_g in sa.flows_to:
-                if isinstance(sb_or_g, onto.Step) and any(isinstance(i, onto.Agent) for i in sb_or_g.invokes):
-                    if sa in all_loop_targets or sb_or_g in all_loop_targets:
-                        if "CritiqueCycle" not in patterns:
-                            patterns.append("CritiqueCycle")
+                if not isinstance(sb_or_g, onto.Step):
+                    continue
+                if sb_or_g not in loop_body:
+                    continue
+                if not any(isinstance(i, onto.Agent) for i in sb_or_g.invokes):
+                    continue
+                # Both A and B invoke agents and are in a loop body.
+                # Additionally require that A is reachable via a backward edge
+                # (i.e., A is an actual loop target, meaning the loop restarts at A).
+                if sa in all_loop_targets:
+                    if "CritiqueCycle" not in patterns:
+                        patterns.append("CritiqueCycle")
 
         # ── RetrievalAugmented ─────────────────────────────────────
         # A step reads from a store AND a (possibly different) step invokes
