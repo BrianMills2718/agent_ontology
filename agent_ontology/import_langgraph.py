@@ -52,9 +52,9 @@ def _get_dict_literal(node):
 
 
 def _find_typed_dicts(tree):
-    """Find TypedDict and state class definitions -> list of (name, fields).
+    """Find TypedDict, BaseModel, and dataclass definitions -> list of (name, fields).
 
-    Handles TypedDict, MessagesState, BaseModel, and other state base classes.
+    Handles TypedDict, MessagesState, BaseModel, dataclass, and other state base classes.
     """
     # Known state base classes (extend TypedDict or similar)
     STATE_BASES = {"TypedDict", "MessagesState", "AgentState", "BaseModel"}
@@ -68,6 +68,14 @@ def _find_typed_dicts(tree):
             if isinstance(base, ast.Name) and base.id in STATE_BASES:
                 is_typed_dict = True
             elif isinstance(base, ast.Attribute) and base.attr in STATE_BASES:
+                is_typed_dict = True
+        # Check for @dataclass decorator
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Name) and dec.id == "dataclass":
+                is_typed_dict = True
+            elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "dataclass":
+                is_typed_dict = True
+            elif isinstance(dec, ast.Attribute) and dec.attr == "dataclass":
                 is_typed_dict = True
         for kw in node.keywords:
             pass  # total=False etc
@@ -126,6 +134,7 @@ def _make_empty_graph():
         "conditional_edges": [],
         "end_edges": [],
         "var_name": None,
+        "subgraph_nodes": set(),
     }
 
 
@@ -151,12 +160,27 @@ def _find_all_graphs(tree, source_lines):
         if not isinstance(val, ast.Call):
             continue
         func = val.func
-        if not (isinstance(func, ast.Name) and func.id == "StateGraph"):
-            continue
-        if not isinstance(target, ast.Name):
+        # Handle both StateGraph(...) and module.StateGraph(...)
+        is_state_graph = False
+        if isinstance(func, ast.Name) and func.id == "StateGraph":
+            is_state_graph = True
+        elif isinstance(func, ast.Attribute) and func.attr == "StateGraph":
+            is_state_graph = True
+        if not is_state_graph:
             continue
 
-        var_name = target.id
+        # Handle both `graph = StateGraph(...)` and `self.graph = StateGraph(...)`
+        var_name = None
+        if isinstance(target, ast.Name):
+            var_name = target.id
+        elif isinstance(target, ast.Attribute):
+            # self.graph = StateGraph(...) → use "self.graph" as key
+            if isinstance(target.value, ast.Name):
+                var_name = f"{target.value.id}.{target.attr}"
+
+        if not var_name:
+            continue
+
         g = _make_empty_graph()
         g["var_name"] = var_name
         if val.args:
@@ -170,6 +194,26 @@ def _find_all_graphs(tree, source_lines):
         # Fallback: return a single empty graph
         g = _make_empty_graph()
         return [g]
+
+    # Track compiled graph variables: app = graph.compile() → app is a compiled graph
+    compiled_graph_vars: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        val = node.value
+        if not isinstance(val, ast.Call):
+            continue
+        func = val.func
+        if isinstance(func, ast.Attribute) and func.attr == "compile":
+            obj = func.value
+            obj_name = None
+            if isinstance(obj, ast.Name):
+                obj_name = obj.id
+            elif isinstance(obj, ast.Attribute) and isinstance(obj.value, ast.Name):
+                obj_name = f"{obj.value.id}.{obj.attr}"
+            if obj_name in graphs_by_var and isinstance(target, ast.Name):
+                compiled_graph_vars.add(target.id)
 
     # Second pass: associate method calls with their graph variable
     for node in ast.walk(tree):
@@ -190,6 +234,9 @@ def _find_all_graphs(tree, source_lines):
         obj_name = None
         if isinstance(obj, ast.Name):
             obj_name = obj.id
+        elif isinstance(obj, ast.Attribute) and isinstance(obj.value, ast.Name):
+            # self.graph.add_node(...) → "self.graph"
+            obj_name = f"{obj.value.id}.{obj.attr}"
 
         if obj_name not in graphs_by_var:
             continue
@@ -201,18 +248,43 @@ def _find_all_graphs(tree, source_lines):
             if ep:
                 g["entry_point"] = ep
 
-        elif method == "add_node" and len(call.args) >= 2:
+        elif method == "add_node" and len(call.args) >= 1:
             name = _get_string(call.args[0])
-            func_ref = call.args[1]
+            func_ref = call.args[1] if len(call.args) >= 2 else None
             func_name = None
-            if isinstance(func_ref, ast.Name):
+            is_subgraph = False
+            if func_ref is None:
+                # add_node(name) with no function — might use 'action' kwarg
+                for kw in call.keywords:
+                    if kw.arg == "action":
+                        if isinstance(kw.value, ast.Name):
+                            func_name = kw.value.id
+                        elif isinstance(kw.value, ast.Attribute):
+                            func_name = kw.value.attr
+            elif isinstance(func_ref, ast.Name):
                 func_name = func_ref.id
+                # Check if this variable is a compiled graph
+                if func_ref.id in compiled_graph_vars:
+                    is_subgraph = True
+                    func_name = "__subgraph__"
             elif isinstance(func_ref, ast.Attribute):
                 func_name = func_ref.attr
+                # Detect compiled subgraph: sub_graph.compile() or self.sub.compile()
+                if func_name == "compile":
+                    is_subgraph = True
+                    func_name = "__subgraph__"
             elif isinstance(func_ref, ast.Lambda):
                 func_name = "__lambda__"
+            elif isinstance(func_ref, ast.Call):
+                # add_node("name", sub_graph.compile()) — Call node
+                cfunc = func_ref.func
+                if isinstance(cfunc, ast.Attribute) and cfunc.attr == "compile":
+                    is_subgraph = True
+                    func_name = "__subgraph__"
             if name:
                 g["nodes"].append((name, func_name))
+                if is_subgraph:
+                    g.setdefault("subgraph_nodes", set()).add(name)
 
         elif method == "add_edge" and len(call.args) >= 2:
             src = _get_string(call.args[0])
@@ -235,6 +307,26 @@ def _find_all_graphs(tree, source_lines):
             ep = _get_string(call.args[0])
             if ep:
                 g["end_edges"].append(ep)
+
+        elif method == "add_sequence" and call.args:
+            # add_sequence([node1, node2, ...]) — adds nodes in order with edges
+            arg = call.args[0]
+            seq_names = []
+            if isinstance(arg, ast.List):
+                for elt in arg.elts:
+                    name = _get_string(elt)
+                    if name:
+                        seq_names.append((name, None))
+                    elif isinstance(elt, ast.Name):
+                        seq_names.append((elt.id, elt.id))
+            for name, func_name in seq_names:
+                existing = {n for n, _ in g["nodes"]}
+                if name not in existing:
+                    g["nodes"].append((name, func_name))
+            for i in range(1, len(seq_names)):
+                g["edges"].append((seq_names[i - 1][0], seq_names[i][0]))
+            if seq_names and not g["entry_point"]:
+                g["entry_point"] = seq_names[0][0]
 
         elif method == "add_conditional_edges" and len(call.args) >= 2:
             src = _get_string(call.args[0])
@@ -292,6 +384,87 @@ def _find_command_routes(tree):
         if targets:
             routes[node.name] = targets
     return routes
+
+
+def _find_send_targets(tree):
+    """Find Send(node_name, ...) calls in router functions.
+
+    LangGraph's Send() enables dynamic map-reduce fan-out where conditional edges
+    return [Send("node", data) for item in items].
+
+    Returns dict: func_name -> list of target node names.
+    """
+    routes: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        targets = []
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            fname = None
+            if isinstance(func, ast.Name):
+                fname = func.id
+            elif isinstance(func, ast.Attribute):
+                fname = func.attr
+            if fname != "Send":
+                continue
+            # Send(node_name, arg) — first arg is the target node
+            if child.args:
+                target = _get_string(child.args[0])
+                if target and target not in targets:
+                    targets.append(target)
+        if targets:
+            routes[node.name] = targets
+    return routes
+
+
+def _find_interrupt_nodes(tree):
+    """Find interrupt() calls in node functions and compile(interrupt_before/after).
+
+    Returns dict with:
+      - 'interrupt_calls': {func_name: True} for functions that call interrupt()
+      - 'interrupt_before': list of node names from compile(interrupt_before=[...])
+      - 'interrupt_after': list of node names from compile(interrupt_after=[...])
+    """
+    result = {"interrupt_calls": {}, "interrupt_before": [], "interrupt_after": []}
+
+    for node in ast.walk(tree):
+        # Find interrupt() calls inside functions
+        if isinstance(node, ast.FunctionDef):
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                func = child.func
+                fname = None
+                if isinstance(func, ast.Name):
+                    fname = func.id
+                elif isinstance(func, ast.Attribute):
+                    fname = func.attr
+                if fname == "interrupt":
+                    result["interrupt_calls"][node.name] = True
+                    break
+
+        # Find compile(interrupt_before=[...], interrupt_after=[...])
+        if isinstance(node, ast.Call):
+            func = node.func
+            fname = None
+            if isinstance(func, ast.Attribute):
+                fname = func.attr
+            if fname != "compile":
+                continue
+            for kw in node.keywords:
+                if kw.arg in ("interrupt_before", "interrupt_after"):
+                    names = []
+                    if isinstance(kw.value, ast.List):
+                        for elt in kw.value.elts:
+                            s = _get_string(elt)
+                            if s:
+                                names.append(s)
+                    result[kw.arg] = names
+
+    return result
 
 
 def _resolve_loop_add_nodes(tree, graph_var_names):
@@ -610,6 +783,8 @@ def import_langgraph(source_path):
     typed_dicts = _find_typed_dicts(tree)
     all_graphs = _find_all_graphs(tree, source_lines)
     command_routes = _find_command_routes(tree)
+    send_targets = _find_send_targets(tree)
+    interrupt_info = _find_interrupt_nodes(tree)
     node_funcs = _find_node_functions(tree, source_lines)
     invoke_funcs = _find_invoke_functions(tree)
     string_consts = _find_string_constants(tree)
@@ -655,6 +830,7 @@ def import_langgraph(source_path):
         graph_info["edges"].extend(g["edges"])
         graph_info["conditional_edges"].extend(g["conditional_edges"])
         graph_info["end_edges"].extend(g["end_edges"])
+        graph_info["subgraph_nodes"].update(g.get("subgraph_nodes", set()))
         for name, _ in g["nodes"]:
             all_node_names.add(name)
         if g["state_class"] and not graph_info["state_class"]:
@@ -682,6 +858,34 @@ def import_langgraph(source_path):
                 graph_info["end_edges"].append(src_node)
             elif target in all_node_names:
                 graph_info["edges"].append((src_node, target))
+
+    # Add Send-based fan-out routing as edges
+    # Send() targets come from router functions used in add_conditional_edges
+    send_based_routers: set[str] = set()
+    for func_name, targets in send_targets.items():
+        send_based_routers.add(func_name)
+        # Find the conditional edge that uses this router
+        src_node = None
+        for src, router_name, mapping in graph_info["conditional_edges"]:
+            if router_name == func_name:
+                src_node = src
+                break
+        if not src_node:
+            # Also check if the function is a node function
+            src_node = func_to_node.get(func_name)
+        if src_node:
+            for target in targets:
+                if target in all_node_names:
+                    graph_info["edges"].append((src_node, target))
+
+    # Collect nodes that have interrupt() or compile(interrupt_before/after)
+    interrupt_nodes = set()
+    for func_name in interrupt_info["interrupt_calls"]:
+        node_name = func_to_node.get(func_name)
+        if node_name:
+            interrupt_nodes.add(node_name)
+    interrupt_nodes.update(interrupt_info["interrupt_before"])
+    interrupt_nodes.update(interrupt_info["interrupt_after"])
 
     # Build spec
     spec = {
@@ -741,6 +945,7 @@ def import_langgraph(source_path):
         entities.append(agent)
 
     # --- Processes from nodes ---
+    subgraph_nodes = graph_info.get("subgraph_nodes", set())
     for node_name, func_name in graph_info["nodes"]:
         if node_name in gate_nodes:
             # This node is a conditional edge source — check if it's a pass-through
@@ -777,6 +982,8 @@ def import_langgraph(source_path):
                 "type": "step",
                 "label": _snake_to_label(node_name),
             }
+            if node_name in subgraph_nodes:
+                proc["description"] = "Compiled subgraph (nested StateGraph)"
 
             func_info = node_funcs.get(func_name, {}) if func_name else {}
             if func_info.get("calls_llm"):
@@ -791,6 +998,35 @@ def import_langgraph(source_path):
                     })
 
             processes.append(proc)
+
+    # --- Create checkpoint processes for interrupt nodes ---
+    for proc in processes:
+        if proc["id"] in interrupt_nodes and proc["type"] == "step":
+            # Create a checkpoint process after this step
+            cp_id = f"{proc['id']}_checkpoint"
+            cp_proc = {
+                "id": cp_id,
+                "type": "checkpoint",
+                "label": f"{proc['label']} (Human Review)",
+                "description": f"Human-in-the-loop checkpoint for {proc['id']}",
+                "prompt": "Review and approve before continuing",
+            }
+            # Add human entity if not already present
+            if not any(e.get("type") == "human" for e in entities):
+                entities.append({
+                    "id": "human_reviewer",
+                    "type": "human",
+                    "label": "Human Reviewer",
+                    "role": "reviewer",
+                })
+            processes.append(cp_proc)
+            # Wire: step → checkpoint, then rewire outgoing edges
+            edges.append({
+                "type": "flow",
+                "from": proc["id"],
+                "to": cp_id,
+                "label": "Human Review",
+            })
 
     # --- Create terminal step if any gate branches go to END ---
     needs_terminal = False
@@ -816,6 +1052,9 @@ def import_langgraph(source_path):
 
     # --- Gate processes from conditional edges ---
     for src, router_name, mapping in graph_info["conditional_edges"]:
+        # Skip Send-based routers — they produce fan-out flow edges, not gates
+        if router_name in send_based_routers:
+            continue
         condition, branches, has_end = _analyze_router(tree, router_name, mapping)
 
         # Replace __terminal__ targets with actual terminal step
@@ -893,9 +1132,11 @@ def import_langgraph(source_path):
             unique_edges.append(e)
     edges = unique_edges
 
-    spec["entities"] = entities if entities else [
-        {"id": "llm", "type": "agent", "label": "LLM", "model": "unknown"}
-    ]
+    # Ensure at least one agent entity exists
+    has_agent = any(e.get("type") == "agent" for e in entities)
+    if not has_agent:
+        entities.insert(0, {"id": "llm", "type": "agent", "label": "LLM", "model": "unknown"})
+    spec["entities"] = entities
     spec["processes"] = processes
     spec["edges"] = edges
     if schemas:

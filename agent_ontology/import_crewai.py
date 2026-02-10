@@ -468,7 +468,7 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
             output_schema_id = f"{step_id}_output"
 
             spec_schemas.append({
-                "id": input_schema_id,
+                "name": input_schema_id,
                 "fields": [
                     {"name": "task_description", "type": "string"},
                     {"name": "context", "type": "string"},
@@ -480,7 +480,7 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
             if task.output_pydantic and task.output_pydantic in pydantic_models:
                 output_fields = pydantic_models[task.output_pydantic]
             spec_schemas.append({
-                "id": output_schema_id,
+                "name": output_schema_id,
                 "fields": output_fields,
             })
 
