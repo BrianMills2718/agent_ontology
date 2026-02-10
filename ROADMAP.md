@@ -431,3 +431,4 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-09 | 5 bugs fixed from Codex audit | trace format mismatch, migrate loop→back_edge, fan-out transitions, crew output, quote escaping. 174/174 property tests pass. |
 | 2026-02-09 | JSON Schema (Phase 1.3) before LangGraph importer | Quick win that enables tooling; importer is highest leverage but larger effort |
 | 2026-02-09 | OWL dual representation (Phase B) complete | 22/22 lossless round-trip. Structural model for reasoning, JSON data properties for reconstruction. Isolated worlds prevent state leakage. |
+| 2026-02-10 | Rename OpenClaw → Agent Ontology | 79 files, 277 replacements. Env vars: AGENT_ONTOLOGY_*. OWL URI: agent-ontology.org. All 22 specs validate, 174/174 properties pass, 22/22 OWL round-trip. |
