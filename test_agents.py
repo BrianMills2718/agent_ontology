@@ -117,6 +117,13 @@ TEST_INPUTS = {
         "task": "Summarize the key principles of good software design.",
         "max_depth": 1,
     },
+    "customer_support_swarm": {
+        "query": "I need a refund for my last purchase, order #12345.",
+    },
+    "software_team": {
+        "query": "Build a simple URL shortener web application with a REST API.",
+        "max_iterations": 1,
+    },
 }
 
 # ── Validation criteria per agent ──
@@ -280,6 +287,22 @@ def validate_meta_prompting(state):
         issues.append("No final or integrated answer produced")
     return issues
 
+def validate_customer_support_swarm(state):
+    """Customer Support Swarm should classify and respond to request."""
+    issues = []
+    if not state.data.get("intent"):
+        issues.append("No intent classification produced")
+    if not state.data.get("answer") and not state.data.get("response"):
+        issues.append("No response produced")
+    return issues
+
+def validate_software_team(state):
+    """Software Team should produce code through pub/sub pipeline."""
+    issues = []
+    if not state.data.get("code_module") and not state.data.get("final_output"):
+        issues.append("No code output produced")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -300,6 +323,8 @@ VALIDATORS = {
     "reflexion": validate_reflexion,
     "mixture_of_agents": validate_mixture_of_agents,
     "meta_prompting": validate_meta_prompting,
+    "customer_support_swarm": validate_customer_support_swarm,
+    "software_team": validate_software_team,
 }
 
 # ── Timeout context manager ──
@@ -419,6 +444,7 @@ AGENT_NAMES = [
     "lats", "voyager", "multi_agent_codegen",
     "map_reduce", "socratic_tutor",
     "reflexion", "mixture_of_agents", "meta_prompting",
+    "customer_support_swarm", "software_team",
 ]
 
 DEFAULT_COMPARE_MODELS = [

@@ -132,7 +132,7 @@ processes:
     type: step
     label: "Implement Code"
     logic: |
-      pass
+      state.data["revision_count"] = state.data.get("revision_count", 0) + 1
 
   - id: review_code
     type: step
@@ -143,19 +143,23 @@ processes:
   - id: check_quality
     type: gate
     label: "Quality Check"
-    condition: "review passed"
+    condition: "verdict == pass"
     branches:
       - condition: "verdict == pass"
         target: deliver
+      - condition: "revision_count >= max_iterations"
+        target: deliver
       - condition: "verdict == fail"
         target: implement_code
+    default: deliver
 
   - id: deliver
     type: step
     label: "Deliver"
     logic: |
       state.data["_done"] = True
-      state.data["final_output"] = state.data.get("code", "")
+      cm = state.data.get("code_module", {})
+      state.data["final_output"] = cm.get("code", "") if isinstance(cm, dict) else str(cm)
 
 edges:
   # ── Flow spine ──
@@ -180,10 +184,10 @@ edges:
   - { type: invoke, from: review_code, to: qa_agent, output: ReviewResult }
 
   # ── Publish to channels ──
-  - { type: publish, from: create_prd, to: requirements_channel, label: "Publish PRD" }
-  - { type: publish, from: design_system, to: design_channel, label: "Publish design" }
-  - { type: publish, from: implement_code, to: code_channel, label: "Publish code" }
-  - { type: publish, from: review_code, to: review_channel, label: "Publish review" }
+  - { type: publish, from: create_prd, to: requirements_channel, label: "Publish PRD", data: PRD }
+  - { type: publish, from: design_system, to: design_channel, label: "Publish design", data: DesignDoc }
+  - { type: publish, from: implement_code, to: code_channel, label: "Publish code", data: CodeModule }
+  - { type: publish, from: review_code, to: review_channel, label: "Publish review", data: ReviewResult }
 
   # ── Subscribe from channels ──
   - { type: subscribe, from: requirements_channel, to: design_system, label: "Read PRD", activates: true }

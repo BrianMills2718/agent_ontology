@@ -53,6 +53,16 @@ def generate_agent(spec):
         if e["type"] in ("read", "write"):
             store_access.setdefault(e["from"], []).append((e["to"], e["type"], e))
 
+    # Build channel access: publish = write to channel, subscribe = read from channel
+    # subscribe edges: from=channel, to=step/agent → step reads from channel
+    # publish edges: from=step/agent, to=channel → step writes to channel
+    channel_access = {}
+    for e in edges:
+        if e["type"] == "publish":
+            channel_access.setdefault(e["from"], []).append((e["to"], "publish", e))
+        elif e["type"] == "subscribe":
+            channel_access.setdefault(e["to"], []).append((e["from"], "subscribe", e))
+
     # Build loop map
     loop_map = {}
     for e in edges:
@@ -62,6 +72,7 @@ def generate_agent(spec):
     # Categorize entities
     agents = [e for e in entities if e["type"] == "agent"]
     stores = [e for e in entities if e["type"] == "store"]
+    channels = [e for e in entities if e["type"] == "channel"]
 
     # ── Generate code ──
     lines = []
@@ -477,6 +488,31 @@ def generate_agent(spec):
             w('')
             w('')
 
+    # ── Channel classes (pub/sub message buffers) ──
+    for ch in channels:
+        cid = ch["id"]
+        ctype = ch.get("channel_type", "topic")
+        reducer = ch.get("reducer", "append")
+        label = ch.get("label", cid)
+        w(f'class Channel_{_safe_name(cid)}:')
+        w(f'    """{label} ({ctype}, reducer={reducer})"""')
+        w(f'    def __init__(self):')
+        w(f'        self.messages = []')
+        w('')
+        w(f'    def read(self, key=None):')
+        if reducer == "replace":
+            w(f'        return self.messages[-1] if self.messages else None')
+        else:
+            w(f'        return list(self.messages)')
+        w('')
+        w(f'    def write(self, value, key=None):')
+        if reducer == "replace":
+            w(f'        self.messages = [value]')
+        else:
+            w(f'        self.messages.append(value)')
+        w('')
+        w('')
+
     # ── Agent call wrappers (now schema-aware) ──
     if agents:
         w('')
@@ -532,6 +568,8 @@ def generate_agent(spec):
     w('    def __init__(self):')
     for s in stores:
         w(f'        self.{_safe_name(s["id"])} = Store_{_safe_name(s["id"])}()')
+    for ch in channels:
+        w(f'        self.{_safe_name(ch["id"])} = Channel_{_safe_name(ch["id"])}()')
     w('        self.data = {}  # current data flowing through the pipeline')
     w('        self.iteration = 0')
     w('        self.schema_violations = 0')
@@ -551,6 +589,7 @@ def generate_agent(spec):
         desc = p.get("description", "")
         invocations = invoke_map.get(pid, [])
         store_ops = store_access.get(pid, [])
+        channel_ops = channel_access.get(pid, [])
 
         w(f'def process_{_safe_name(pid)}(state):')
         w(f'    """')
@@ -573,6 +612,15 @@ def generate_agent(spec):
                     else:
                         w(f'    {_safe_name(store_id)}_data = state.{_safe_name(store_id)}.read()')
                     w(f'    state.data["{store_id}"] = {_safe_name(store_id)}_data')
+                    w('')
+
+            # Channel subscribe reads — BEFORE logic so logic can reference messages
+            for (channel_id, op, edge) in channel_ops:
+                if op == "subscribe":
+                    elabel = edge.get("label", "")
+                    w(f'    # Subscribe: {elabel}')
+                    w(f'    {_safe_name(channel_id)}_msgs = state.{_safe_name(channel_id)}.read()')
+                    w(f'    state.data["{channel_id}"] = {_safe_name(channel_id)}_msgs')
                     w('')
 
             # Inline logic (if specified in spec)
@@ -660,6 +708,19 @@ def generate_agent(spec):
                         w(f'    state.{_safe_name(store_id)}.write(state.data.copy())')
                     w('')
 
+            # Channel publish writes
+            for (channel_id, op, edge) in channel_ops:
+                if op == "publish":
+                    elabel = edge.get("label", "")
+                    data_schema = edge.get("data")
+                    w(f'    # Publish: {elabel}')
+                    if data_schema and data_schema in schema_map:
+                        w(f'    {_safe_name(channel_id)}_pub = build_input(state, "{data_schema}")')
+                        w(f'    state.{_safe_name(channel_id)}.write({_safe_name(channel_id)}_pub)')
+                    else:
+                        w(f'    state.{_safe_name(channel_id)}.write(state.data.copy())')
+                    w('')
+
             w(f'    return state')
 
         elif ptype == "gate":
@@ -683,14 +744,26 @@ def generate_agent(spec):
                 w(f'        print(f"    → {branches[false_idx].get("condition", "no")}")')
                 w(f'        return "{branches[false_idx]["target"]}"')
             else:
-                for i, branch in enumerate(branches[:-1]):
-                    branch_cond = branch.get("condition", "")
-                    branch_check = _generate_gate_check(branch_cond) if branch_cond else check_expr
-                    prefix = "if" if i == 0 else "elif"
-                    w(f'    {prefix} {branch_check}:')
-                    w(f'        return "{branch["target"]}"')
-                w(f'    else:')
-                w(f'        return "{branches[-1]["target"]}"')
+                default_target = p.get("default")
+                if default_target:
+                    # All branches are explicit; default is the else
+                    for i, branch in enumerate(branches):
+                        branch_cond = branch.get("condition", "")
+                        branch_check = _generate_gate_check(branch_cond) if branch_cond else check_expr
+                        prefix = "if" if i == 0 else "elif"
+                        w(f'    {prefix} {branch_check}:')
+                        w(f'        return "{branch["target"]}"')
+                    w(f'    else:')
+                    w(f'        return "{default_target}"')
+                else:
+                    for i, branch in enumerate(branches[:-1]):
+                        branch_cond = branch.get("condition", "")
+                        branch_check = _generate_gate_check(branch_cond) if branch_cond else check_expr
+                        prefix = "if" if i == 0 else "elif"
+                        w(f'    {prefix} {branch_check}:')
+                        w(f'        return "{branch["target"]}"')
+                    w(f'    else:')
+                    w(f'        return "{branches[-1]["target"]}"')
 
         elif ptype == "checkpoint":
             prompt_text = p.get("prompt", "Continue?")
@@ -1210,6 +1283,14 @@ def generate_langgraph_agent(spec):
         if e["type"] in ("read", "write"):
             store_access.setdefault(e["from"], []).append((e["to"], e["type"], e))
 
+    # Build channel access: publish = write to channel, subscribe = read from channel
+    channel_access = {}
+    for e in edges:
+        if e["type"] == "publish":
+            channel_access.setdefault(e["from"], []).append((e["to"], "publish", e))
+        elif e["type"] == "subscribe":
+            channel_access.setdefault(e["to"], []).append((e["from"], "subscribe", e))
+
     loop_map = {}
     for e in edges:
         if e["type"] == "loop":
@@ -1223,6 +1304,7 @@ def generate_langgraph_agent(spec):
 
     agents = [e for e in entities if e["type"] == "agent"]
     stores = [e for e in entities if e["type"] == "store"]
+    channels = [e for e in entities if e["type"] == "channel"]
     tools = [e for e in entities if e["type"] == "tool"]
 
     lines = []
@@ -1551,7 +1633,12 @@ def generate_langgraph_agent(spec):
             cond = p.get("condition", "")
             for token in _re_scan.findall(r'\b([a-z_]\w*)\b', cond):
                 if token not in ('is', 'not', 'empty', 'true', 'false', 'none',
-                                 'and', 'or', 'in', 'length', 'count') and token not in all_fields:
+                                 'and', 'or', 'in', 'length', 'count', 'pass',
+                                 'fail', 'if', 'else', 'for', 'while', 'return',
+                                 'class', 'def', 'import', 'from', 'with', 'as',
+                                 'try', 'except', 'finally', 'raise', 'yield',
+                                 'break', 'continue', 'del', 'global', 'nonlocal',
+                                 'assert', 'lambda', 'async', 'await') and token not in all_fields:
                     all_fields[token] = "Any"
 
     # Add {pid}_result keys for all processes with agent invocations
@@ -1677,6 +1764,38 @@ def generate_langgraph_agent(spec):
             w(f'_store_{_safe_name(s["id"])} = Store_{_safe_name(s["id"])}()')
         w('')
 
+    # ── Channel classes (pub/sub message buffers) ──
+    for ch in channels:
+        cid = ch["id"]
+        ctype = ch.get("channel_type", "topic")
+        reducer = ch.get("reducer", "append")
+        label = ch.get("label", cid)
+        w(f'class Channel_{_safe_name(cid)}:')
+        w(f'    """{label} ({ctype}, reducer={reducer})"""')
+        w(f'    def __init__(self):')
+        w(f'        self.messages = []')
+        w('')
+        w(f'    def read(self, key=None):')
+        if reducer == "replace":
+            w(f'        return self.messages[-1] if self.messages else None')
+        else:
+            w(f'        return list(self.messages)')
+        w('')
+        w(f'    def write(self, value, key=None):')
+        if reducer == "replace":
+            w(f'        self.messages = [value]')
+        else:
+            w(f'        self.messages.append(value)')
+        w('')
+        w('')
+
+    # Channel instances (module-level singletons)
+    if channels:
+        w('# Channel instances')
+        for ch in channels:
+            w(f'_ch_{_safe_name(ch["id"])} = Channel_{_safe_name(ch["id"])}()')
+        w('')
+
     # ── Section 7: Agent wrappers ──
     if agents:
         w('')
@@ -1748,6 +1867,7 @@ def generate_langgraph_agent(spec):
         desc = p.get("description", "")
         invocations = invoke_map.get(pid, [])
         store_ops = store_access.get(pid, [])
+        channel_ops = channel_access.get(pid, [])
 
         if ptype == "gate":
             # Gates become routing functions, not nodes
@@ -1775,6 +1895,15 @@ def generate_langgraph_agent(spec):
                     else:
                         w(f'    {_safe_name(store_id)}_data = _store_{_safe_name(store_id)}.read()')
                     w(f'    updates["{store_id}"] = {_safe_name(store_id)}_data')
+                    w('')
+
+            # Channel subscribe reads — BEFORE logic so logic can reference messages
+            for (channel_id, op, edge) in channel_ops:
+                if op == "subscribe":
+                    elabel = edge.get("label", "")
+                    w(f'    # Subscribe: {elabel}')
+                    w(f'    {_safe_name(channel_id)}_msgs = _ch_{_safe_name(channel_id)}.read()')
+                    w(f'    updates["{channel_id}"] = {_safe_name(channel_id)}_msgs')
                     w('')
 
             # Logic block: transform state.data["x"] → state["x"], writes → updates["x"]
@@ -1865,6 +1994,21 @@ def generate_langgraph_agent(spec):
                         w(f'    _store_{_safe_name(store_id)}.write(dict(state))')
                     w('')
 
+            # Channel publish writes
+            for (channel_id, op, edge) in channel_ops:
+                if op == "publish":
+                    elabel = edge.get("label", "")
+                    data_schema = edge.get("data")
+                    w(f'    # Publish: {elabel}')
+                    if data_schema and data_schema in schema_map:
+                        w(f'    _cur = dict(state)')
+                        w(f'    _cur.update(updates)')
+                        w(f'    {_safe_name(channel_id)}_pub = build_input(_cur, "{data_schema}")')
+                        w(f'    _ch_{_safe_name(channel_id)}.write({_safe_name(channel_id)}_pub)')
+                    else:
+                        w(f'    _ch_{_safe_name(channel_id)}.write(dict(state))')
+                    w('')
+
             w(f'    return updates')
 
         elif ptype == "checkpoint":
@@ -1937,14 +2081,25 @@ def generate_langgraph_agent(spec):
             w(f'        print(f"    → {branches[false_idx].get("condition", "no")}")')
             w(f'        return "{_safe_name(false_target)}"')
         else:
-            for i, branch in enumerate(branches[:-1]):
-                branch_cond = branch.get("condition", "")
-                branch_check = _generate_gate_check_lg(branch_cond) if branch_cond else check_expr
-                prefix = "if" if i == 0 else "elif"
-                w(f'    {prefix} {branch_check}:')
-                w(f'        return "{_safe_name(branch["target"])}"')
-            w(f'    else:')
-            w(f'        return "{_safe_name(branches[-1]["target"])}"')
+            default_target = p.get("default")
+            if default_target:
+                for i, branch in enumerate(branches):
+                    branch_cond = branch.get("condition", "")
+                    branch_check = _generate_gate_check_lg(branch_cond) if branch_cond else check_expr
+                    prefix = "if" if i == 0 else "elif"
+                    w(f'    {prefix} {branch_check}:')
+                    w(f'        return "{_safe_name(branch["target"])}"')
+                w(f'    else:')
+                w(f'        return "{_safe_name(default_target)}"')
+            else:
+                for i, branch in enumerate(branches[:-1]):
+                    branch_cond = branch.get("condition", "")
+                    branch_check = _generate_gate_check_lg(branch_cond) if branch_cond else check_expr
+                    prefix = "if" if i == 0 else "elif"
+                    w(f'    {prefix} {branch_check}:')
+                    w(f'        return "{_safe_name(branch["target"])}"')
+                w(f'    else:')
+                w(f'        return "{_safe_name(branches[-1]["target"])}"')
         w('')
         w('')
 
@@ -2038,6 +2193,9 @@ def generate_langgraph_agent(spec):
                     for branch in gate_branches:
                         target = branch["target"]
                         branch_targets[_safe_name(target)] = _safe_name(target)
+                    gate_default = gate_proc.get("default")
+                    if gate_default:
+                        branch_targets[_safe_name(gate_default)] = _safe_name(gate_default)
                     w(f'    graph.add_conditional_edges(')
                     w(f'        "{_safe_name(pid)}",')
                     w(f'        route_{_safe_name(gate_id)},')
@@ -2068,18 +2226,18 @@ def generate_langgraph_agent(spec):
                     target = branch["target"]
                     # If target is itself a gate, resolve it
                     if process_map.get(target, {}).get("type") == "gate":
-                        # Chain gates: use a compound routing function
-                        # For now, add as-is; the routing function handles the chain
                         branch_targets[_safe_name(target)] = _safe_name(target)
                     else:
                         branch_targets[_safe_name(target)] = _safe_name(target)
+                gate_default = gate_proc.get("default")
+                if gate_default:
+                    branch_targets[_safe_name(gate_default)] = _safe_name(gate_default)
 
                 w(f'    graph.add_conditional_edges(')
                 w(f'        "{_safe_name(pid)}",')
                 w(f'        route_{_safe_name(gate_id)},')
                 w(f'        {{')
                 for bname, btarget in branch_targets.items():
-                    # Check if target is END (terminal)
                     w(f'            "{bname}": "{btarget}",')
                 w(f'        }}')
                 w(f'    )')
