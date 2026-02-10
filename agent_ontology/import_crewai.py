@@ -167,8 +167,10 @@ def _extract_agent(node: ast.Assign | ast.AnnAssign, call: ast.Call) -> CrewAgen
     agent.goal = _get_str_keyword(call, "goal")
     agent.backstory = _get_str_keyword(call, "backstory")
     agent.llm = _get_str_keyword(call, "llm")
-    agent.verbose = _get_bool_keyword(call, "verbose") or True
-    agent.allow_delegation = _get_bool_keyword(call, "allow_delegation") or False
+    verbose = _get_bool_keyword(call, "verbose")
+    agent.verbose = verbose if verbose is not None else True
+    delegation = _get_bool_keyword(call, "allow_delegation")
+    agent.allow_delegation = delegation if delegation is not None else False
 
     tools_node = _get_keyword(call, "tools")
     if tools_node:
@@ -317,10 +319,7 @@ def parse_crewai(source: str, filename: str = "<string>") -> dict:
             continue
 
         # Get the value (RHS of assignment)
-        if isinstance(node, ast.Assign):
-            value = node.value
-        else:
-            value = node.value
+        value = node.value
         if value is None:
             continue
 
@@ -409,6 +408,8 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
     task_var_to_id: dict[str, str] = {}
     # Track tool entities to deduplicate
     tool_ids: set[str] = set()
+    # Track step_id → checkpoint_id for human_input tasks
+    checkpoint_map: dict[str, str] = {}
 
     # ── Create agent entities ──
     for agent in agents:
@@ -511,6 +512,12 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                     "label": tool_name,
                     "tool_type": "function",
                 })
+            spec_edges.append({
+                "type": "invoke",
+                "from": step_id,
+                "to": tool_id,
+                "label": f"use {tool_id}",
+            })
 
         # Create checkpoint for human input
         if task.human_input:
@@ -520,6 +527,9 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                 "type": "checkpoint",
                 "label": f"Human review for {step_id}",
             })
+            # Wire step → checkpoint; flow edges will use checkpoint as the outgoing node
+            spec_edges.append({"type": "flow", "from": step_id, "to": checkpoint_id})
+            checkpoint_map[step_id] = checkpoint_id
 
     # ── Create flow edges based on process type ──
     process_type = crew.process if crew else "sequential"
@@ -605,6 +615,13 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                     "from": coord_id,
                     "to": task_var_to_id[task.var_name],
                 })
+
+    # ── Rewire flow edges through checkpoints ──
+    # If a step has a checkpoint, outgoing flow edges should start from the checkpoint
+    if checkpoint_map:
+        for edge in spec_edges:
+            if edge["type"] == "flow" and edge["from"] in checkpoint_map:
+                edge["from"] = checkpoint_map[edge["from"]]
 
     # ── Add terminal logic to last task(s) ──
     if process_type == "sequential" and spec_processes:

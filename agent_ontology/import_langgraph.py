@@ -18,9 +18,7 @@ Usage:
 
 import argparse
 import ast
-import re
 import sys
-import textwrap
 from pathlib import Path
 
 import yaml
@@ -274,6 +272,8 @@ def _find_command_routes(tree):
             fname = None
             if isinstance(func, ast.Name):
                 fname = func.id
+            elif isinstance(func, ast.Attribute):
+                fname = func.attr
             if fname != "Command":
                 continue
             # Extract goto= keyword
@@ -362,27 +362,6 @@ def _resolve_loop_add_nodes(tree, graph_var_names):
 
     return resolved
 
-
-def _find_graph_calls(tree, source_lines):
-    """Legacy wrapper — returns merged graph info for backward compatibility."""
-    graphs = _find_all_graphs(tree, source_lines)
-    if not graphs:
-        return _make_empty_graph()
-    # Merge all graphs into one (legacy behavior)
-    merged = _make_empty_graph()
-    for g in graphs:
-        merged["nodes"].extend(g["nodes"])
-        merged["edges"].extend(g["edges"])
-        merged["conditional_edges"].extend(g["conditional_edges"])
-        merged["end_edges"].extend(g["end_edges"])
-        if g["state_class"] and not merged["state_class"]:
-            merged["state_class"] = g["state_class"]
-    # Entry point from last graph (main graph)
-    for g in reversed(graphs):
-        if g["entry_point"]:
-            merged["entry_point"] = g["entry_point"]
-            break
-    return merged
 
 
 def _find_node_functions(tree, source_lines):
@@ -681,16 +660,11 @@ def import_langgraph(source_path):
         if g["state_class"] and not graph_info["state_class"]:
             graph_info["state_class"] = g["state_class"]
 
-    # Entry point from last (main) graph, or first graph's entry
+    # Entry point from last (main) graph
     for g in reversed(all_graphs):
         if g["entry_point"]:
             graph_info["entry_point"] = g["entry_point"]
             break
-    if not graph_info["entry_point"] and all_graphs:
-        for g in all_graphs:
-            if g["entry_point"]:
-                graph_info["entry_point"] = g["entry_point"]
-                break
 
     # Add Command-based routing as edges
     # Map func_name → node_name
@@ -990,14 +964,21 @@ from the skeleton (processes, edges, schemas) and add semantic information \
 (tool entities, descriptions, model names, missing edges, system prompts).
 Output ONLY the YAML."""
 
-    response = call_llm(model, _LLM_AUGMENT_SYSTEM, user_prompt, temperature=0.2, max_tokens=8192)
+    try:
+        response = call_llm(model, _LLM_AUGMENT_SYSTEM, user_prompt, temperature=0.2, max_tokens=8192)
+    except Exception as exc:
+        print(f"Warning: LLM augmentation failed ({exc}), returning AST-only spec", file=sys.stderr)
+        return skeleton_spec
+
     enriched_yaml = extract_yaml(response)
 
     try:
         enriched = yaml.safe_load(enriched_yaml)
         if not isinstance(enriched, dict):
+            print("Warning: LLM returned non-dict YAML, returning AST-only spec", file=sys.stderr)
             return skeleton_spec
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        print(f"Warning: LLM returned invalid YAML ({exc}), returning AST-only spec", file=sys.stderr)
         return skeleton_spec
 
     # Merge: LLM-enriched spec takes precedence for content, but skeleton structure is preserved
@@ -1043,9 +1024,11 @@ def _merge_specs(skeleton: dict, enriched: dict) -> dict:
     """
     merged = dict(enriched)
 
-    # Preserve skeleton's entry_point and name
-    merged["entry_point"] = skeleton.get("entry_point", merged.get("entry_point"))
-    merged["name"] = skeleton.get("name", merged.get("name"))
+    # Preserve skeleton's entry_point and name (only if non-None)
+    skel_ep = skeleton.get("entry_point")
+    if skel_ep is not None:
+        merged["entry_point"] = skel_ep
+    merged["name"] = skeleton.get("name") or merged.get("name")
     merged["version"] = skeleton.get("version", "1.0")
 
     # Ensure all skeleton processes exist in merged
@@ -1097,7 +1080,11 @@ def main():
         print(f"Error: file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    spec = import_langgraph(input_path)
+    try:
+        spec = import_langgraph(input_path)
+    except SyntaxError as exc:
+        print(f"Error: {input_path} is not valid Python: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.llm_augment:
         if not args.quiet:
