@@ -361,7 +361,7 @@ OpenClaw uses a **reified hypergraph** constrained by an **ontology**:
 - **Reified hypergraph**: Any relationship can be a node, any node can participate in any number of relationships. This means templates, dynamic topology, conditional wiring, self-modification — all expressible.
 - **Ontology**: Constrains the hypergraph so code generators know what to expect. Defines types, required fields, and validation rules.
 
-See `ROADMAP.md` for the long-term vision (formal ontology, neuro-symbolic reasoning) and `ONTOLOGY.yaml` for the complete type system.
+See `SPEC.md` for the standalone format specification, `ROADMAP.md` for the long-term vision, and `ONTOLOGY.yaml` for the internal type system definition.
 
 ## Requirements
 
@@ -390,7 +390,8 @@ compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing
 benchmarks/             # Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) and scoring
 traces/                 # Per-agent trace files from test runs
-ONTOLOGY.yaml           # The type system
+ONTOLOGY.yaml           # The type system (internal)
+SPEC.md                 # Formal spec format specification (standalone)
 requirements.txt        # Python dependencies
 requirements-dev.txt    # Development/research dependencies
 validate.py             # Spec validator (25+ rules)
