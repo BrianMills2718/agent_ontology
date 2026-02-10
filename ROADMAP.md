@@ -1,7 +1,7 @@
 # Agent Ontology Roadmap
 
 **Date:** 2026-02-10
-**Current state:** v0.2 ontology, 23 specs, 30 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI + AutoGen), spec-level state schema support, benchmark evolution
+**Current state:** v0.2 ontology, 23 specs, 31 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI + AutoGen + OpenAI Agents SDK + Google ADK), spec-level state schema support, benchmark evolution
 
 ---
 
@@ -157,6 +157,22 @@ AST-based parser extracts OpenAI Agents SDK (`from agents import ...`) code → 
 - Pydantic BaseModel/TypedDict/dataclass → output schemas
 - `--llm-augment` flag for LLM-enhanced import
 - CLI entry point: `ao-import-openai-agents`
+
+#### 2.5 Google ADK Importer — DONE (import_google_adk.py)
+AST-based parser extracts Google Agent Development Kit (`from google.adk.agents import ...`) code → valid YAML specs:
+- `Agent`/`LlmAgent` → agent entity + step process with output_key logic
+- `SequentialAgent` → flow edges between sub_agent steps
+- `ParallelAgent` → fan-out step invoking all sub_agents
+- `LoopAgent` → gate + loop edge around sub_agent steps (with max_iterations)
+- Function tools → tool entity + invoke edge
+- `google_search`, `exit_loop` built-in tools → tool entities
+- `AgentTool(agent=...)` → invoke edge to sub-agent
+- `output_key` → step logic for state data flow
+- `output_schema` (Pydantic BaseModel) → schema extraction
+- `Runner(agent=...)` → root agent detection
+- Recursive `_flatten_agent_tree()` returns (entry, exit) tuples for proper sequential→loop→parallel wiring
+- `--llm-augment` flag for LLM-enhanced import
+- CLI entry point: `ao-import-google-adk`
 
 ### Phase 3: Production Code Generation
 **Goal**: Generated agents that actually work with real tools and persistent memory.
@@ -459,3 +475,6 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-10 | Benchmark evolution fix | Rewrote compute_fitness_benchmark to run inline instead of subprocess. All candidates now score properly (was: all BENCH_FAIL). |
 | 2026-02-10 | Self-improver spec added | 23rd spec: self-improvement loop with meta-review, strategy adjustment, re-execution, and convergence gate. |
 | 2026-02-10 | Spec-level state schema support | instantiate.py now honors state field: initial values, channel reducers as Annotated in LangGraph TypedDict. 182/182 property tests pass. |
+| 2026-02-10 | OpenAI Agents SDK importer (Phase 2.4) complete | AST-based, handles handoffs, guardrails→policy processes, agent.as_tool(), asyncio.gather fan-out, output schemas. 0 errors on all test files. |
+| 2026-02-10 | Google ADK importer (Phase 2.5) complete | AST-based, handles Agent/SequentialAgent/ParallelAgent/LoopAgent composition, recursive _flatten_agent_tree with (entry,exit) tuples. 15/15 round-trip tests pass. |
+| 2026-02-10 | All 5 major framework importers complete | LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, Google ADK. The "Rosetta Stone" vision is realized for import. |
