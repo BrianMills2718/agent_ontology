@@ -30,7 +30,7 @@ import importlib
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-import mutate
+from . import mutate
 from . import validate as validator_module
 
 
@@ -53,6 +53,7 @@ def validate_spec_text(yaml_text):
 
 def validate_spec_file(path):
     """Validate a spec file. Returns (ok, output)."""
+    path = os.path.abspath(path)
     result = subprocess.run(
         [sys.executable, os.path.join(SCRIPT_DIR, "validate.py"), path],
         capture_output=True, text=True, cwd=SCRIPT_DIR
@@ -63,6 +64,8 @@ def validate_spec_file(path):
 
 def instantiate_spec(spec_path, agent_path):
     """Instantiate a spec to a Python agent file. Returns True on success."""
+    spec_path = os.path.abspath(spec_path)
+    agent_path = os.path.abspath(agent_path)
     result = subprocess.run(
         [sys.executable, os.path.join(SCRIPT_DIR, "instantiate.py"), spec_path, "-o", agent_path],
         capture_output=True, text=True, cwd=SCRIPT_DIR
@@ -218,7 +221,7 @@ def _update_lineage(spec, parent_names, generation, mutation_ops):
 def _detect_pattern_names(spec):
     """Detect pattern names in a spec (lazy import to avoid circular)."""
     try:
-        import patterns as pat_mod
+        from . import patterns as pat_mod
         detected = pat_mod.detect_patterns(spec)
         return [pname for pname, _, _ in detected]
     except Exception:
@@ -254,6 +257,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
     """Run evolutionary search. Returns list of generation results."""
     import yaml
 
+    base_spec_path = os.path.abspath(base_spec_path)
     with open(base_spec_path) as f:
         base_spec = yaml.safe_load(f)
 
@@ -409,7 +413,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             "generation": gen + 1,
             "candidates": len(candidates),
             "results": gen_results,
-            "survivors": [name for _, name, _, _ in scored[:top_k] if _ > 0],
+            "survivors": [name for fitness, name, _, _ in scored[:top_k] if fitness > 0],
             "best_fitness": scored[0][0] if scored else 0,
             "best_name": scored[0][1] if scored else "none",
         })

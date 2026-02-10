@@ -730,7 +730,7 @@ def modify_prompt(spec):
 
 def _get_patterns_module():
     """Lazy import of patterns module to avoid circular imports."""
-    import patterns as pat_mod
+    from . import patterns as pat_mod
     return pat_mod
 
 

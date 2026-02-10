@@ -129,6 +129,10 @@ TEST_INPUTS = {
         "query": "Build a simple URL shortener web application with a REST API.",
         "max_iterations": 1,
     },
+    "self_improver": {
+        "spec_yaml": open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_ontology", "specs", "self_refine.yaml")).read(),
+        "max_rounds": 1,
+    },
 }
 
 # ── Validation criteria per agent ──
@@ -308,6 +312,15 @@ def validate_software_team(state):
         issues.append("No code output produced")
     return issues
 
+def validate_self_improver(state):
+    """Self Improver should analyze a spec and produce improvements or confirm no changes needed."""
+    issues = []
+    if not state.data.get("final_spec_yaml"):
+        issues.append("No final spec YAML produced")
+    if state.data.get("total_improvements") is None:
+        issues.append("No improvement count")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -330,6 +343,7 @@ VALIDATORS = {
     "meta_prompting": validate_meta_prompting,
     "customer_support_swarm": validate_customer_support_swarm,
     "software_team": validate_software_team,
+    "self_improver": validate_self_improver,
 }
 
 # ── Timeout context manager ──
@@ -450,6 +464,7 @@ AGENT_NAMES = [
     "map_reduce", "socratic_tutor",
     "reflexion", "mixture_of_agents", "meta_prompting",
     "customer_support_swarm", "software_team",
+    "self_improver",
 ]
 
 DEFAULT_COMPARE_MODELS = [
