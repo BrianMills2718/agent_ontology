@@ -113,6 +113,16 @@ python3 benchmark.py --suite gsm8k --agent self_refine --examples 3
 python3 benchmark.py --suite hotpotqa --agent react --examples 5
 python3 benchmark.py --suite arc --agent react --examples 5
 python3 benchmark.py --suite humaneval --agent multi_agent_codegen --examples 3
+
+# 29. OWL bridge: round-trip test (YAML -> OWL -> YAML)
+python3 owl_bridge.py --round-trip
+python3 owl_bridge.py --round-trip specs/react.yaml
+
+# 30. OWL bridge: pattern classification via OWL structural model
+python3 owl_bridge.py --classify
+
+# 31. OWL bridge: export reconstructed YAML from OWL
+python3 owl_bridge.py --export specs/react.yaml
 ```
 
 ## The Pipeline
@@ -298,8 +308,9 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `test_properties.py` | Property-based structural tests (174+) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 | `import_langgraph.py` | Import LangGraph StateGraph → YAML spec | `python3 import_langgraph.py agent.py -o spec.yaml` |
-| `ontology_owl.py` | OWL/DL pattern classification (experimental) | `python3 ontology_owl.py` |
-| `ontology_rdf.py` | RDF export + semantic pattern queries (experimental) | `python3 ontology_rdf.py` |
+| `owl_bridge.py` | OWL dual representation: YAML<->OWL round-trip + classification | `python3 owl_bridge.py --round-trip` |
+| `ontology_owl.py` | OWL/DL pattern classification | `python3 ontology_owl.py` |
+| `ontology_rdf.py` | RDF export + semantic pattern queries | `python3 ontology_rdf.py` |
 
 ## Architecture
 
@@ -420,8 +431,9 @@ test_properties.py      # Property-based structural tests (174+ tests)
 patterns.py             # Pattern library (7 reusable architectural patterns)
 compose.py              # Pattern composition operator
 import_langgraph.py     # Import LangGraph StateGraph Python files → YAML specs
-ontology_owl.py         # OWL/DL pattern classification (experimental)
-ontology_rdf.py         # RDF export + semantic pattern queries (experimental)
+owl_bridge.py           # OWL dual representation: YAML<->OWL round-trip + classification
+ontology_owl.py         # OWL/DL pattern classification
+ontology_rdf.py         # RDF export + semantic pattern queries
 gaps.md                 # Ontology expressiveness gap analysis
 ROADMAP.md              # Strategic roadmap and long-term vision
 .github/workflows/      # CI: validate, lint, syntax-check, smoke-test

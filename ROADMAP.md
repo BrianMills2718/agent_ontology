@@ -1,7 +1,7 @@
 # OpenClaw Roadmap
 
 **Date:** 2026-02-09
-**Current state:** v0.2 ontology, 22 specs, 25 tools, 2 code gen backends
+**Current state:** v0.2 ontology, 22 specs, 26 tools, 2 code gen backends, OWL dual representation
 
 ---
 
@@ -287,13 +287,12 @@ Reasoner updates recommendations → LLM uses updated knowledge → ...
 
 **Decision**: Formal data modeling is justified. The next question is infrastructure — do we invest in a triplestore (for SPARQL), or keep Python-native queries over the RDF data model?
 
-#### Phase B: Dual Representation
-- YAML specs remain the authoring format (human-friendly)
-- OWL version generated automatically from YAML (or vice versa)
-- Reasoning tools operate on OWL version
-- validate.py gains "deep validation" mode using reasoner
-- **Goal**: YAML and OWL coexist, each used where it's strongest
-- **Success criteria**: All 22 specs round-trip between YAML and OWL without information loss
+#### Phase B: Dual Representation — DONE (owl_bridge.py)
+`owl_bridge.py` — Bidirectional YAML <-> OWL conversion with lossless round-trip. 22/22 specs pass YAML→OWL→YAML round-trip with zero information loss. Round-tripped specs also pass ontology validation (22/22).
+
+Architecture: structural model (OWL classes + object properties) enables reasoning and pattern classification (9 patterns across 22 specs). Raw data (JSON-encoded YAML dicts in data properties) enables lossless reconstruction. Both coexist on the same OWL instances.
+
+Features: `--round-trip` (test all specs), `--classify` (pattern classification via OWL), `--export` (reconstruct YAML from OWL). Uses isolated owlready2 worlds to prevent state leakage. Extends ontology_owl.py's class hierarchy with Schema class, round-trip data properties, and order-preservation properties.
 
 #### Phase C: Reasoning-Powered Tools
 - `compose.py` replaced by constraint-based composition over OWL
@@ -431,3 +430,4 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-09 | Phase 1.1 (SPEC.md) complete | ~945 lines, cross-validated against all 22 specs, 3 gaps found and fixed |
 | 2026-02-09 | 5 bugs fixed from Codex audit | trace format mismatch, migrate loop→back_edge, fan-out transitions, crew output, quote escaping. 174/174 property tests pass. |
 | 2026-02-09 | JSON Schema (Phase 1.3) before LangGraph importer | Quick win that enables tooling; importer is highest leverage but larger effort |
+| 2026-02-09 | OWL dual representation (Phase B) complete | 22/22 lossless round-trip. Structural model for reasoning, JSON data properties for reconstruction. Isolated worlds prevent state leakage. |
