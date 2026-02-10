@@ -149,7 +149,10 @@ entity_types:
       delegation:       { type: boolean, default: false, description: "Whether members can delegate to each other" }
       speaker_selection: { type: "enum[round_robin, llm_based, priority, random, custom]", description: "How the next speaker is chosen in conversational mode" }
       max_rounds:       { type: integer }
-      termination:      { type: string, description: "Composable termination condition" }
+      termination:
+        description: "Composable termination condition"
+        type: "termination_condition | string"
+        notes: "String for simple conditions, structured for composition"
     visual:
       shape: rounded_rect_double
       default_color: "#2980b9"
@@ -272,7 +275,10 @@ process_types:
         item_schema:
           entity: { type: node_ref }
           role:   { type: string, description: "Role in the protocol (proposer, voter, mediator, etc.)" }
-      termination: { type: string, description: "When the protocol ends (consensus, timeout, rounds)" }
+      termination:
+        type: "termination_condition | string"
+        description: "When the protocol ends (consensus, timeout, rounds)"
+        notes: "String for simple conditions, structured for composition"
     optional:
       rules:    { type: "list<string>", description: "Protocol rules in order" }
       state:    { type: schema_ref, description: "Shared state schema" }
@@ -552,6 +558,33 @@ schema_definition:
 # ─────────────────────────────────────────────────────────────
 # An agent spec conforming to this ontology has this shape:
 
+# ─────────────────────────────────────────────────────────────
+# REUSABLE TYPE DEFINITIONS
+# ─────────────────────────────────────────────────────────────
+# Types used by multiple entity/process types.
+
+types:
+  termination_condition:
+    description: "A composable termination condition for protocols, teams, and loops"
+    notes: "Leaf conditions are simple predicates; composite conditions use boolean operators"
+    variants:
+      simple:    { condition: { type: string, description: "A boolean condition string (e.g., 'score > 8')" } }
+      max_turns: { count: { type: integer, description: "Maximum number of turns/iterations" } }
+      max_time:  { duration: { type: string, description: "Maximum wall-clock duration (e.g., '5m', '1h')" } }
+      text_match: { pattern: { type: string }, in_field: { type: string, description: "State field to check" } }
+      composite:
+        operator:   { type: "enum[and, or, not]" }
+        conditions: { type: "list<termination_condition>", description: "Sub-conditions to compose" }
+    examples:
+      - description: "Simple max turns"
+        value: { max_turns: { count: 10 } }
+      - description: "Composite: max turns OR consensus text"
+        value:
+          operator: or
+          conditions:
+            - { max_turns: { count: 10 } }
+            - { text_match: { pattern: "CONSENSUS_REACHED", in_field: "last_message" } }
+
 spec_shape:
   required:
     name:      { type: string }
@@ -564,6 +597,13 @@ spec_shape:
     schemas:     { type: "list<schema_definition>", description: "Data shapes used in the spec" }
     entry_point: { type: node_ref, description: "Where execution starts" }
     metadata:    { type: object }
+    checkpointing:
+      description: "Checkpoint and recovery configuration for the spec"
+      properties:
+        enabled:    { type: boolean, default: false }
+        strategy:   { type: "enum[every_step, every_gate, on_error, manual]", default: every_step }
+        storage:    { type: "enum[memory, file, database]", default: memory }
+        time_travel: { type: boolean, default: false, description: "Whether forking from past checkpoints is supported" }
     state:
       description: "Typed runtime state schema for this spec"
       properties:
@@ -684,6 +724,12 @@ validation:
     severity: error
 
   - rule: "Subscribe edges must originate from a channel and target an agent or step"
+    severity: error
+
+  - rule: "Composable termination conditions must use valid operators (and, or, not)"
+    severity: error
+
+  - rule: "Composable termination with 'not' operator must have exactly one sub-condition"
     severity: error
 
 # ─────────────────────────────────────────────────────────────

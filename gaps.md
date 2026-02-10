@@ -1,8 +1,19 @@
 # OpenClaw Agent Ontology -- Expressiveness Gap Analysis
 
 **Date:** 2026-02-09
-**Ontology Version:** 0.1
+**Ontology Version:** 0.2 (updated from 0.1)
 **Frameworks Analyzed:** CAMEL, MetaGPT, LangGraph, OpenAI Agents SDK, CrewAI, AutoGen v0.4
+
+> **Status:** Gaps 1-6 addressed in v0.2, Gaps 7-9 addressed in v0.2.1. Gap 10 deferred (runtime concern).
+> - Gap 1 (Channels): `channel` entity + `publish`/`subscribe` edges
+> - Gap 2 (Handoffs): `handoff` edge type
+> - Gap 3 (Typed state): `state` field on `spec_shape` with channels/reducers
+> - Gap 4 (Event-driven): `activates` flag on `subscribe` edges
+> - Gap 5 (Teams): `team` entity type with strategy/delegation/speaker_selection
+> - Gap 6 (Conversations): `conversation` entity type
+> - Gap 7 (Checkpointing): `checkpointing` config on `spec_shape`
+> - Gap 8 (Speaker selection): `speaker_selection` field on `team` entity
+> - Gap 9 (Composable termination): `termination_condition` structured type
 
 ---
 
