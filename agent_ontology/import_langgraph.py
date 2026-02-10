@@ -54,17 +54,22 @@ def _get_dict_literal(node):
 
 
 def _find_typed_dicts(tree):
-    """Find TypedDict class definitions -> list of (name, fields)."""
+    """Find TypedDict and state class definitions -> list of (name, fields).
+
+    Handles TypedDict, MessagesState, BaseModel, and other state base classes.
+    """
+    # Known state base classes (extend TypedDict or similar)
+    STATE_BASES = {"TypedDict", "MessagesState", "AgentState", "BaseModel"}
     results = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        # Check if base class is TypedDict
+        # Check if base class is TypedDict or a known state class
         is_typed_dict = False
         for base in node.bases:
-            if isinstance(base, ast.Name) and base.id == "TypedDict":
+            if isinstance(base, ast.Name) and base.id in STATE_BASES:
                 is_typed_dict = True
-            elif isinstance(base, ast.Attribute) and base.attr == "TypedDict":
+            elif isinstance(base, ast.Attribute) and base.attr in STATE_BASES:
                 is_typed_dict = True
         for kw in node.keywords:
             pass  # total=False etc
@@ -113,56 +118,68 @@ def _annotation_to_type(ann):
     return "object"
 
 
-def _find_graph_calls(tree, source_lines):
-    """Find StateGraph construction and all graph builder API calls.
-
-    Returns dict with:
-      state_class: str
-      entry_point: str
-      nodes: [(name, func_name)]
-      edges: [(src, dst)]
-      conditional_edges: [(src, router_func, mapping)]
-    """
-    result = {
+def _make_empty_graph():
+    """Create an empty graph info dict."""
+    return {
         "state_class": None,
         "entry_point": None,
         "nodes": [],
         "edges": [],
         "conditional_edges": [],
         "end_edges": [],
+        "var_name": None,
     }
 
-    # Track which variable names are the graph builder
-    graph_vars = set()
 
+def _find_all_graphs(tree, source_lines):
+    """Find ALL StateGraph constructions and their builder API calls.
+
+    Returns a list of graph info dicts, one per StateGraph.
+    Each has: state_class, entry_point, nodes, edges, conditional_edges, end_edges, var_name.
+    """
+    # Map graph variable name → graph info
+    graphs_by_var: dict[str, dict] = {}
+    # Track order of graph creation
+    graph_order: list[str] = []
+
+    # First pass: find all StateGraph() constructions
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) and not isinstance(node, ast.Expr):
-            # Check for StateGraph(...) assignments
-            if isinstance(node, ast.Assign):
-                pass  # handled below
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        val = node.value
+        if not isinstance(val, ast.Call):
+            continue
+        func = val.func
+        if not (isinstance(func, ast.Name) and func.id == "StateGraph"):
+            continue
+        if not isinstance(target, ast.Name):
             continue
 
-        # Handle: graph = StateGraph(AgentState)
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            val = node.value
-            if isinstance(val, ast.Call):
-                func = val.func
-                if isinstance(func, ast.Name) and func.id == "StateGraph":
-                    if isinstance(target, ast.Name):
-                        graph_vars.add(target.id)
-                    if val.args:
-                        arg = val.args[0]
-                        if isinstance(arg, ast.Name):
-                            result["state_class"] = arg.id
+        var_name = target.id
+        g = _make_empty_graph()
+        g["var_name"] = var_name
+        if val.args:
+            arg = val.args[0]
+            if isinstance(arg, ast.Name):
+                g["state_class"] = arg.id
+        graphs_by_var[var_name] = g
+        graph_order.append(var_name)
 
-        # Handle method calls on graph builder
+    if not graphs_by_var:
+        # Fallback: return a single empty graph
+        g = _make_empty_graph()
+        return [g]
+
+    # Second pass: associate method calls with their graph variable
+    for node in ast.walk(tree):
         call = None
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             call = node.value
         elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             call = node.value
-
         if call is None:
             continue
 
@@ -171,56 +188,201 @@ def _find_graph_calls(tree, source_lines):
             continue
 
         method = func.attr
-        # Check if the object is a known graph variable
         obj = func.value
         obj_name = None
         if isinstance(obj, ast.Name):
             obj_name = obj.id
 
-        # set_entry_point
+        if obj_name not in graphs_by_var:
+            continue
+
+        g = graphs_by_var[obj_name]
+
         if method == "set_entry_point" and call.args:
             ep = _get_string(call.args[0])
             if ep:
-                result["entry_point"] = ep
+                g["entry_point"] = ep
 
-        # add_node
         elif method == "add_node" and len(call.args) >= 2:
             name = _get_string(call.args[0])
             func_ref = call.args[1]
             func_name = None
             if isinstance(func_ref, ast.Name):
                 func_name = func_ref.id
+            elif isinstance(func_ref, ast.Attribute):
+                func_name = func_ref.attr
             elif isinstance(func_ref, ast.Lambda):
                 func_name = "__lambda__"
             if name:
-                result["nodes"].append((name, func_name))
+                g["nodes"].append((name, func_name))
 
-        # add_edge
         elif method == "add_edge" and len(call.args) >= 2:
             src = _get_string(call.args[0])
             dst = call.args[1]
             dst_str = _get_string(dst)
-            # Check for END
             if dst_str is None and isinstance(dst, ast.Name) and dst.id == "END":
                 dst_str = "__END__"
+            # Also handle START
+            if src is None and isinstance(call.args[0], ast.Name) and call.args[0].id == "START":
+                src = "__START__"
             if src and dst_str:
                 if dst_str == "__END__":
-                    result["end_edges"].append(src)
+                    g["end_edges"].append(src)
+                elif src == "__START__":
+                    g["entry_point"] = dst_str
                 else:
-                    result["edges"].append((src, dst_str))
+                    g["edges"].append((src, dst_str))
 
-        # add_conditional_edges
-        elif method == "add_conditional_edges" and len(call.args) >= 3:
+        elif method == "set_finish_point" and call.args:
+            ep = _get_string(call.args[0])
+            if ep:
+                g["end_edges"].append(ep)
+
+        elif method == "add_conditional_edges" and len(call.args) >= 2:
             src = _get_string(call.args[0])
             router = call.args[1]
             router_name = None
             if isinstance(router, ast.Name):
                 router_name = router.id
-            mapping = _get_dict_literal(call.args[2])
+            # Mapping can be arg[2] or omitted (router returns node names directly)
+            mapping = None
+            if len(call.args) >= 3:
+                mapping = _get_dict_literal(call.args[2])
             if src and mapping:
-                result["conditional_edges"].append((src, router_name, mapping))
+                g["conditional_edges"].append((src, router_name, mapping))
+            elif src and router_name and not mapping:
+                # Router returns node names directly — we'll infer targets from function body
+                g["conditional_edges"].append((src, router_name, None))
 
-    return result
+    return [graphs_by_var[v] for v in graph_order]
+
+
+def _find_command_routes(tree):
+    """Find Command(goto=...) return patterns in node functions.
+
+    Returns dict: func_name -> list of target node names.
+    """
+    routes: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        targets = []
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            fname = None
+            if isinstance(func, ast.Name):
+                fname = func.id
+            if fname != "Command":
+                continue
+            # Extract goto= keyword
+            for kw in child.keywords:
+                if kw.arg == "goto":
+                    val = _get_string(kw.value)
+                    if val:
+                        targets.append(val)
+                    elif isinstance(kw.value, ast.Name):
+                        targets.append(kw.value.id)
+                    elif isinstance(kw.value, ast.List):
+                        for elt in kw.value.elts:
+                            s = _get_string(elt)
+                            if s:
+                                targets.append(s)
+        if targets:
+            routes[node.name] = targets
+    return routes
+
+
+def _resolve_loop_add_nodes(tree, graph_var_names):
+    """Resolve add_node() calls inside for-loops that iterate over tuple lists.
+
+    Handles patterns like:
+        nodes = [("name1", func1), ("name2", func2)]
+        for i in range(len(nodes)):
+            name, node = nodes[i]
+            builder.add_node(name, node)
+
+    Returns list of (graph_var, node_name, func_name) tuples.
+    """
+    # Find list assignments with string-tuple elements: var = [("str", name), ...]
+    tuple_lists: dict[str, list[tuple[str, str]]] = {}
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        val = node.value
+        if not isinstance(target, ast.Name) or not isinstance(val, ast.List):
+            continue
+        items = []
+        for elt in val.elts:
+            if isinstance(elt, ast.Tuple) and len(elt.elts) >= 2:
+                first = elt.elts[0]
+                second = elt.elts[1]
+                name_str = _get_string(first)
+                func_str = second.id if isinstance(second, ast.Name) else None
+                if name_str:
+                    items.append((name_str, func_str or "__unknown__"))
+        if items:
+            tuple_lists[target.id] = items
+
+    # Find for-loops that call graph.add_node() using loop variables
+    resolved = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For):
+            continue
+        # Check body for graph.add_node calls
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            if not isinstance(func, ast.Attribute) or func.attr != "add_node":
+                continue
+            obj = func.value
+            if not isinstance(obj, ast.Name) or obj.id not in graph_var_names:
+                continue
+            # This is a graph.add_node call in a for-loop
+            # Try to find which tuple list is being iterated
+            # Look at the for-loop's iter for references to tuple_lists
+            iter_var = None
+            if isinstance(node.iter, ast.Call):
+                # range(len(var)) pattern
+                if isinstance(node.iter.func, ast.Name) and node.iter.func.id == "range":
+                    if node.iter.args:
+                        arg = node.iter.args[0]
+                        if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "len":
+                            if arg.args and isinstance(arg.args[0], ast.Name):
+                                iter_var = arg.args[0].id
+            elif isinstance(node.iter, ast.Name):
+                iter_var = node.iter.id
+
+            if iter_var and iter_var in tuple_lists:
+                for name, func_name in tuple_lists[iter_var]:
+                    resolved.append((obj.id, name, func_name))
+
+    return resolved
+
+
+def _find_graph_calls(tree, source_lines):
+    """Legacy wrapper — returns merged graph info for backward compatibility."""
+    graphs = _find_all_graphs(tree, source_lines)
+    if not graphs:
+        return _make_empty_graph()
+    # Merge all graphs into one (legacy behavior)
+    merged = _make_empty_graph()
+    for g in graphs:
+        merged["nodes"].extend(g["nodes"])
+        merged["edges"].extend(g["edges"])
+        merged["conditional_edges"].extend(g["conditional_edges"])
+        merged["end_edges"].extend(g["end_edges"])
+        if g["state_class"] and not merged["state_class"]:
+            merged["state_class"] = g["state_class"]
+    # Entry point from last graph (main graph)
+    for g in reversed(graphs):
+        if g["entry_point"]:
+            merged["entry_point"] = g["entry_point"]
+            break
+    return merged
 
 
 def _find_node_functions(tree, source_lines):
@@ -335,6 +497,22 @@ def _analyze_router(tree, router_name, mapping):
         if isinstance(node, ast.FunctionDef) and node.name == router_name:
             func_node = node
             break
+
+    if mapping is None:
+        # No explicit mapping — try to infer from return statements in router
+        if func_node:
+            inferred_mapping = {}
+            for child in ast.walk(func_node):
+                if isinstance(child, ast.Return) and child.value:
+                    val = _get_string(child.value)
+                    if val:
+                        inferred_mapping[val] = val
+            if inferred_mapping:
+                mapping = inferred_mapping
+            else:
+                return "condition unknown", [], False
+        else:
+            return "condition unknown", [], False
 
     if not func_node:
         branches = []
@@ -451,10 +629,85 @@ def import_langgraph(source_path):
 
     # Extract all components
     typed_dicts = _find_typed_dicts(tree)
-    graph_info = _find_graph_calls(tree, source_lines)
+    all_graphs = _find_all_graphs(tree, source_lines)
+    command_routes = _find_command_routes(tree)
     node_funcs = _find_node_functions(tree, source_lines)
     invoke_funcs = _find_invoke_functions(tree)
     string_consts = _find_string_constants(tree)
+
+    # Resolve loop-based add_node patterns
+    graph_var_names = {g["var_name"] for g in all_graphs if g["var_name"]}
+    loop_nodes = _resolve_loop_add_nodes(tree, graph_var_names)
+
+    # Add loop-resolved nodes to their respective graphs
+    for gvar, node_name, func_name in loop_nodes:
+        for g in all_graphs:
+            if g["var_name"] == gvar:
+                # Avoid duplicates
+                existing_names = {n for n, _ in g["nodes"]}
+                if node_name not in existing_names:
+                    g["nodes"].append((node_name, func_name))
+                break
+
+    # Also resolve loop-based add_edge patterns (linear chains from tuple lists)
+    # Handle: if i > 0: builder.add_edge(nodes[i-1][0], name)
+    for g in all_graphs:
+        gvar = g["var_name"]
+        if not gvar:
+            continue
+        loop_graph_nodes = [n for gv, n, f in loop_nodes if gv == gvar]
+        if not loop_graph_nodes:
+            continue
+        # Create linear chain edges between consecutive loop nodes
+        existing_edges = set(g["edges"])
+        for i in range(1, len(loop_graph_nodes)):
+            edge = (loop_graph_nodes[i - 1], loop_graph_nodes[i])
+            if edge not in existing_edges:
+                g["edges"].append(edge)
+        # Infer entry/finish point if not resolved as string constants
+        if not g["entry_point"]:
+            g["entry_point"] = loop_graph_nodes[0]
+
+    # Merge all graphs (preserving all nodes/edges from all sub-graphs)
+    graph_info = _make_empty_graph()
+    all_node_names = set()
+    for g in all_graphs:
+        graph_info["nodes"].extend(g["nodes"])
+        graph_info["edges"].extend(g["edges"])
+        graph_info["conditional_edges"].extend(g["conditional_edges"])
+        graph_info["end_edges"].extend(g["end_edges"])
+        for name, _ in g["nodes"]:
+            all_node_names.add(name)
+        if g["state_class"] and not graph_info["state_class"]:
+            graph_info["state_class"] = g["state_class"]
+
+    # Entry point from last (main) graph, or first graph's entry
+    for g in reversed(all_graphs):
+        if g["entry_point"]:
+            graph_info["entry_point"] = g["entry_point"]
+            break
+    if not graph_info["entry_point"] and all_graphs:
+        for g in all_graphs:
+            if g["entry_point"]:
+                graph_info["entry_point"] = g["entry_point"]
+                break
+
+    # Add Command-based routing as edges
+    # Map func_name → node_name
+    func_to_node = {}
+    for node_name, func_name in graph_info["nodes"]:
+        if func_name:
+            func_to_node[func_name] = node_name
+
+    for func_name, targets in command_routes.items():
+        src_node = func_to_node.get(func_name)
+        if not src_node:
+            continue
+        for target in targets:
+            if target == "END" or target == "__END__":
+                graph_info["end_edges"].append(src_node)
+            elif target in all_node_names:
+                graph_info["edges"].append((src_node, target))
 
     # Build spec
     spec = {
@@ -568,6 +821,8 @@ def import_langgraph(source_path):
     # --- Create terminal step if any gate branches go to END ---
     needs_terminal = False
     for src, router_name, mapping in graph_info["conditional_edges"]:
+        if mapping is None:
+            continue
         for target in mapping.values():
             if target == "__END__" or target == "END":
                 needs_terminal = True
@@ -654,6 +909,16 @@ def import_langgraph(source_path):
         if dst_idx >= 0 and src_idx > dst_idx:
             e["type"] = "loop"
 
+    # --- Deduplicate edges ---
+    seen_edges: set[tuple] = set()
+    unique_edges = []
+    for e in edges:
+        key = (e["type"], e["from"], e["to"])
+        if key not in seen_edges:
+            seen_edges.add(key)
+            unique_edges.append(e)
+    edges = unique_edges
+
     spec["entities"] = entities if entities else [
         {"id": "llm", "type": "agent", "label": "LLM", "model": "unknown"}
     ]
@@ -663,6 +928,150 @@ def import_langgraph(source_path):
         spec["schemas"] = schemas
 
     return spec
+
+
+# ═══════════════════════════════════════════════════════════════
+# LLM-Augmented Import
+# ═══════════════════════════════════════════════════════════════
+
+_LLM_AUGMENT_SYSTEM = """\
+You are an expert at understanding LangGraph agent code and converting it to \
+Agent Ontology YAML specs. You are given:
+1. The full source code of a LangGraph agent
+2. An AST-extracted skeleton spec (incomplete — only captures graph topology)
+
+Your job: produce a COMPLETE, ENRICHED Agent Ontology YAML spec that adds the \
+semantic information the AST parser missed.
+
+## What you must add or improve:
+- **Tool entities**: Identify all tools used (search, calculator, etc.) and add \
+  them as entities with type: tool
+- **Agent descriptions**: Add meaningful descriptions for each agent entity \
+  explaining its role
+- **Process descriptions**: Add a description for each step explaining what it does
+- **Model configuration**: Identify the actual model used (e.g. claude-3-sonnet, \
+  gpt-4o) instead of "unknown"
+- **Missing edges**: Add invoke edges from steps to agents/tools. Add any \
+  flow/loop edges the AST parser missed.
+- **Gate conditions**: Replace raw AST condition strings with human-readable \
+  conditions referencing state.data fields
+- **System prompts**: Extract and include system prompts for agents
+- **Process logic**: Add concise logic descriptions for non-trivial steps
+
+## Rules:
+- Keep ALL processes and edges from the skeleton — only ADD, don't remove
+- Every agent entity MUST have a model field
+- Every step process MUST have a description
+- The entry_point from the skeleton is correct — keep it
+- Schemas from the skeleton are correct — keep them, optionally add more
+- Output ONLY valid YAML. No markdown code fences. No explanatory text.
+"""
+
+
+def llm_augment_spec(source: str, skeleton_spec: dict, model: str = "gemini-2.0-flash") -> dict:
+    """Use an LLM to enrich an AST-extracted skeleton spec with semantic information."""
+    from .specgen import call_llm, extract_yaml
+
+    skeleton_yaml = yaml.dump(skeleton_spec, default_flow_style=False, sort_keys=False)
+
+    user_prompt = f"""\
+## Source Code
+```python
+{source}
+```
+
+## AST-Extracted Skeleton Spec
+```yaml
+{skeleton_yaml}
+```
+
+Produce the enriched Agent Ontology YAML spec. Keep all structural elements \
+from the skeleton (processes, edges, schemas) and add semantic information \
+(tool entities, descriptions, model names, missing edges, system prompts).
+Output ONLY the YAML."""
+
+    response = call_llm(model, _LLM_AUGMENT_SYSTEM, user_prompt, temperature=0.2, max_tokens=8192)
+    enriched_yaml = extract_yaml(response)
+
+    try:
+        enriched = yaml.safe_load(enriched_yaml)
+        if not isinstance(enriched, dict):
+            return skeleton_spec
+    except yaml.YAMLError:
+        return skeleton_spec
+
+    # Merge: LLM-enriched spec takes precedence for content, but skeleton structure is preserved
+    merged = _merge_specs(skeleton_spec, enriched)
+
+    # Post-process: fix common LLM mistakes
+    # 1. Add tool_type to tool entities missing it
+    for entity in merged.get("entities", []):
+        if entity.get("type") == "tool" and "tool_type" not in entity:
+            entity["tool_type"] = "function"
+
+    # 2. Remove edges referencing 'END' — add _done logic instead
+    valid_ids = {e.get("id") for e in merged.get("entities", [])}
+    valid_ids.update(p.get("id") for p in merged.get("processes", []))
+    new_edges = []
+    end_sources = []
+    for e in merged.get("edges", []):
+        if e.get("to") in ("END", "__END__", "end"):
+            end_sources.append(e.get("from"))
+        elif e.get("from") in ("END", "__END__", "end", "START", "__START__"):
+            continue  # skip edges from START/END
+        elif e.get("to") not in valid_ids or e.get("from") not in valid_ids:
+            continue  # skip edges referencing unknown nodes
+        else:
+            new_edges.append(e)
+    merged["edges"] = new_edges
+
+    # Add _done logic to end sources
+    for src in end_sources:
+        for p in merged.get("processes", []):
+            if p.get("id") == src and p.get("type") == "step":
+                if '_done' not in p.get("logic", ""):
+                    p["logic"] = p.get("logic", "") + 'state.data["_done"] = True\n'
+
+    return merged
+
+
+def _merge_specs(skeleton: dict, enriched: dict) -> dict:
+    """Merge an LLM-enriched spec with the AST skeleton.
+
+    Strategy: Use enriched as base, but ensure all skeleton structural elements
+    (processes, edges) are present.
+    """
+    merged = dict(enriched)
+
+    # Preserve skeleton's entry_point and name
+    merged["entry_point"] = skeleton.get("entry_point", merged.get("entry_point"))
+    merged["name"] = skeleton.get("name", merged.get("name"))
+    merged["version"] = skeleton.get("version", "1.0")
+
+    # Ensure all skeleton processes exist in merged
+    skeleton_proc_ids = {p["id"] for p in skeleton.get("processes", [])}
+    merged_proc_ids = {p["id"] for p in merged.get("processes", [])}
+    for p in skeleton.get("processes", []):
+        if p["id"] not in merged_proc_ids:
+            merged.setdefault("processes", []).append(p)
+
+    # Ensure all skeleton edges exist in merged
+    skeleton_edge_keys = {(e["type"], e["from"], e["to"]) for e in skeleton.get("edges", [])}
+    merged_edge_keys = {(e.get("type"), e.get("from"), e.get("to")) for e in merged.get("edges", [])}
+    for e in skeleton.get("edges", []):
+        key = (e["type"], e["from"], e["to"])
+        if key not in merged_edge_keys:
+            merged.setdefault("edges", []).append(e)
+
+    # Ensure all skeleton schemas exist in merged
+    skeleton_schema_names = {s.get("name", s.get("id")) for s in skeleton.get("schemas", [])}
+    merged_schema_names = {s.get("name", s.get("id")) for s in merged.get("schemas", [])}
+    for s in skeleton.get("schemas", []):
+        name = s.get("name", s.get("id"))
+        if name not in merged_schema_names:
+            merged.setdefault("schemas", []).append(s)
+
+    return merged
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -677,6 +1086,10 @@ def main():
     parser.add_argument("-o", "--output", help="Output YAML file path (default: stdout)")
     parser.add_argument("--validate", action="store_true", help="Validate the output spec")
     parser.add_argument("--quiet", action="store_true", help="Suppress info messages")
+    parser.add_argument("--llm-augment", action="store_true",
+                        help="Use LLM to enrich the AST-extracted skeleton with semantic information")
+    parser.add_argument("--model", default="gemini-2.0-flash",
+                        help="Model for LLM augmentation (default: gemini-2.0-flash)")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -685,6 +1098,12 @@ def main():
         sys.exit(1)
 
     spec = import_langgraph(input_path)
+
+    if args.llm_augment:
+        if not args.quiet:
+            print("LLM-augmenting spec...", file=sys.stderr)
+        source = input_path.read_text(encoding="utf-8")
+        spec = llm_augment_spec(source, spec, model=args.model)
 
     # Count what we found
     n_ent = len(spec.get("entities", []))

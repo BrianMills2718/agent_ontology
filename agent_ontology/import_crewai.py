@@ -420,9 +420,8 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
             "type": "agent",
             "label": agent.role or agent.var_name,
             "description": agent.goal,
+            "model": agent.llm or "unknown",
         }
-        if agent.llm:
-            entity["model"] = agent.llm
         if agent.backstory:
             entity["system_prompt"] = agent.backstory
 
@@ -439,6 +438,13 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                     "label": tool_name,
                     "tool_type": "function",
                 })
+
+    # ── Build agent→tools mapping for later step→tool edges ──
+    agent_tool_map: dict[str, list[str]] = {}
+    for agent in agents:
+        agent_id = agent_var_to_id.get(agent.var_name, "")
+        if agent.tools:
+            agent_tool_map[agent_id] = [_to_snake(t) for t in agent.tools]
 
     # ── Create step processes from tasks ──
     for i, task in enumerate(tasks):
@@ -485,6 +491,15 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                 "return_schema": output_schema_id,
             })
 
+            # Create invoke edges from step to agent's tools
+            for tool_id in agent_tool_map.get(agent_id, []):
+                spec_edges.append({
+                    "type": "invoke",
+                    "from": step_id,
+                    "to": tool_id,
+                    "label": f"use {tool_id}",
+                })
+
         # Create invoke edges for task-specific tools
         for tool_name in task.tools:
             tool_id = _to_snake(tool_name)
@@ -510,17 +525,52 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
     process_type = crew.process if crew else "sequential"
 
     if process_type == "sequential":
-        # Sequential: flow edges between tasks in order
-        task_ids = [task_var_to_id[t.var_name] for t in tasks if t.var_name in task_var_to_id]
-        for i in range(len(task_ids) - 1):
-            spec_edges.append({
-                "type": "flow",
-                "from": task_ids[i],
-                "to": task_ids[i + 1],
-            })
+        # Sequential: flow edges between tasks in order, respecting async_execution
+        ordered_tasks = [t for t in tasks if t.var_name in task_var_to_id]
+        task_ids = [task_var_to_id[t.var_name] for t in ordered_tasks]
 
-        # Set entry point to first task
-        if task_ids:
+        # Group consecutive async tasks into fan-out batches
+        i = 0
+        while i < len(ordered_tasks):
+            if ordered_tasks[i].async_execution:
+                # Collect consecutive async tasks
+                batch_start = i
+                while i < len(ordered_tasks) and ordered_tasks[i].async_execution:
+                    i += 1
+                batch_ids = task_ids[batch_start:i]
+                # Find predecessor (task before the batch)
+                if batch_start > 0:
+                    pred = task_ids[batch_start - 1]
+                    for bid in batch_ids:
+                        spec_edges.append({"type": "flow", "from": pred, "to": bid})
+                else:
+                    # Async batch starts at position 0 — create a _start node
+                    start_id = "_start"
+                    spec_processes.insert(0, {
+                        "id": start_id,
+                        "type": "step",
+                        "label": "Start",
+                        "description": "Fan-out to parallel tasks",
+                    })
+                    for bid in batch_ids:
+                        spec_edges.append({"type": "flow", "from": start_id, "to": bid})
+                    spec["entry_point"] = start_id
+                # Find successor (first non-async task after batch)
+                if i < len(ordered_tasks):
+                    succ = task_ids[i]
+                    for bid in batch_ids:
+                        spec_edges.append({"type": "flow", "from": bid, "to": succ})
+            else:
+                if i + 1 < len(ordered_tasks):
+                    spec_edges.append({
+                        "type": "flow",
+                        "from": task_ids[i],
+                        "to": task_ids[i + 1],
+                    })
+                i += 1
+
+        # Set entry point to first task (if not already set by async batch)
+        if task_ids and "entry_point" not in spec:
             spec["entry_point"] = task_ids[0]
 
     elif process_type == "hierarchical":
@@ -555,6 +605,15 @@ def _build_spec(agents: list[CrewAgent], tasks: list[CrewTask],
                     "from": coord_id,
                     "to": task_var_to_id[task.var_name],
                 })
+
+    # ── Add terminal logic to last task(s) ──
+    if process_type == "sequential" and spec_processes:
+        # Find tasks with no outgoing flow edge
+        process_ids = {p["id"] for p in spec_processes}
+        has_outgoing = {e["from"] for e in spec_edges if e["type"] == "flow" and e["from"] in process_ids}
+        for p in spec_processes:
+            if p["type"] == "step" and p["id"] not in has_outgoing:
+                p["logic"] = 'state.data["_done"] = True\n'
 
     # ── Context dependencies (data flow) ──
     for task in tasks:
@@ -600,6 +659,10 @@ def main(argv: list[str] | None = None) -> None:
                         help="Validate generated spec against ontology")
     parser.add_argument("--print", action="store_true", dest="print_yaml",
                         help="Print YAML to stdout (default if no -o)")
+    parser.add_argument("--llm-augment", action="store_true",
+                        help="Use LLM to enrich the AST-extracted skeleton with semantic information")
+    parser.add_argument("--model", default="gemini-2.0-flash",
+                        help="Model for LLM augmentation (default: gemini-2.0-flash)")
     args = parser.parse_args(argv)
 
     input_path = Path(args.input)
@@ -609,6 +672,11 @@ def main(argv: list[str] | None = None) -> None:
 
     source = input_path.read_text(encoding="utf-8")
     spec = parse_crewai(source, str(input_path))
+
+    if args.llm_augment:
+        from .import_langgraph import llm_augment_spec
+        print("LLM-augmenting spec...", file=sys.stderr)
+        spec = llm_augment_spec(source, spec, model=args.model)
 
     yaml_output = yaml.dump(spec, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
