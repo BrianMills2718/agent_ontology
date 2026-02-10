@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "agent_ontology"))
 from agent_ontology.import_langgraph import import_langgraph
 from agent_ontology.import_autogen import import_autogen
 from agent_ontology.import_openai_agents import import_openai_agents
+from agent_ontology.import_google_adk import import_google_adk
 from agent_ontology.validate import validate_spec, load_yaml, ONTOLOGY_PATH
 
 _ontology = load_yaml(ONTOLOGY_PATH)
@@ -662,6 +663,158 @@ def test_oai_orchestrator():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Test Google ADK Files
+# ═══════════════════════════════════════════════════════════════
+
+ADK_SIMPLE = """\
+from google.adk.agents import Agent
+from google.adk.tools import google_search
+
+def get_weather(city: str) -> dict:
+    \"\"\"Get current weather for a city.\"\"\"
+    return {"temp": 72, "condition": "sunny"}
+
+weather_agent = Agent(
+    name="weather_agent",
+    model="gemini-2.5-flash",
+    instruction="You are a weather assistant. Use tools to find weather info.",
+    tools=[get_weather, google_search],
+    description="Provides weather information",
+)
+"""
+
+ADK_PIPELINE = """\
+from pydantic import BaseModel
+from google.adk.agents import Agent, SequentialAgent, ParallelAgent, LoopAgent
+from google.adk.tools import exit_loop, google_search
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+
+class AnalysisResult(BaseModel):
+    findings: str
+    confidence: float
+
+def search_papers(query: str) -> dict:
+    \"\"\"Search academic papers.\"\"\"
+    return {"papers": ["paper1", "paper2"]}
+
+researcher = Agent(
+    name="researcher",
+    model="gemini-2.5-flash",
+    instruction="Research the topic: {topic}",
+    tools=[search_papers, google_search],
+    output_key="research_findings",
+    output_schema=AnalysisResult,
+)
+
+critic = Agent(
+    name="critic",
+    model="gemini-2.5-flash",
+    instruction="Critique the research: {research_findings}",
+    output_key="criticism",
+)
+
+refiner = Agent(
+    name="refiner",
+    model="gemini-2.5-flash",
+    instruction="Refine based on criticism: {criticism}. If quality is sufficient, exit loop.",
+    tools=[exit_loop],
+    output_key="refined_output",
+)
+
+writer_a = Agent(
+    name="writer_a",
+    model="gemini-2.5-flash",
+    instruction="Write a technical summary from: {research_findings}",
+    output_key="summary_a",
+)
+
+writer_b = Agent(
+    name="writer_b",
+    model="gemini-2.5-flash",
+    instruction="Write a plain-language summary from: {research_findings}",
+    output_key="summary_b",
+)
+
+synthesizer = Agent(
+    name="synthesizer",
+    model="gemini-2.5-flash",
+    instruction="Combine summaries: {summary_a} and {summary_b}",
+    output_key="final_output",
+)
+
+refine_loop = LoopAgent(
+    name="refine_loop",
+    max_iterations=3,
+    sub_agents=[critic, refiner],
+)
+
+parallel_writing = ParallelAgent(
+    name="parallel_writing",
+    sub_agents=[writer_a, writer_b],
+)
+
+root_agent = SequentialAgent(
+    name="research_pipeline",
+    sub_agents=[researcher, refine_loop, parallel_writing, synthesizer],
+    description="Research pipeline with refinement and parallel writing",
+)
+
+session_service = InMemorySessionService()
+runner = Runner(agent=root_agent, app_name="research", session_service=session_service)
+"""
+
+
+def _import_and_check_adk(source_code, test_name, expected_checks=None):
+    """Import Google ADK source code, validate spec, and check properties."""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(source_code)
+        f.flush()
+        source_path = f.name
+
+    try:
+        spec = import_google_adk(Path(source_path))
+        assert spec is not None, f"{test_name}: import returned None"
+        assert "entry_point" in spec, f"{test_name}: missing entry_point"
+        assert len(spec.get("processes", [])) > 0, f"{test_name}: no processes"
+
+        errors, warnings = validate_spec(spec, _ontology, source_path)
+        assert len(errors) == 0, f"{test_name}: validation errors: {errors}"
+
+        if expected_checks:
+            for check_name, check_fn in expected_checks.items():
+                assert check_fn(spec), f"{test_name}: check '{check_name}' failed"
+
+        return spec, errors, warnings
+    finally:
+        Path(source_path).unlink(missing_ok=True)
+
+
+def test_adk_simple():
+    """Google ADK simple agent with tools."""
+    spec, _, _ = _import_and_check_adk(ADK_SIMPLE, "adk_simple", {
+        "has_agent": lambda s: any(e["type"] == "agent" for e in s["entities"]),
+        "has_tools": lambda s: len([e for e in s["entities"] if e["type"] == "tool"]) == 2,
+        "has_step": lambda s: any(p["type"] == "step" for p in s["processes"]),
+        "has_invoke": lambda s: any(e["type"] == "invoke" for e in s["edges"]),
+    })
+    print(f"  PASS adk_simple: {len(spec['entities'])} entities, {len(spec['edges'])} edges")
+
+
+def test_adk_pipeline():
+    """Google ADK pipeline with sequential, parallel, and loop agents."""
+    spec, _, _ = _import_and_check_adk(ADK_PIPELINE, "adk_pipeline", {
+        "has_agents": lambda s: len([e for e in s["entities"] if e["type"] == "agent"]) >= 6,
+        "has_gate": lambda s: any(p["type"] == "gate" for p in s["processes"]),
+        "has_loop_edge": lambda s: any(e["type"] == "loop" for e in s["edges"]),
+        "has_fanout": lambda s: any("parallel" in p["id"].lower() for p in s["processes"]),
+        "has_schema": lambda s: any(sc["name"] == "AnalysisResult" for sc in s.get("schemas", [])),
+        "entry_is_researcher": lambda s: s["entry_point"] == "run_researcher",
+    })
+    print(f"  PASS adk_pipeline: {len(spec['entities'])} entities, {len(spec['processes'])} processes, {len(spec['edges'])} edges")
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 
@@ -682,6 +835,9 @@ ALL_TESTS = [
     test_oai_handoff,
     test_oai_pipeline,
     test_oai_orchestrator,
+    # Google ADK
+    test_adk_simple,
+    test_adk_pipeline,
 ]
 
 
