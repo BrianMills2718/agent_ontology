@@ -19,18 +19,21 @@ Nobody does all six today. This is the gap.
 ## Quick Start
 
 ```bash
+# Install as a package
+pip install -e .
+
 # 1. Validate a spec
-python3 validate.py specs/react.yaml
+ao-validate agent_ontology/specs/react.yaml
 
 # 2. Generate a runnable agent (custom backend)
-python3 instantiate.py specs/react.yaml
+ao-instantiate agent_ontology/specs/react.yaml -o agents/react_agent.py
 
 # 3. Generate a LangGraph agent
-python3 instantiate.py specs/react.yaml --backend langgraph
+ao-instantiate agent_ontology/specs/react.yaml --backend langgraph -o agents_lg/react_agent_lg.py
 
 # 4. Batch-generate all agents (both backends)
-python3 instantiate.py --all specs/ -o agents/
-python3 instantiate.py --all specs/ -o agents_lg/ --backend langgraph
+ao-instantiate --all agent_ontology/specs/ -o agents/
+ao-instantiate --all agent_ontology/specs/ -o agents_lg/ --backend langgraph
 
 # 5. Run it (requires API keys in .env.local)
 export $(cat .env.local | xargs)
@@ -38,91 +41,81 @@ python3 agents/react_agent.py
 
 # 6. View specs in the browser
 python3 -m http.server 8000
-# Open http://localhost:8000/spec-viewer.html
+# Open http://localhost:8000/agent_ontology/spec-viewer.html
 
 # 7. Analyze the trace
-python3 analyze_trace.py trace.json
+ao-trace trace.json
 
 # 8. Score spec complexity
-python3 complexity.py --all specs/
+ao-complexity --all agent_ontology/specs/
 
-# 9. Run all agent tests
-python3 test_agents.py
+# 9. Run all agent tests (21/21 pass)
+python3 tests/test_agents.py
 
 # 10. Override model for all agents
-python3 test_agents.py --model gpt-4o --agent react
+python3 tests/test_agents.py --model gpt-4o --agent react
 
 # 11. Compare models side-by-side
-python3 test_agents.py --compare-models gemini-3-flash-preview gpt-4o-mini gpt-4o
+python3 tests/test_agents.py --compare-models gemini-3-flash-preview gpt-4o-mini gpt-4o
 
 # 12. Mutate and evolve a spec
-python3 mutate.py specs/react.yaml --random -n 3
-python3 evolve.py specs/react.yaml --generations 2 --population 4
+ao-mutate agent_ontology/specs/react.yaml --random -n 3
+ao-evolve agent_ontology/specs/react.yaml --generations 2 --population 4
 
 # 13. Evolve with crossover and benchmark fitness
-python3 evolve.py specs/react.yaml --generations 3 --population 6 --crossover --benchmark gsm8k
+ao-evolve agent_ontology/specs/react.yaml --generations 3 --population 6 --crossover --benchmark gsm8k
 
 # 14. E2E specgen pipeline test
-python3 test_specgen.py --fix
+python3 tests/test_specgen.py --fix
 
 # 15. Analyze spec coverage of ontology features
-python3 coverage.py --all specs/
+ao-coverage --all agent_ontology/specs/
 
 # 16. Lint specs for anti-patterns
-python3 lint.py --all specs/ --severity warn
+ao-lint --all agent_ontology/specs/ --severity warn
 
 # 17. Classify agent topologies
-python3 topology.py --all specs/
+ao-topology --all agent_ontology/specs/
 
 # 18. Compare two spec versions
-python3 spec_diff.py specs/react.yaml specs/autogpt.yaml
+ao-diff agent_ontology/specs/react.yaml agent_ontology/specs/autogpt.yaml
 
 # 19. Project health dashboard
-python3 dashboard.py specs/
-python3 dashboard.py --brief specs/
+ao-dashboard agent_ontology/specs/
 
 # 20. Export Mermaid flowcharts
-python3 mermaid.py specs/react.yaml
-python3 mermaid.py --all specs/
+ao-mermaid agent_ontology/specs/react.yaml
 
 # 21. Spec similarity and clustering
-python3 similarity.py --all specs/ --top 5 --clusters 5
+ao-similarity --all agent_ontology/specs/ --top 5 --clusters 5
 
-# 22. Migrate specs to new version
-python3 migrate.py --all specs/ --to 1.1 --dry-run
-python3 migrate.py --list-versions
+# 22. Run property-based tests (no API keys needed, 174 tests)
+python3 tests/test_properties.py
 
-# 23. Run property-based tests (no API keys needed)
-python3 test_properties.py
+# 23. Generate comparative analysis report
+ao-report --all agent_ontology/specs/
 
-# 24. Generate comparative analysis report
-python3 comparative_report.py --all specs/
-python3 comparative_report.py --all specs/ --json
+# 24. Compose patterns into new agents
+ao-compose compose_specs/react_refine.yaml -o agent_ontology/specs/react_refine.yaml --validate
 
-# 25. Compose patterns into new agents
-python3 compose.py compose_specs/react_refine.yaml -o specs/react_refine.yaml --validate
+# 25. Import a LangGraph agent into an Agent Ontology spec
+ao-import-langgraph agents_lg/react_agent_lg.py -o agent_ontology/specs/imported_react.yaml --validate
 
-# 26. Detect patterns in existing specs
-python3 -c "from patterns import detect_patterns; import yaml; print(detect_patterns(yaml.safe_load(open('specs/react.yaml'))))"
+# 26. Import a CrewAI agent
+ao-import-crewai crew_app.py -o agent_ontology/specs/imported_crew.yaml --validate
 
-# 27. Import a LangGraph agent into an Agent Ontology spec
-python3 import_langgraph.py agents_lg/react_agent_lg.py -o specs/imported_react.yaml --validate
+# 27. Run benchmark suites
+ao-benchmark --suite gsm8k --agent self_refine --examples 3
+ao-benchmark --suite hotpotqa --agent react --examples 5
 
-# 28. Run benchmark suites
-python3 benchmark.py --suite gsm8k --agent self_refine --examples 3
-python3 benchmark.py --suite hotpotqa --agent react --examples 5
-python3 benchmark.py --suite arc --agent react --examples 5
-python3 benchmark.py --suite humaneval --agent multi_agent_codegen --examples 3
+# 28. OWL bridge: round-trip test (YAML -> OWL -> YAML)
+ao-owl --round-trip
 
-# 29. OWL bridge: round-trip test (YAML -> OWL -> YAML)
-python3 owl_bridge.py --round-trip
-python3 owl_bridge.py --round-trip specs/react.yaml
+# 29. Verify semantic properties
+ao-verify agent_ontology/specs/react.yaml
 
-# 30. OWL bridge: pattern classification via OWL structural model
-python3 owl_bridge.py --classify
-
-# 31. OWL bridge: export reconstructed YAML from OWL
-python3 owl_bridge.py --export specs/react.yaml
+# 30. Get architecture recommendations
+ao-recommend "multi-hop question answering with retrieval"
 ```
 
 ## The Pipeline
@@ -203,7 +196,7 @@ Two backends available:
 
 ## Agent Catalog
 
-22 agent specs, all validated. 21 are instantiable and runnable with `gemini-3-flash-preview`.
+22 agent specs, all validated. 21 are instantiable and runnable with `gemini-3-flash-preview` — **all 21 pass automated tests**.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -384,8 +377,12 @@ See `SPEC.md` for the standalone format specification, `spec_schema.json` for ma
 - Modern browser (for spec-viewer)
 
 ```bash
-pip install -r requirements.txt           # Core + LLM providers + LangGraph
-pip install -r requirements-dev.txt       # Adds OWL/RDF experimental tools
+pip install -e .                   # Core package
+pip install -e ".[agents]"         # + LLM providers for running agents
+pip install -e ".[langgraph]"      # + LangGraph backend
+pip install -e ".[owl]"            # + OWL/DL reasoning (owlready2)
+pip install -e ".[all]"            # Everything
+pip install -e ".[dev]"            # + dev/test tools
 ```
 
 API keys go in `.env.local`:
@@ -398,47 +395,44 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-specs/                  # Agent specifications (YAML, 22 specs)
-agents/                 # Generated runnable agents (custom backend)
-agents_lg/              # Generated runnable agents (LangGraph backend)
+agent_ontology/         # Python package (pip install -e .)
+  ONTOLOGY.yaml         #   The type system (entity/process/edge types, validation rules)
+  specs/                #   Agent specifications (22 YAML specs)
+  benchmarks/           #   Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) + scoring
+  spec-viewer.html      #   Interactive multi-view visualization (5 views + trace overlay)
+  validate.py           #   Spec validator (25+ rules)
+  instantiate.py        #   Code generator (custom + LangGraph backends)
+  specgen.py            #   Description-to-spec pipeline (pattern-aware)
+  patterns.py           #   Pattern library (7 reusable architectural patterns)
+  compose.py            #   Pattern composition operator
+  verify.py             #   Semantic property verification (9 checks)
+  recommend.py          #   Architecture recommender
+  import_langgraph.py   #   Import LangGraph StateGraph → YAML spec
+  import_crewai.py      #   Import CrewAI → YAML spec
+  owl_bridge.py         #   OWL dual representation: YAML<->OWL round-trip
+  mutate.py             #   Spec mutation engine (field + pattern-level)
+  evolve.py             #   Evolutionary search with crossover + benchmark fitness
+  complexity.py         #   Spec complexity scoring
+  coverage.py           #   Ontology feature coverage report
+  lint.py               #   Anti-pattern linter (10 rules)
+  topology.py           #   Control-flow topology classifier
+  similarity.py         #   Spec similarity & clustering
+  migrate.py            #   Spec version migration
+  mermaid.py            #   Mermaid flowchart export
+  ...                   #   + analyze_trace, spec_diff, dashboard, comparative_report, etc.
+tests/                  # Test suite
+  test_agents.py        #   Automated agent testing (21/21 pass)
+  test_properties.py    #   Property-based structural tests (174 tests)
+  test_specgen.py       #   E2E specgen pipeline testing
+  test_roundtrip.py     #   LangGraph import round-trip tests (8 tests)
+agents/                 # Generated runnable agents (custom backend, 22 agents)
+agents_lg/              # Generated runnable agents (LangGraph backend, 22 agents)
 compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing
-benchmarks/             # Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) and scoring
-traces/                 # Per-agent trace files from test runs
-ONTOLOGY.yaml           # The type system (internal)
+pyproject.toml          # Package config with CLI entry points (ao-*)
 SPEC.md                 # Formal spec format specification (standalone)
 spec_schema.json        # JSON Schema for machine-readable spec validation
-requirements.txt        # Python dependencies
-requirements-dev.txt    # Development/research dependencies
-validate.py             # Spec validator (25+ rules)
-instantiate.py          # Code generator (custom + LangGraph backends)
-specgen.py              # Description-to-spec pipeline (pattern-aware)
-spec-viewer.html        # Interactive multi-view visualization (5 views + trace overlay)
-test_agents.py          # Automated test harness + multi-model comparison
-test_specgen.py         # E2E specgen pipeline testing
-analyze_trace.py        # Trace analysis and comparison
-complexity.py           # Spec complexity scoring
-coverage.py             # Ontology feature coverage report
-lint.py                 # Anti-pattern linter (10 rules)
-topology.py             # Control-flow topology classifier
-spec_diff.py            # Structured spec comparison
-dashboard.py            # Unified project health report
-mermaid.py              # Mermaid flowchart export
-similarity.py           # Spec similarity & clustering
-migrate.py              # Spec version migration
-comparative_report.py   # Cross-spec comparative analysis
-test_properties.py      # Property-based structural tests (174+ tests)
-patterns.py             # Pattern library (7 reusable architectural patterns)
-compose.py              # Pattern composition operator
-import_langgraph.py     # Import LangGraph StateGraph Python files → YAML specs
-owl_bridge.py           # OWL dual representation: YAML<->OWL round-trip + classification
-ontology_owl.py         # OWL/DL pattern classification
-ontology_rdf.py         # RDF export + semantic pattern queries
-gaps.md                 # Ontology expressiveness gap analysis
 ROADMAP.md              # Strategic roadmap and long-term vision
+VISION.md               # Project vision: formal representation of agency
 .github/workflows/      # CI: validate, lint, syntax-check, smoke-test
-mutate.py               # Spec mutation engine (field + pattern-level operators)
-evolve.py               # Evolutionary search with crossover + benchmark fitness
-benchmark.py            # Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval) with multi-run stats
-trace.json              # LLM call traces from last agent run
 ```

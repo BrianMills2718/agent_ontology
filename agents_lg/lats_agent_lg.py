@@ -610,7 +610,7 @@ def node_finalize(state: AgentState) -> dict:
 
 def route_check_termination(state: AgentState) -> str:
     """Gate: Search Finished? — is_terminal == True or iteration >= 30"""
-    if (state.get("iteration", 0)) >= 30:
+    if (state.get("is_terminal") == True) or ((state.get("iteration", 0)) >= 30):
         print(f"    → continue")
         return "select_node"
     else:

@@ -788,7 +788,7 @@ def node_finalize_output(state: AgentState) -> dict:
 
 def route_check_pending(state: AgentState) -> str:
     """Gate: Sub-tasks remaining? — current_sub_task_idx < len(pending_sub_tasks)"""
-    if (state.get("current_sub_task_idx", 0)) < (state.get("len", 0)):
+    if (state.get("current_sub_task_idx", 0)) < len(state.get("pending_sub_tasks") or []):
         print(f"    → sub-tasks remaining")
         return "prepare_worker"
     else:
@@ -798,7 +798,7 @@ def route_check_pending(state: AgentState) -> str:
 
 def route_check_complexity(state: AgentState) -> str:
     """Gate: Needs recursive decomposition? — is_complex == True and depth < max_depth"""
-    if (state.get("depth", 0)) < (state.get("max_depth", 0)):
+    if (state.get("is_complex") == True) and ((state.get("depth", 0)) < (state.get("max_depth", 0))):
         print(f"    → complex sub-task, recurse")
         return "recurse_decomposition"
     else:
@@ -830,7 +830,7 @@ def route_loop_collect_worker_result(state: AgentState) -> str:
     """Loop: Process next sub-task — current_sub_task_idx < len(pending_sub_tasks)"""
     if state.get("_done"):
         return "END"
-    if (state.get("current_sub_task_idx", 0)) < (state.get("len", 0)):
+    if (state.get("current_sub_task_idx", 0)) < len(state.get("pending_sub_tasks") or []):
         return "check_pending"
     else:
         return "END"

@@ -558,7 +558,7 @@ def process_check_pending(state):
     # Branch: sub-tasks remaining → prepare_worker
     # Branch: all sub-tasks done → integrate_results
 
-    if (state.data.get("current_sub_task_idx", 0)) < (state.data.get("len", 0)):
+    if (state.data.get("current_sub_task_idx", 0)) < len(state.data.get("pending_sub_tasks") or []):
         print(f"    → sub-tasks remaining")
         return "prepare_worker"
     else:
@@ -608,7 +608,7 @@ def process_check_complexity(state):
     # Branch: complex sub-task, recurse → recurse_decomposition
     # Branch: simple sub-task, execute → execute_worker
 
-    if (state.data.get("depth", 0)) < (state.data.get("max_depth", 0)):
+    if (state.data.get("is_complex") == True) and ((state.data.get("depth", 0)) < (state.data.get("max_depth", 0))):
         print(f"    → complex sub-task, recurse")
         return "recurse_decomposition"
     else:

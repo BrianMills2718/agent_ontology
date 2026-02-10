@@ -101,12 +101,14 @@ The integration: Agent Ontology specs describe the patterns of artifact interact
 ## Current State
 
 - 22 agent specs covering major architectural patterns
-- Import from LangGraph and CrewAI source code
+- Import from LangGraph and CrewAI source code (AST-based + LLM-augmented)
 - Code generation targeting 2 backends (custom executor, LangGraph)
-- 16/22 specs run and pass tests
-- OWL Description Logic bridge with 9 structural pattern classifiers
+- **21/21 runnable specs pass automated tests** (+ 1 description-only spec)
+- OWL Description Logic bridge with 9 structural pattern classifiers, lossless round-trip
 - Evolutionary search with mutation, crossover, and benchmark fitness
-- Analysis suite: validate, lint, topology, complexity, similarity, patterns, coverage
+- Analysis suite: validate, lint, topology, complexity, similarity, patterns, coverage, verify, recommend
+- PyPI-ready package with 18 CLI entry points
+- 174/174 property tests, 8 round-trip tests
 
 ## Open Questions
 

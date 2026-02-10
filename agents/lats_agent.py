@@ -564,7 +564,7 @@ def process_check_termination(state):
     # Branch: continue → select_node
     # Branch: finish → format_output
 
-    if (state.data.get("iteration", 0)) >= 30:
+    if (state.data.get("is_terminal") == True) or ((state.data.get("iteration", 0)) >= 30):
         print(f"    → continue")
         return "select_node"
     else:

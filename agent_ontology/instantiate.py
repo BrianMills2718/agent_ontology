@@ -1062,6 +1062,18 @@ def _generate_gate_check(condition):
     import re
     c = condition.lower()
 
+    # Handle compound conditions with 'and' / 'or'
+    if ' and ' in c:
+        parts = [p.strip() for p in condition.split(' and ', 1)]
+        left = _generate_gate_check(parts[0])
+        right = _generate_gate_check(parts[1])
+        return f'({left}) and ({right})'
+    if ' or ' in c:
+        parts = [p.strip() for p in condition.split(' or ', 1)]
+        left = _generate_gate_check(parts[0])
+        right = _generate_gate_check(parts[1])
+        return f'({left}) or ({right})'
+
     # Extract the primary field path (first dotted identifier)
     field_match = re.match(r'([\w]+(?:\.[\w]+)*)', condition)
     field_path = field_match.group(1) if field_match else None
@@ -1089,6 +1101,25 @@ def _generate_gate_check(condition):
         expr = f'{expr}.get("{parts[-1]}", 0)'
         return expr
 
+    def _is_numeric(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    def _resolve_operand(token):
+        """Resolve a comparison operand — handles len(field), field.length, numeric, and plain fields."""
+        len_m = re.match(r'len\((\w+)\)', token)
+        if len_m:
+            return f'len({accessor(len_m.group(1))} or [])'
+        if '.' in token and token.split('.')[-1] == 'length':
+            base = token.rsplit('.', 1)[0]
+            return f'len({accessor(base)} or [])'
+        if _is_numeric(token):
+            return token
+        return f'({num_accessor(token)})'
+
     # Pattern: "field.length > 0" or "field.count > 0"
     if '.length' in c and '> 0' in c:
         base = field_path.rsplit('.', 1)[0] if '.' in field_path else field_path
@@ -1112,62 +1143,28 @@ def _generate_gate_check(condition):
         if field_path:
             return f'not bool({accessor(field_path)})'
 
-    # Helper to check if a string is a numeric literal (int or float like 0.7)
-    def _is_numeric(s):
-        try:
-            float(s)
-            return True
-        except ValueError:
-            return False
+    # Comparison operator regex — captures len(field), field.path, or numeric on each side
+    _cmp_operand = r'(len\(\w+\)|[\w.]+)'
 
-    # Pattern: "field >= field2" or "field >= N" (comparison with >=)
-    gte_match = re.search(r'([\w.]+)\s*>=\s*([\w.]+)', condition)
+    # Pattern: "field >= field2" or "field >= N" or "field >= len(other)"
+    gte_match = re.search(_cmp_operand + r'\s*>=\s*' + _cmp_operand, condition)
     if gte_match:
-        lhs, rhs = gte_match.group(1), gte_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) >= {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            # field >= other.length
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) >= len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) >= ({num_accessor(rhs)})'
+        return f'{_resolve_operand(gte_match.group(1))} >= {_resolve_operand(gte_match.group(2))}'
 
     # Pattern: "field <= field2" or "field <= N"
-    lte_match = re.search(r'([\w.]+)\s*<=\s*([\w.]+)', condition)
+    lte_match = re.search(_cmp_operand + r'\s*<=\s*' + _cmp_operand, condition)
     if lte_match:
-        lhs, rhs = lte_match.group(1), lte_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) <= {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) <= len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) <= ({num_accessor(rhs)})'
+        return f'{_resolve_operand(lte_match.group(1))} <= {_resolve_operand(lte_match.group(2))}'
 
     # Pattern: "field > field2" or "field > N"
-    gt_match = re.search(r'([\w.]+)\s*>\s*([\w.]+)', condition)
+    gt_match = re.search(_cmp_operand + r'\s*>\s*' + _cmp_operand, condition)
     if gt_match:
-        lhs, rhs = gt_match.group(1), gt_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) > {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) > len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) > ({num_accessor(rhs)})'
+        return f'{_resolve_operand(gt_match.group(1))} > {_resolve_operand(gt_match.group(2))}'
 
-    # Pattern: "field < field2" or "field < N"
-    lt_match = re.search(r'([\w.]+)\s*<\s*([\w.]+)', condition)
+    # Pattern: "field < field2" or "field < N" or "field < len(other)"
+    lt_match = re.search(_cmp_operand + r'\s*<\s*' + _cmp_operand, condition)
     if lt_match:
-        lhs, rhs = lt_match.group(1), lt_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) < {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) < len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) < ({num_accessor(rhs)})'
+        return f'{_resolve_operand(lt_match.group(1))} < {_resolve_operand(lt_match.group(2))}'
 
     # Pattern: "field == value"
     eq_match = re.search(r'([\w.]+)\s*==?\s*["\']?(\w+)["\']?', condition)
@@ -2632,6 +2629,18 @@ def _generate_gate_check_lg(condition):
     import re
     c = condition.lower()
 
+    # Handle compound conditions with 'and' / 'or'
+    if ' and ' in c:
+        parts = [p.strip() for p in condition.split(' and ', 1)]
+        left = _generate_gate_check_lg(parts[0])
+        right = _generate_gate_check_lg(parts[1])
+        return f'({left}) and ({right})'
+    if ' or ' in c:
+        parts = [p.strip() for p in condition.split(' or ', 1)]
+        left = _generate_gate_check_lg(parts[0])
+        right = _generate_gate_check_lg(parts[1])
+        return f'({left}) or ({right})'
+
     field_match = re.match(r'([\w]+(?:\.[\w]+)*)', condition)
     field_path = field_match.group(1) if field_match else None
 
@@ -2680,49 +2689,36 @@ def _generate_gate_check_lg(condition):
         except ValueError:
             return False
 
-    gte_match = re.search(r'([\w.]+)\s*>=\s*([\w.]+)', condition)
+    def _resolve_operand(token):
+        """Resolve a comparison operand — handles len(field), field.length, numeric, and plain fields."""
+        len_m = re.match(r'len\((\w+)\)', token)
+        if len_m:
+            return f'len({accessor(len_m.group(1))} or [])'
+        if '.' in token and token.split('.')[-1] == 'length':
+            base = token.rsplit('.', 1)[0]
+            return f'len({accessor(base)} or [])'
+        if _is_numeric(token):
+            return token
+        return f'({num_accessor(token)})'
+
+    # Comparison operator regex — captures len(field), field.path, or numeric on each side
+    _cmp_operand = r'(len\(\w+\)|[\w.]+)'
+
+    gte_match = re.search(_cmp_operand + r'\s*>=\s*' + _cmp_operand, condition)
     if gte_match:
-        lhs, rhs = gte_match.group(1), gte_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) >= {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) >= len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) >= ({num_accessor(rhs)})'
+        return f'{_resolve_operand(gte_match.group(1))} >= {_resolve_operand(gte_match.group(2))}'
 
-    lte_match = re.search(r'([\w.]+)\s*<=\s*([\w.]+)', condition)
+    lte_match = re.search(_cmp_operand + r'\s*<=\s*' + _cmp_operand, condition)
     if lte_match:
-        lhs, rhs = lte_match.group(1), lte_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) <= {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) <= len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) <= ({num_accessor(rhs)})'
+        return f'{_resolve_operand(lte_match.group(1))} <= {_resolve_operand(lte_match.group(2))}'
 
-    gt_match = re.search(r'([\w.]+)\s*>\s*([\w.]+)', condition)
+    gt_match = re.search(_cmp_operand + r'\s*>\s*' + _cmp_operand, condition)
     if gt_match:
-        lhs, rhs = gt_match.group(1), gt_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) > {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) > len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) > ({num_accessor(rhs)})'
+        return f'{_resolve_operand(gt_match.group(1))} > {_resolve_operand(gt_match.group(2))}'
 
-    lt_match = re.search(r'([\w.]+)\s*<\s*([\w.]+)', condition)
+    lt_match = re.search(_cmp_operand + r'\s*<\s*' + _cmp_operand, condition)
     if lt_match:
-        lhs, rhs = lt_match.group(1), lt_match.group(2)
-        if _is_numeric(rhs):
-            return f'({num_accessor(lhs)}) < {rhs}'
-        elif '.' in rhs and rhs.split('.')[-1] == 'length':
-            base = rhs.rsplit('.', 1)[0]
-            return f'({num_accessor(lhs)}) < len({accessor(base)} or [])'
-        else:
-            return f'({num_accessor(lhs)}) < ({num_accessor(rhs)})'
+        return f'{_resolve_operand(lt_match.group(1))} < {_resolve_operand(lt_match.group(2))}'
 
     eq_match = re.search(r'([\w.]+)\s*==?\s*["\']?(\w+)["\']?', condition)
     if eq_match:
