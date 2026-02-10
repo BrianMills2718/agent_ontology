@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec Validator
+Agent Ontology Spec Validator
 Validates agent specs against ONTOLOGY.yaml.
 
 Usage: python3 validate.py specs/claude-code.yaml

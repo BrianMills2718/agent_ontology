@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Project Dashboard
-===========================
+Agent Ontology Project Dashboard
+==================================
 Runs all analysis tools on all specs in a directory and produces
 a unified project-health report.
 
@@ -250,7 +250,7 @@ def format_full_report(results: list[dict], spec_dir: str) -> str:
 
     # ── 1. Header ─────────────────────────────────────────
     lines.append("")
-    lines.append(_bold(f"  OpenClaw Dashboard: {project_name}"))
+    lines.append(_bold(f"  Agent Ontology Dashboard: {project_name}"))
     lines.append(f"  {now}  |  {len(results)} specs  |  tools: complexity, coverage, topology, lint, validate")
     lines.append("  " + "=" * 72)
 
@@ -441,7 +441,7 @@ def format_brief_report(results: list[dict]) -> str:
     topo_summary = ", ".join(f"{k}:{v}" for k, v in sorted(topo_counts.items(), key=lambda x: -x[1]))
 
     lines.append("")
-    lines.append(_bold("  OpenClaw Dashboard (brief)"))
+    lines.append(_bold("  Agent Ontology Dashboard (brief)"))
     lines.append(f"  Specs:         {len(results)}")
     lines.append(f"  Instantiated:  {inst_count}/{len(results)}")
     lines.append(f"  Complexity:    min={min(scores):.0f}  max={max(scores):.0f}  mean={mean(scores):.1f}  median={median(scores):.1f}")
@@ -507,7 +507,7 @@ def build_json_report(results: list[dict], spec_dir: str) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="OpenClaw Project Dashboard -- unified project health report.",
+        description="Agent Ontology Project Dashboard -- unified project health report.",
         epilog="Examples:\n"
                "  python3 dashboard.py specs/              # full dashboard\n"
                "  python3 dashboard.py specs/ --json        # JSON output\n"

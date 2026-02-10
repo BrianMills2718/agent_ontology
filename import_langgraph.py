@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LangGraph Importer — Parse LangGraph StateGraph Python files into OpenClaw YAML specs.
+LangGraph Importer — Parse LangGraph StateGraph Python files into Agent Ontology YAML specs.
 
 Uses Python AST to extract:
   - TypedDict state class → schemas
@@ -443,7 +443,7 @@ def _snake_to_label(s):
 
 
 def import_langgraph(source_path):
-    """Parse a LangGraph Python file and produce an OpenClaw spec dict."""
+    """Parse a LangGraph Python file and produce an Agent Ontology spec dict."""
     path = Path(source_path)
     source = path.read_text(encoding="utf-8")
     source_lines = source.splitlines()
@@ -671,7 +671,7 @@ def import_langgraph(source_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Import a LangGraph StateGraph Python file into an OpenClaw YAML spec"
+        description="Import a LangGraph StateGraph Python file into an Agent Ontology YAML spec"
     )
     parser.add_argument("input", help="Path to LangGraph Python file")
     parser.add_argument("-o", "--output", help="Output YAML file path (default: stdout)")

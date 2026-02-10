@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Claude Code — Agent Spec (OpenClaw Ontology v0.1)
+# Claude Code — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # The most complex agent in our corpus. Tests every ontology
 # feature: multiple memory stores, permission gates, hooks as

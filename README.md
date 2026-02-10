@@ -1,4 +1,4 @@
-# OpenClaw
+# Agent Ontology
 
 **OpenAPI for Agents** — a universal format for describing AI agent architectures.
 
@@ -6,7 +6,7 @@
 docs  -->  spec  -->  { validate, visualize, instantiate, analyze }
 ```
 
-Given any agent's documentation, OpenClaw lets you:
+Given any agent's documentation, Agent Ontology lets you:
 1. **Decompose** it into a structured YAML spec
 2. **Validate** the spec against a formal ontology (structural + graph analysis)
 3. **Visualize** it as an interactive flowchart
@@ -105,7 +105,7 @@ python3 compose.py compose_specs/react_refine.yaml -o specs/react_refine.yaml --
 # 26. Detect patterns in existing specs
 python3 -c "from patterns import detect_patterns; import yaml; print(detect_patterns(yaml.safe_load(open('specs/react.yaml'))))"
 
-# 27. Import a LangGraph agent into an OpenClaw spec
+# 27. Import a LangGraph agent into an Agent Ontology spec
 python3 import_langgraph.py agents_lg/react_agent_lg.py -o specs/imported_react.yaml --validate
 
 # 28. Run benchmark suites
@@ -129,7 +129,7 @@ python3 owl_bridge.py --export specs/react.yaml
 
 ### Step 1: Write or generate a spec
 
-Specs are YAML files following the OpenClaw ontology. You can write one by hand or generate one from documentation:
+Specs are YAML files following the ontology. You can write one by hand or generate one from documentation:
 
 ```bash
 # Auto-generate from a natural language description
@@ -188,10 +188,10 @@ Two backends available:
 - Trace logging with metrics (LLM calls, duration, schema compliance, token estimates)
 - Store abstractions (queue, vector, buffer, log)
 - Multi-model routing: `claude*` → Anthropic, `gemini*` → Google genai, else → OpenAI
-- Runtime model override via `OPENCLAW_MODEL` env var
+- Runtime model override via `AGENT_ONTOLOGY_MODEL` env var
 - LLM retry with exponential backoff (3 attempts)
 - Runtime schema validation (field presence + type checking)
-- Configurable `MAX_ITERATIONS` via `OPENCLAW_MAX_ITER` env var
+- Configurable `MAX_ITERATIONS` via `AGENT_ONTOLOGY_MAX_ITER` env var
 
 **LangGraph backend** (`--backend langgraph`) generates agents using LangGraph's `StateGraph`:
 - Steps → nodes, gates → routing functions + conditional edges, flow → edges, loops → back-edges
@@ -371,7 +371,7 @@ test_specgen.py        # E2E pipeline testing
 
 ## Formal Foundation
 
-OpenClaw uses a **reified hypergraph** constrained by an **ontology**:
+Agent Ontology uses a **reified hypergraph** constrained by an **ontology**:
 
 - **Reified hypergraph**: Any relationship can be a node, any node can participate in any number of relationships. This means templates, dynamic topology, conditional wiring, self-modification — all expressible.
 - **Ontology**: Constrains the hypergraph so code generators know what to expect. Defines types, required fields, and validation rules.

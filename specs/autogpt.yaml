@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# AutoGPT — Agent Spec (OpenClaw Ontology v0.1)
+# AutoGPT — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Goal-driven autonomous agent with self-criticism loop.
 # Think → Criticize → Decide → Act → Observe → loop.

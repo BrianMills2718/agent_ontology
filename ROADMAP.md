@@ -1,4 +1,4 @@
-# OpenClaw Roadmap
+# Agent Ontology Roadmap
 
 **Date:** 2026-02-09
 **Current state:** v0.2 ontology, 22 specs, 26 tools, 2 code gen backends, OWL dual representation
@@ -168,7 +168,7 @@ Extend spec-viewer.html with editing capabilities.
 YAML autocompletion and inline validation for spec files.
 
 #### 4.4 PyPI Package
-`pip install openclaw` with CLI tools.
+`pip install agent-ontology` with CLI tools.
 
 ---
 
@@ -233,9 +233,9 @@ These are graph-theoretic properties that a reasoner derives from the formal str
 
 #### Capability 4: Cross-Framework Ontology Alignment
 **Current**: Hand-coded importers (planned). One per framework, maintained manually.
-**With DL**: Express both OpenClaw's ontology and LangGraph's ontology in OWL. Ontology alignment algorithms (LogMap, AML) find correspondences automatically:
-- `langgraph:StateGraphNode ≡ openclaw:Step`
-- `langgraph:ConditionalEdge ⊑ openclaw:Branch`
+**With DL**: Express both the Agent Ontology and LangGraph's ontology in OWL. Ontology alignment algorithms (LogMap, AML) find correspondences automatically:
+- `langgraph:StateGraphNode ≡ agent_ontology:Step`
+- `langgraph:ConditionalEdge ⊑ agent_ontology:Branch`
 This means interop emerges from the formal definitions rather than requiring bespoke code per framework.
 
 #### Capability 5: Learning from Execution (Neuro-Symbolic Loop)
@@ -403,7 +403,7 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 
 ## Open Questions
 
-1. **Naming**: "OpenClaw" vs something else? The name should convey "agent architecture standard."
+1. **Naming**: Renamed to "Agent Ontology" to convey "agent architecture standard."
 2. **Versioning**: When do we declare v1.0? After the formal spec? After the first importer?
 3. **Community**: Should we write a paper? Post on HN? Create a Discord?
 4. **Governance**: If this becomes a standard, who maintains it? Just you, or a broader group?

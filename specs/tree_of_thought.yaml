@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Tree-of-Thought Agent — Agent Spec (OpenClaw Ontology v0.1)
+# Tree-of-Thought Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Implements the Tree-of-Thought reasoning pattern.
 # Given a problem, generates K candidate thoughts at each level,

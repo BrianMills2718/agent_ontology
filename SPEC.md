@@ -1,10 +1,10 @@
-# OpenClaw Spec Format — Version 1.0
+# Agent Ontology Spec Format — Version 1.0
 
 **Status:** Draft
 **Date:** 2026-02-09
 **Ontology version:** 0.2
 
-This document is the standalone specification for the OpenClaw YAML agent spec format. A developer who has never seen the OpenClaw repository should be able to write a valid spec from this document alone.
+This document is the standalone specification for the Agent Ontology YAML agent spec format. A developer who has never seen the Agent Ontology repository should be able to write a valid spec from this document alone.
 
 ---
 
@@ -25,7 +25,7 @@ This document is the standalone specification for the OpenClaw YAML agent spec f
 
 ## 1. Overview
 
-An OpenClaw spec is a YAML file that describes an AI agent architecture as a typed graph. The graph has three kinds of nodes:
+An Agent Ontology spec is a YAML file that describes an AI agent architecture as a typed graph. The graph has three kinds of nodes:
 
 - **Entities** — things that exist (agents, stores, tools, humans, channels, teams, conversations, configs)
 - **Processes** — things that happen (steps, gates, checkpoints, spawns, protocols, policies, error handlers)

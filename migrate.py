@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec Migration Tool
-================================
+Agent Ontology Spec Migration Tool
+=====================================
 Handles spec versioning and migration as the ontology evolves.
 Transforms spec YAML files from older versions to newer ones by
 applying a chain of migration functions.
@@ -348,7 +348,7 @@ def print_file_result(fname, changes, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenClaw Spec Migration Tool -- version and migrate agent specs",
+        description="Agent Ontology Spec Migration Tool -- version and migrate agent specs",
         epilog="Examples:\n"
                "  python3 migrate.py specs/react.yaml --to 2.0\n"
                "  python3 migrate.py --all specs/ --to 2.0\n"

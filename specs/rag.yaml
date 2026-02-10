@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# RAG Agent — Agent Spec (OpenClaw Ontology v0.1)
+# RAG Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Retrieval-Augmented Generation: query → retrieve → generate
 # with an ingestion pipeline for documents.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenClaw OWL Bridge — Phase B: Dual Representation
+Agent Ontology OWL Bridge — Phase B: Dual Representation
 
 Bidirectional YAML <-> OWL conversion with lossless round-trip.
 
@@ -492,7 +492,7 @@ def build_bridge_ontology_in_world(world):
     Each world has its own triple store, preventing state leakage
     between round-trip tests.
     """
-    onto = world.get_ontology("http://openclaw.org/ontology#")
+    onto = world.get_ontology("http://agent-ontology.org/ontology#")
 
     with onto:
         # ── Core classes (from ontology_owl.py) ──────────────

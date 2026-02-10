@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Benchmark Suite for OpenClaw Agent Ontology
+Benchmark Suite for Agent Ontology
 
 Runs multiple agents against standardized tasks and compares results.
 Each task specifies which agents can run it (based on compatible input schemas).
@@ -903,7 +903,7 @@ Examples:
         task_count = len(set(t["id"] for t, _ in plan))
         agent_count = len(set(a for _, a in plan))
         print(f"\n{'='*64}")
-        print(f"  OpenClaw Benchmark Suite")
+        print(f"  Agent Ontology Benchmark Suite")
         print(f"  {len(plan)} benchmark(s): {task_count} task(s) x {agent_count} agent(s)")
         print(f"  Timeout: {args.timeout}s per run")
         if args.dry_run:

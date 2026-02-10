@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec Complexity Scorer
-================================
+Agent Ontology Spec Complexity Scorer
+=======================================
 Computes structural complexity metrics for agent specs and produces
 a normalized 0-100 complexity score.
 
@@ -387,7 +387,7 @@ def format_comparison_table(all_metrics):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenClaw Spec Complexity Scorer -- structural complexity metrics for agent specs",
+        description="Agent Ontology Spec Complexity Scorer -- structural complexity metrics for agent specs",
         epilog="Examples:\n"
                "  python3 complexity.py specs/react.yaml\n"
                "  python3 complexity.py specs/react.yaml --breakdown\n"

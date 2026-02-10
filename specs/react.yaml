@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# ReAct Agent — Agent Spec (OpenClaw Ontology v0.1)
+# ReAct Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Implements the Reason + Act pattern from Yao et al. 2022.
 # The agent alternates between reasoning (Thought) and acting

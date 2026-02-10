@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Plan-and-Solve Agent — Agent Spec (OpenClaw Ontology v0.1)
+# Plan-and-Solve Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Implements the Plan-and-Solve reasoning pattern.
 # A planner decomposes a complex problem into sub-problems,

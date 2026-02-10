@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Comparative Spec Analysis Report
-==========================================
+Agent Ontology Comparative Spec Analysis Report
+==================================================
 Loads all specs from specs/, computes topology, complexity, coverage,
 similarity, and feature data, then produces a comprehensive formatted
 text report.
@@ -743,7 +743,7 @@ def generate_report(all_data):
 
     # ── Title ────────────────────────────────────────────────
     lines.append("=" * 72)
-    lines.append("  OPENCLAW COMPARATIVE SPEC ANALYSIS REPORT")
+    lines.append("  AGENT ONTOLOGY COMPARATIVE SPEC ANALYSIS REPORT")
     lines.append("=" * 72)
     lines.append("")
     lines.append(f"  Specs analyzed: {len(all_data)}")
@@ -1171,7 +1171,7 @@ def generate_report(all_data):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenClaw Comparative Spec Analysis Report",
+        description="Agent Ontology Comparative Spec Analysis Report",
     )
     parser.add_argument(
         "--specs-dir",

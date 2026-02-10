@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# OpenClaw Agent Ontology v0.1
+# Agent Ontology v0.2
 # ═══════════════════════════════════════════════════════════════
 #
 # A reified hypergraph ontology for describing agent architectures.
@@ -19,7 +19,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 meta:
-  name: "OpenClaw Agent Ontology"
+  name: "Agent Ontology"
   version: "0.2"
   purpose: "Constrain a reified hypergraph to express any agent architecture"
 
@@ -744,10 +744,10 @@ validation:
 
 compatibility:
 
-  formal_hierarchy: "Oracle Agent Spec ⊂ BPMN 2.0 ⊂ OpenClaw (RH+O)"
+  formal_hierarchy: "Oracle Agent Spec ⊂ BPMN 2.0 ⊂ Agent Ontology (RH+O)"
 
   bpmn_projection:
-    description: "Map OpenClaw specs to BPMN 2.0 XML for tooling interop"
+    description: "Map Agent Ontology specs to BPMN 2.0 XML for tooling interop"
     mappings:
       # Entities
       agent:         { bpmn: "Service Task", notes: "Model/prompt/tools in extensionElements" }
@@ -791,7 +791,7 @@ compatibility:
       - "Conversation history and nesting semantics lost"
 
   oracle_agent_spec_projection:
-    description: "Map OpenClaw specs to Oracle Agent Spec JSON for execution"
+    description: "Map Agent Ontology specs to Oracle Agent Spec JSON for execution"
     mappings:
       # Entities
       agent:         { oracle: "Agent component" }
@@ -833,23 +833,23 @@ compatibility:
       - "Channel, team, conversation, publish, subscribe, handoff not expressible"
 
   oracle_import:
-    description: "Import Oracle Agent Spec JSON into OpenClaw (lossless)"
+    description: "Import Oracle Agent Spec JSON into Agent Ontology (lossless)"
     mappings:
-      Agent:           { openclaw: "agent entity" }
-      Flow:            { openclaw: "set of processes + edges" }
-      AgentNode:       { openclaw: "step process + invoke edge to agent entity", notes: "Enrichment: implicit invoke made explicit" }
-      ToolNode:        { openclaw: "step process + invoke edge to tool entity" }
-      LlmNode:         { openclaw: "agent entity (inline)", notes: "Single-round LLM call" }
-      BranchingNode:   { openclaw: "gate process + branch edges" }
-      StartNode:       { openclaw: "entry_point reference" }
-      EndNode:         { openclaw: "terminal step process" }
-      ControlFlowEdge: { openclaw: "flow edge" }
-      DataFlowEdge:    { openclaw: "flow edge with data schema" }
-      Datastore:       { openclaw: "store entity + read/write edges", notes: "Enrichment: tool-based access promoted to graph edges" }
-      MapNode:         { openclaw: "spawn process with fixed cardinality" }
-      ParallelFlowNode: { openclaw: "spawn process with fixed cardinality" }
-      CatchExceptionNode: { openclaw: "step process + policy with effect: retry" }
+      Agent:           { agent_ontology: "agent entity" }
+      Flow:            { agent_ontology: "set of processes + edges" }
+      AgentNode:       { agent_ontology: "step process + invoke edge to agent entity", notes: "Enrichment: implicit invoke made explicit" }
+      ToolNode:        { agent_ontology: "step process + invoke edge to tool entity" }
+      LlmNode:         { agent_ontology: "agent entity (inline)", notes: "Single-round LLM call" }
+      BranchingNode:   { agent_ontology: "gate process + branch edges" }
+      StartNode:       { agent_ontology: "entry_point reference" }
+      EndNode:         { agent_ontology: "terminal step process" }
+      ControlFlowEdge: { agent_ontology: "flow edge" }
+      DataFlowEdge:    { agent_ontology: "flow edge with data schema" }
+      Datastore:       { agent_ontology: "store entity + read/write edges", notes: "Enrichment: tool-based access promoted to graph edges" }
+      MapNode:         { agent_ontology: "spawn process with fixed cardinality" }
+      ParallelFlowNode: { agent_ontology: "spawn process with fixed cardinality" }
+      CatchExceptionNode: { agent_ontology: "step process + policy with effect: retry" }
     enrichment_notes:
-      - "Import is lossless — OpenClaw is strictly more expressive"
+      - "Import is lossless — Agent Ontology is strictly more expressive"
       - "Implicit relationships (invoke/return, store access) are made explicit as edges"
       - "This enrichment improves diagram clarity without changing semantics"

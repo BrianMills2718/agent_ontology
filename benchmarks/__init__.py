@@ -1,1 +1,1 @@
-# Benchmark suite for OpenClaw Agent Ontology
+# Benchmark suite for Agent Ontology

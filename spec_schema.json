@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openclaw.dev/spec-schema.json",
-  "title": "OpenClaw Agent Spec",
-  "description": "Schema for validating OpenClaw agent specification YAML files (ontology v0.2)",
+  "$id": "https://agent-ontology.dev/spec-schema.json",
+  "title": "Agent Ontology Spec",
+  "description": "Schema for validating Agent Ontology specification YAML files (ontology v0.2)",
   "type": "object",
   "required": ["name", "version", "entities", "processes", "edges"],
   "additionalProperties": false,

@@ -459,7 +459,7 @@ def run_model_comparison(models, agents, timeout_sec=120, as_json=False):
     all_results = {}  # model -> [result, ...]
 
     for model in models:
-        os.environ["OPENCLAW_MODEL"] = model
+        os.environ["AGENT_ONTOLOGY_MODEL"] = model
         if not as_json:
             print(f"\n{'='*60}")
             print(f"  Model: {model}")
@@ -487,8 +487,8 @@ def run_model_comparison(models, agents, timeout_sec=120, as_json=False):
         all_results[model] = model_results
 
     # Clean up env
-    if "OPENCLAW_MODEL" in os.environ:
-        del os.environ["OPENCLAW_MODEL"]
+    if "AGENT_ONTOLOGY_MODEL" in os.environ:
+        del os.environ["AGENT_ONTOLOGY_MODEL"]
 
     if as_json:
         print(json.dumps(all_results, indent=2))
@@ -541,7 +541,7 @@ def main():
     parser.add_argument("--timeout", "-t", type=int, default=120, help="Per-agent timeout in seconds")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
     parser.add_argument("--model", "-m", type=str, default=None,
-                        help="Override model for all agents (sets OPENCLAW_MODEL env var)")
+                        help="Override model for all agents (sets AGENT_ONTOLOGY_MODEL env var)")
     parser.add_argument("--compare-models", nargs="*", metavar="MODEL",
                         help="Compare across models. No args = default set, or list models explicitly")
     args = parser.parse_args()
@@ -559,12 +559,12 @@ def main():
 
     # Single-model override
     if args.model:
-        os.environ["OPENCLAW_MODEL"] = args.model
+        os.environ["AGENT_ONTOLOGY_MODEL"] = args.model
 
     agents_to_test = [args.agent] if args.agent else AGENT_NAMES
     results = []
 
-    model_label = os.environ.get("OPENCLAW_MODEL", "spec default")
+    model_label = os.environ.get("AGENT_ONTOLOGY_MODEL", "spec default")
     if not args.json:
         print(f"\n{'='*60}")
         print(f"  Agent Test Harness")

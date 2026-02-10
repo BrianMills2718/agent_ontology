@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec to Mermaid Converter
-====================================
+Agent Ontology Spec to Mermaid Converter
+==========================================
 Converts YAML agent specs to Mermaid flowchart diagrams.
 
 Usage:
@@ -242,7 +242,7 @@ def spec_to_mermaid(spec, direction="TD", include_entities=True):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenClaw Spec to Mermaid Converter -- generate Mermaid flowcharts from agent specs",
+        description="Agent Ontology Spec to Mermaid Converter -- generate Mermaid flowcharts from agent specs",
         epilog="Examples:\n"
                "  python3 mermaid.py specs/react.yaml\n"
                "  python3 mermaid.py specs/react.yaml -o react.mmd\n"

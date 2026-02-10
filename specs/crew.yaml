@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Crew Agent — Agent Spec (OpenClaw Ontology v0.1)
+# Crew Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Multi-agent collaboration pattern inspired by CrewAI.
 # A coordinator assigns tasks to specialized agents, collects

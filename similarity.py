@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec Similarity Analyzer
-====================================
+Agent Ontology Spec Similarity Analyzer
+=========================================
 Computes pairwise similarity between agent specs using Jaccard similarity
 on categorical/set features and cosine similarity on numerical features.
 Supports similarity matrix output, top-N most similar pairs, and
@@ -635,7 +635,7 @@ def build_json_output(names, matrix, features_list, clusters=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenClaw Spec Similarity Analyzer -- pairwise similarity and clustering for agent specs",
+        description="Agent Ontology Spec Similarity Analyzer -- pairwise similarity and clustering for agent specs",
         epilog="Examples:\n"
                "  python3 similarity.py --all specs/\n"
                "  python3 similarity.py --all specs/ --top 5\n"

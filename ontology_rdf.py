@@ -33,7 +33,7 @@ from rdflib.namespace import RDF, RDFS, XSD
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-OC = Namespace("http://openclaw.org/ontology#")
+OC = Namespace("http://agent-ontology.org/ontology#")
 
 # Evaluation-related field name keywords
 EVAL_KEYWORDS = {"score", "quality", "feedback", "weakness", "error",

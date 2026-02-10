@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Self-Refine Agent — Agent Spec (OpenClaw Ontology v0.1)
+# Self-Refine Agent — Agent Spec (Agent Ontology v0.2)
 # ═══════════════════════════════════════════════════════════════
 # Implements the Self-Refine pattern.
 # A generator produces an initial output, a critic evaluates it

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-OpenClaw Spec Generator (docs → spec)
+Agent Ontology Spec Generator (docs → spec)
 Takes a natural language description of an agent architecture and generates
-a valid OpenClaw YAML spec.
+a valid Agent Ontology YAML spec.
 
 Usage:
   python3 specgen.py description.md -o specs/my_agent.yaml
@@ -133,9 +133,9 @@ def build_prompt(description, ontology, examples, detected_patterns=None):
     pattern_context = _build_pattern_context(detected_patterns) if detected_patterns else ""
 
     system = f"""You are an expert agent architecture analyst. You convert natural language
-descriptions of AI agent systems into formal OpenClaw YAML specifications.
+descriptions of AI agent systems into formal Agent Ontology YAML specifications.
 
-An OpenClaw spec defines an agent architecture using:
+An Agent Ontology spec defines an agent architecture using:
 - entities: agents (LLM-based), stores (persistence), tools (capabilities), humans, configs,
             channels (pub/sub), teams (agent groups), conversations (multi-turn dialogue)
 - processes: steps (computation), gates (decisions), checkpoints (human approval), spawns (sub-agents)
@@ -189,20 +189,20 @@ HANDOFFS:
 {pattern_context}
 Output ONLY valid YAML. No markdown code fences. No explanatory text before or after.
 
-Here is the OpenClaw ontology (type system):
+Here is the ontology (type system):
 
 {ontology}
 
 Here are example specs for reference:
 {example_text}"""
 
-    user = f"""Convert the following agent architecture description into an OpenClaw YAML spec:
+    user = f"""Convert the following agent architecture description into an Agent Ontology YAML spec:
 
 ---
 {description}
 ---
 
-Generate a complete, valid OpenClaw spec YAML. Include all entities, processes, edges, and schemas.
+Generate a complete, valid Agent Ontology spec YAML. Include all entities, processes, edges, and schemas.
 Requirements:
 - Every entity referenced in an edge MUST exist in entities
 - Every schema referenced in entities/edges MUST exist in schemas
@@ -298,7 +298,7 @@ def validate_spec(yaml_text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="OpenClaw Spec Generator (docs → spec)")
+    parser = argparse.ArgumentParser(description="Agent Ontology Spec Generator (docs → spec)")
     parser.add_argument("input", help="Path to description file, or '-' for stdin")
     parser.add_argument("-o", "--output", help="Output YAML file path")
     parser.add_argument("--model", default="gemini-3-flash-preview", help="LLM model to use")

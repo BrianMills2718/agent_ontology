@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-OpenClaw Formal Ontology — OWL/DL Prototype
+Agent Ontology Formal Ontology — OWL/DL Prototype
 
-Translates the OpenClaw agent ontology into OWL using owlready2,
+Translates the Agent Ontology into OWL using owlready2,
 loads YAML specs as OWL instances, and uses a DL reasoner to
 automatically classify agent architectures by structural patterns.
 
@@ -31,8 +31,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ═══════════════════════════════════════════════════════════════
 
 def build_ontology():
-    """Create the OpenClaw ontology in OWL."""
-    onto = get_ontology("http://openclaw.org/ontology#")
+    """Create the Agent Ontology in OWL."""
+    onto = get_ontology("http://agent-ontology.org/ontology#")
 
     with onto:
         # ── Top-level classes ──────────────────────────────────
@@ -713,7 +713,7 @@ def print_results(results):
 def dump_ontology(onto):
     """Print ontology structure."""
     print("=" * 70)
-    print("  OpenClaw OWL Ontology Structure")
+    print("  Agent Ontology OWL Structure")
     print("=" * 70)
     print()
 

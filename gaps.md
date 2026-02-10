@@ -1,4 +1,4 @@
-# OpenClaw Agent Ontology -- Expressiveness Gap Analysis
+# Agent Ontology -- Expressiveness Gap Analysis
 
 **Date:** 2026-02-09
 **Ontology Version:** 0.2 (updated from 0.1)
@@ -19,7 +19,7 @@
 
 ## 1. Current Ontology Capabilities (Summary)
 
-The OpenClaw ontology (v0.1) defines a reified hypergraph model with five entity types (`agent`, `store`, `tool`, `human`, `config`), six process types (`step`, `gate`, `checkpoint`, `spawn`, `protocol`, `policy`), and seven edge types (`flow`, `invoke`, `loop`, `branch`, `read`, `write`, `modify`, `observe`). It supports schemas for typed data flowing through edges and nodes, visual rendering rules, and validation constraints.
+The ontology (v0.1) defines a reified hypergraph model with five entity types (`agent`, `store`, `tool`, `human`, `config`), six process types (`step`, `gate`, `checkpoint`, `spawn`, `protocol`, `policy`), and seven edge types (`flow`, `invoke`, `loop`, `branch`, `read`, `write`, `modify`, `observe`). It supports schemas for typed data flowing through edges and nodes, visual rendering rules, and validation constraints.
 
 **What it can express well today:**
 
