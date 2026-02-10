@@ -1,7 +1,7 @@
 # Agent Ontology Roadmap
 
-**Date:** 2026-02-09
-**Current state:** v0.2 ontology, 22 specs, 26 tools, 2 code gen backends, OWL dual representation
+**Date:** 2026-02-10
+**Current state:** v0.2 ontology, 22 specs, 28 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI)
 
 ---
 
@@ -119,30 +119,31 @@ Add `image`, `audio`, `video` as recognized schema field types.
 **Goal**: Prove the interchange story by importing real agent code into specs.
 
 #### 2.1 LangGraph Importer — DONE (import_langgraph.py)
-AST-based parser extracts StateGraph definitions → valid YAML specs. 22/22 generated LangGraph agents import and validate. Round-trip comparison shows exact match on entity/process counts for ReAct and Self-Refine.
+AST-based parser extracts StateGraph definitions → valid YAML specs. Tested on 5 real-world open-source LangGraph agents:
+- Canonical agent (96 lines): 2 nodes, 2 edges, 2 schemas — validates clean
+- Research assistant (148 lines): 4 nodes, 3 edges — validates clean
+- STORM/647 lines (langchain-ai/langgraph): 9 processes, 7 edges, 12 schemas — multi-StateGraph + loop resolution
+- deer-flow/473 lines (bytedance): 10 processes, 7 edges — Command routing extraction
+- SWE agent/567 lines (langtalks): 17 processes, 11 edges, 14 schemas — 3 sub-graphs merged
 
-Extracts: TypedDict → schemas, add_node → steps, add_edge → flow edges, add_conditional_edges → gates + branches, invoke_* functions → agent entities + invoke edges, END → terminal steps.
+Supports: multiple StateGraphs, `Command(goto=...)` routing, for-loop add_node resolution, `set_finish_point`, `START` import, edge deduplication. `--llm-augment` flag enriches with tool entities, descriptions, model config, missing edges.
 
-#### 2.2 CrewAI Importer (Optional, after 2.1)
-Parse CrewAI crew definitions -> YAML spec.
+#### 2.2 CrewAI Importer — DONE (import_crewai.py)
+AST-based parser extracts Agent/Task/Crew definitions → valid YAML specs. Tested on 3 real-world CrewAI projects:
+- Instagram post/364 lines (crewAI-examples): 5 agents, 6 tasks — validates clean
+- Meeting prep/245 lines (crewAI-examples): 4 agents, 4 async tasks — fan-out detected, validates clean
+- Financial analysis/221 lines (third-party): 4 agents, 5 tools, 4 tasks — validates clean
 
-- **Satisfaction criteria**: Import a CrewAI crew with agents + tasks + process type -> valid spec with team entity.
-- **Uncertainties**: CrewAI's API changes frequently. Which version to target?
+Supports: `async_execution` fan-out, task-specific tool entities + invoke edges, checkpoint for `human_input`, sequential + hierarchical process types, Pydantic output schemas.
 
 ### Phase 3: Production Code Generation
 **Goal**: Generated agents that actually work with real tools and persistent memory.
 
-#### 3.1 Real Store Backends
-Generate ChromaDB/SQLite/Redis backends based on `store_type`.
+#### 3.1 Real Store Backends — DONE (`--persistent-stores` flag)
+`instantiate.py --persistent-stores` generates real backends: kv/blackboard → SQLite, vector → ChromaDB PersistentClient, file → JSONL I/O, queue → in-memory. Both custom and LangGraph backends supported. 22/22 agents generate + syntax check.
 
-- **Satisfaction criteria**: RAG agent with `store_type: vector` uses ChromaDB. Data persists across runs.
-- **Uncertainties**: Dependency management. Do we add chromadb/redis as optional deps?
-
-#### 3.2 MCP Tool Integration
-Generate real MCP client code for `tool_type: mcp`.
-
-- **Satisfaction criteria**: Agent with MCP tool entity connects to an MCP server and calls real tools.
-- **Uncertainties**: MCP protocol is still evolving. Which version to target?
+#### 3.2 MCP Tool Integration — DONE (`tool_type: mcp` + `tool_type: shell`)
+`tool_type: mcp` generates JSON-RPC stdio client code with `MCP_SERVER_{NAME}` env var config. `tool_type: shell` generates subprocess execution. Verified on claude-code.yaml spec.
 
 #### 3.3 DSPy Optimization Backend
 Add a `dspy_optimize.py` tool that takes a generated agent + training data -> optimized prompts.
@@ -167,8 +168,8 @@ Extend spec-viewer.html with editing capabilities.
 #### 4.3 VS Code Extension
 YAML autocompletion and inline validation for spec files.
 
-#### 4.4 PyPI Package
-`pip install agent-ontology` with CLI tools.
+#### 4.4 PyPI Package — DONE (pyproject.toml + agent_ontology/)
+`pip install -e .` works. 18 CLI entry points (`ao-validate`, `ao-instantiate`, `ao-import-langgraph`, etc.). Optional extras: `[owl]`, `[rdf]`, `[langgraph]`, `[agents]`, `[all]`, `[dev]`. All source in `agent_ontology/` package with relative imports.
 
 ---
 
