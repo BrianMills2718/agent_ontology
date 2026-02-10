@@ -233,6 +233,33 @@ def validate_spec(spec, ontology, filepath):
             if not p.get("max_depth"):
                 warn(f"Recursive spawn '{p.get('id')}' should specify max_depth or document natural bounds")
 
+    # Rule: team members must reference valid agent entities
+    agent_entity_ids = {e.get("id") for e in entities if e.get("type") == "agent"}
+    for e in entities:
+        if e.get("type") == "team":
+            members = e.get("members", [])
+            for member in members:
+                if member not in agent_entity_ids:
+                    err(f"Team '{e.get('id')}' member '{member}' is not a valid agent entity")
+            manager = e.get("manager")
+            if manager and manager not in members:
+                warn(f"Team '{e.get('id')}' manager '{manager}' is not in the members list")
+
+    # Rule: channel message_schema must resolve
+    for e in entities:
+        if e.get("type") == "channel":
+            msg_schema = e.get("message_schema")
+            if msg_schema and msg_schema not in schema_names:
+                err(f"Channel '{e.get('id')}' message_schema references unknown schema '{msg_schema}'")
+
+    # Rule: conversation participants must reference valid entities
+    for e in entities:
+        if e.get("type") == "conversation":
+            participants = e.get("participants", [])
+            for p_ref in participants:
+                if p_ref not in all_nodes:
+                    warn(f"Conversation '{e.get('id')}' participant '{p_ref}' references unknown node")
+
     # Rule: protocol participants must reference valid entities
     for p in processes:
         if p.get("type") == "protocol":

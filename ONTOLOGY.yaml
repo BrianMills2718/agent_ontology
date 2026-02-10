@@ -20,7 +20,7 @@
 
 meta:
   name: "OpenClaw Agent Ontology"
-  version: "0.1"
+  version: "0.2"
   purpose: "Constrain a reified hypergraph to express any agent architecture"
 
 # ─────────────────────────────────────────────────────────────
@@ -113,6 +113,65 @@ entity_types:
     visual:
       shape: document
       default_color: "#34495e"
+      layer: entity
+
+  channel:
+    description: "A named communication channel with pub/sub semantics"
+    # Enables decoupled multi-agent communication: agents publish to
+    # and subscribe from channels rather than being directly wired.
+    # Supports MetaGPT message pools, AutoGen topic-based pub/sub,
+    # LangGraph state channels with reducers, and CAMEL conversations.
+    required:
+      id:           { type: string }
+      label:        { type: string }
+      channel_type: { type: "enum[topic, queue, broadcast, request_reply]" }
+    optional:
+      message_schema: { type: schema_ref, description: "Schema of messages on this channel" }
+      retention:      { type: "enum[none, last, all, windowed]", default: all }
+      reducer:        { type: "enum[append, replace, merge, custom]", default: append, description: "How concurrent writes merge" }
+      buffer_size:    { type: "integer | 'unbounded'", default: unbounded }
+    visual:
+      shape: parallelogram
+      default_color: "#1abc9c"
+      layer: entity
+
+  team:
+    description: "A group of agents with a collective execution strategy"
+    # Enables CrewAI-style crews, MetaGPT role teams, and AutoGen
+    # group chats as first-class entities rather than manual wiring.
+    required:
+      id:       { type: string }
+      label:    { type: string }
+      members:  { type: "list<agent_ref>", description: "Agent entities in this team" }
+      strategy: { type: "enum[sequential, hierarchical, consensus, round_robin, dynamic]", description: "How tasks are distributed and executed" }
+    optional:
+      manager:          { type: agent_ref, description: "Manager agent (for hierarchical strategy)" }
+      delegation:       { type: boolean, default: false, description: "Whether members can delegate to each other" }
+      speaker_selection: { type: "enum[round_robin, llm_based, priority, random, custom]", description: "How the next speaker is chosen in conversational mode" }
+      max_rounds:       { type: integer }
+      termination:      { type: string, description: "Composable termination condition" }
+    visual:
+      shape: rounded_rect_double
+      default_color: "#2980b9"
+      layer: entity
+
+  conversation:
+    description: "A multi-turn dialogue with structured history"
+    # Enables first-class conversation modeling for CAMEL role-play,
+    # OpenAI threads, AutoGen nested chat, and any pattern where
+    # conversation history is a typed artifact, not just state.data.
+    required:
+      id:    { type: string }
+      label: { type: string }
+    optional:
+      participants:    { type: "list<node_ref>", description: "Agents participating in this conversation" }
+      history_schema:  { type: schema_ref, description: "Schema for conversation turns" }
+      max_turns:       { type: integer }
+      persistence:     { type: "enum[ephemeral, session, persistent]", default: session }
+      nesting:         { type: boolean, default: false, description: "Whether sub-conversations are allowed" }
+    visual:
+      shape: rounded_rect
+      default_color: "#16a085"
       layer: entity
 
 # ─────────────────────────────────────────────────────────────
@@ -418,6 +477,57 @@ edge_types:
       color: "#c0392b"
       arrow: true
 
+  publish:
+    description: "An entity publishes messages to a channel"
+    # Enables MetaGPT shared message pools and AutoGen topic-based pub/sub.
+    # The publisher sends typed messages to a channel; all subscribers receive them.
+    required:
+      from: { type: "agent | step", description: "The publisher" }
+      to:   { type: channel, description: "The target channel" }
+    optional:
+      label:  { type: string }
+      filter: { type: string, description: "Condition for publishing (e.g. only publish on success)" }
+      data:   { type: schema_ref, description: "Schema of published messages" }
+    visual:
+      style: solid
+      color: "#1abc9c"
+      arrow: true
+
+  subscribe:
+    description: "An entity subscribes to messages from a channel"
+    # The subscriber receives messages from a channel. When activates=true,
+    # message arrival triggers the subscriber (reactive/event-driven activation).
+    required:
+      from: { type: channel, description: "The source channel" }
+      to:   { type: "agent | step", description: "The subscriber" }
+    optional:
+      label:     { type: string }
+      filter:    { type: string, description: "Subscription filter expression (e.g. message.type == 'api_spec')" }
+      activates: { type: boolean, default: true, description: "Whether message arrival triggers the subscriber" }
+      data:      { type: schema_ref, description: "Schema of received messages" }
+    visual:
+      style: solid
+      color: "#1abc9c"
+      arrow: true
+
+  handoff:
+    description: "An agent transfers control and conversation context to another agent"
+    # Enables OpenAI Swarm-style handoffs, CrewAI dynamic delegation,
+    # and any pattern where an agent autonomously chooses its successor
+    # without going through an orchestrator step.
+    required:
+      from: { type: agent, description: "The handing-off agent" }
+      to:   { type: agent, description: "The receiving agent" }
+    optional:
+      label:     { type: string }
+      condition: { type: string, description: "When to hand off (evaluated against state)" }
+      context:   { type: "enum[full, summary, none]", default: full, description: "How much conversation context transfers" }
+      resumable: { type: boolean, default: false, description: "Whether control can return to the original agent" }
+    visual:
+      style: solid
+      color: "#8e44ad"
+      arrow: true
+
 # ─────────────────────────────────────────────────────────────
 # SCHEMA TYPES — data shapes referenced by nodes and edges
 # ─────────────────────────────────────────────────────────────
@@ -454,6 +564,17 @@ spec_shape:
     schemas:     { type: "list<schema_definition>", description: "Data shapes used in the spec" }
     entry_point: { type: node_ref, description: "Where execution starts" }
     metadata:    { type: object }
+    state:
+      description: "Typed runtime state schema for this spec"
+      properties:
+        schema:   { type: schema_ref, description: "Named schema defining the full state shape" }
+        channels:
+          type: "list<channel_def>"
+          item_schema:
+            name:    { type: string, description: "Channel/field name" }
+            type:    { type: string, description: "Data type" }
+            reducer: { type: "enum[replace, append, merge, custom]", default: replace, description: "How concurrent writes merge" }
+        initial:  { type: object, description: "Default initial state values" }
 
 # ─────────────────────────────────────────────────────────────
 # VISUAL RENDERING RULES
@@ -485,6 +606,8 @@ rendering:
     shield:             "Shield icon (policies)"
     document:           "Document icon (configs)"
     rounded_rect_dashed: "Dashed rounded rectangle (protocols)"
+    parallelogram:      "Parallelogram (channels)"
+    rounded_rect_double: "Double-bordered rounded rectangle (teams)"
 
   edge_styles:
     solid:  "Normal arrow"
@@ -542,6 +665,27 @@ validation:
   - rule: "Invoke edges with retry.max_retries > 0 should specify retryable_errors"
     severity: warning
 
+  - rule: "Team members must reference valid agent entities"
+    severity: error
+
+  - rule: "Team manager (if specified) must be one of the team members"
+    severity: warning
+
+  - rule: "Channel message_schema must resolve to a defined schema"
+    severity: error
+
+  - rule: "Conversation participants must reference valid entity nodes"
+    severity: warning
+
+  - rule: "Handoff edges must connect two agent entities"
+    severity: error
+
+  - rule: "Publish edges must originate from an agent or step and target a channel"
+    severity: error
+
+  - rule: "Subscribe edges must originate from a channel and target an agent or step"
+    severity: error
+
 # ─────────────────────────────────────────────────────────────
 # COMPATIBILITY MAPPINGS
 # ─────────────────────────────────────────────────────────────
@@ -560,11 +704,14 @@ compatibility:
     description: "Map OpenClaw specs to BPMN 2.0 XML for tooling interop"
     mappings:
       # Entities
-      agent:       { bpmn: "Service Task", notes: "Model/prompt/tools in extensionElements" }
-      store:       { bpmn: "Data Store Reference" }
-      tool:        { bpmn: "Service Task", notes: "Tool config in extensionElements" }
-      human:       { bpmn: "Participant (Pool/Lane)" }
-      config:      { bpmn: "Not expressible", notes: "Dropped or metadata annotation" }
+      agent:         { bpmn: "Service Task", notes: "Model/prompt/tools in extensionElements" }
+      store:         { bpmn: "Data Store Reference" }
+      tool:          { bpmn: "Service Task", notes: "Tool config in extensionElements" }
+      human:         { bpmn: "Participant (Pool/Lane)" }
+      config:        { bpmn: "Not expressible", notes: "Dropped or metadata annotation" }
+      channel:       { bpmn: "Message Event + Signal Event", notes: "Pub/sub approximated via message events" }
+      team:          { bpmn: "Pool with Lanes", notes: "Members as lanes, strategy lost" }
+      conversation:  { bpmn: "Conversation (BPMN 2.0 Collaboration)", notes: "Lossy — limited semantics" }
       # Processes
       step:        { bpmn: "Script Task or Service Task" }
       gate:        { bpmn: "Exclusive Gateway", notes: "Expression conditions simplified to XOR" }
@@ -581,6 +728,9 @@ compatibility:
       write:       { bpmn: "Data Output Association" }
       modify:      { bpmn: "Not expressible" }
       observe:     { bpmn: "Not expressible" }
+      publish:     { bpmn: "Message Throw Event", notes: "Targets message event, not channel" }
+      subscribe:   { bpmn: "Message Catch Event", notes: "Reactive activation lost" }
+      handoff:     { bpmn: "Not expressible", notes: "No peer-to-peer agent transfer in BPMN" }
     information_loss:
       - "Policy nodes dropped entirely"
       - "Config nodes dropped entirely"
@@ -589,16 +739,23 @@ compatibility:
       - "Spawn loses dynamic cardinality"
       - "Loop loses condition expression and max_iterations"
       - "Gate expression conditions simplified to value-mapping"
+      - "Channel pub/sub semantics reduced to message events (subscription filters lost)"
+      - "Team execution strategy and delegation lost"
+      - "Handoff edges not expressible (must be mediated by orchestrator)"
+      - "Conversation history and nesting semantics lost"
 
   oracle_agent_spec_projection:
     description: "Map OpenClaw specs to Oracle Agent Spec JSON for execution"
     mappings:
       # Entities
-      agent:       { oracle: "Agent component" }
-      store:       { oracle: "Datastore component", notes: "Not graph-integrated" }
-      tool:        { oracle: "Tool (Server/Client/Remote/MCP)" }
-      human:       { oracle: "InputMessageNode", notes: "Partial — only input prompts" }
-      config:      { oracle: "metadata dict on components" }
+      agent:         { oracle: "Agent component" }
+      store:         { oracle: "Datastore component", notes: "Not graph-integrated" }
+      tool:          { oracle: "Tool (Server/Client/Remote/MCP)" }
+      human:         { oracle: "InputMessageNode", notes: "Partial — only input prompts" }
+      config:        { oracle: "metadata dict on components" }
+      channel:       { oracle: "Not expressible", notes: "No pub/sub concept" }
+      team:          { oracle: "Not expressible", notes: "No team/crew concept" }
+      conversation:  { oracle: "Not expressible", notes: "No conversation abstraction" }
       # Processes
       step:        { oracle: "ToolNode + ServerTool", notes: "No generic compute step exists" }
       gate:        { oracle: "BranchingNode", notes: "Value-mapping only, no expressions" }
@@ -615,6 +772,9 @@ compatibility:
       write:       { oracle: "Tool on agent", notes: "Store access via tools, not edges" }
       modify:      { oracle: "Not expressible" }
       observe:     { oracle: "Not expressible" }
+      publish:     { oracle: "Not expressible" }
+      subscribe:   { oracle: "Not expressible" }
+      handoff:     { oracle: "Not expressible", notes: "No peer-to-peer agent transfer" }
     information_loss:
       - "Protocol and policy nodes not expressible"
       - "Spawn with dynamic cardinality not expressible"
@@ -624,6 +784,7 @@ compatibility:
       - "Loop conditions and max_iterations lost"
       - "Gate expression conditions simplified to value-mapping"
       - "Visual rendering rules not transferable"
+      - "Channel, team, conversation, publish, subscribe, handoff not expressible"
 
   oracle_import:
     description: "Import Oracle Agent Spec JSON into OpenClaw (lossless)"

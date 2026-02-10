@@ -47,10 +47,10 @@ def find_specs(directory):
 # Canonical ontology types (from ONTOLOGY.yaml / coverage.py)
 # ======================================================================
 
-ENTITY_TYPES = ("agent", "store", "tool", "human", "config")
-PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy")
-EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe")
-FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies")
+ENTITY_TYPES = ("agent", "store", "tool", "human", "config", "channel", "team", "conversation")
+PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler")
+EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff")
+FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies", "channels", "teams", "handoffs")
 
 FEATURE_LABELS = {
     "fan_out": "Fan-out",
@@ -60,6 +60,9 @@ FEATURE_LABELS = {
     "stores": "Stores",
     "tools": "Tools",
     "policies": "Policies",
+    "channels": "Channels (pub/sub)",
+    "teams": "Teams",
+    "handoffs": "Handoffs",
 }
 
 # ======================================================================
@@ -423,6 +426,15 @@ def compute_feature_flags(spec):
     # policies
     policies = "policy" in process_types
 
+    # channels (pub/sub)
+    channels = "channel" in entity_types
+
+    # teams
+    teams = "team" in entity_types
+
+    # handoffs
+    handoffs = "handoff" in edge_types
+
     return {
         "fan_out": fan_out,
         "loops": loops,
@@ -431,6 +443,9 @@ def compute_feature_flags(spec):
         "stores": stores,
         "tools": tools,
         "policies": policies,
+        "channels": channels,
+        "teams": teams,
+        "handoffs": handoffs,
     }
 
 

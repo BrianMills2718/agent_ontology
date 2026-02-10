@@ -69,19 +69,26 @@ def _escape_edge_label(text):
 # Each function returns a Mermaid node definition string: "id<shape>label</shape>"
 NODE_SHAPES = {
     # Entities
-    "agent":      lambda nid, label: f'{nid}[/"{label}"/]',
-    "store":      lambda nid, label: f'{nid}[("{label}")]',
-    "tool":       lambda nid, label: f"{nid}" + '{{' + f'"{label}"' + '}}',
-    "human":      lambda nid, label: f'{nid}("{label}")',
+    "agent":        lambda nid, label: f'{nid}[/"{label}"/]',
+    "store":        lambda nid, label: f'{nid}[("{label}")]',
+    "tool":         lambda nid, label: f"{nid}" + '{{' + f'"{label}"' + '}}',
+    "human":        lambda nid, label: f'{nid}("{label}")',
+    "config":       lambda nid, label: f'{nid}["{label}"]',
+    "channel":      lambda nid, label: f'{nid}[/"{label}"\\]',  # parallelogram
+    "team":         lambda nid, label: f'{nid}(("{label}"))',
+    "conversation": lambda nid, label: f'{nid}("{label}")',
     # Processes
-    "step":       lambda nid, label: f'{nid}["{label}"]',
-    "gate":       lambda nid, label: f"{nid}" + '{' + f'"{label}"' + '}',
-    "checkpoint": lambda nid, label: f'{nid}[["{label}"]]',
-    "spawn":      lambda nid, label: f'{nid}(("{label}"))',
+    "step":          lambda nid, label: f'{nid}["{label}"]',
+    "gate":          lambda nid, label: f"{nid}" + '{' + f'"{label}"' + '}',
+    "checkpoint":    lambda nid, label: f'{nid}[["{label}"]]',
+    "spawn":         lambda nid, label: f'{nid}(("{label}"))',
+    "protocol":      lambda nid, label: f'{nid}("{label}")',
+    "policy":        lambda nid, label: f'{nid}["{label}"]',
+    "error_handler": lambda nid, label: f'{nid}["{label}"]',
 }
 
-ENTITY_TYPES = {"agent", "tool", "store", "human"}
-PROCESS_TYPES = {"step", "gate", "checkpoint", "spawn"}
+ENTITY_TYPES = {"agent", "store", "tool", "human", "config", "channel", "team", "conversation"}
+PROCESS_TYPES = {"step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler"}
 
 
 # -- Edge rendering ----------------------------------------------------------
@@ -130,6 +137,22 @@ def _render_edge(edge, id_to_type):
     elif etype == "observe":
         elabel = _escape_edge_label(label) if label else "observe"
         return f'    {src} -.->|"{elabel}"| {dst}'
+
+    elif etype == "error":
+        elabel = _escape_edge_label(label) if label else "error"
+        return f'    {src} -.->|"{elabel}"| {dst}'
+
+    elif etype == "publish":
+        elabel = _escape_edge_label(label) if label else "publish"
+        return f'    {src} -->|"{elabel}"| {dst}'
+
+    elif etype == "subscribe":
+        elabel = _escape_edge_label(label) if label else "subscribe"
+        return f'    {src} -->|"{elabel}"| {dst}'
+
+    elif etype == "handoff":
+        elabel = _escape_edge_label(label) if label else "handoff"
+        return f'    {src} ==>|"{elabel}"| {dst}'
 
     else:
         # Fallback for unknown edge types: dotted with type label

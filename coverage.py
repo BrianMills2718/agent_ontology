@@ -16,10 +16,10 @@ import yaml
 
 # ── canonical type lists ──────────────────────────────────────────────
 
-ENTITY_TYPES = ("agent", "store", "tool", "human", "config")
-PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy")
-EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe")
-FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies")
+ENTITY_TYPES = ("agent", "store", "tool", "human", "config", "channel", "team", "conversation")
+PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler")
+EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff")
+FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies", "channels", "teams", "handoffs")
 
 # ── helpers ───────────────────────────────────────────────────────────
 
@@ -129,6 +129,15 @@ def _compute_feature_flags(spec: dict) -> dict:
     # policies: any policy process
     policies = "policy" in process_types_present
 
+    # channels: any channel entity
+    channels = "channel" in entity_types_present
+
+    # teams: any team entity
+    teams = "team" in entity_types_present
+
+    # handoffs: any handoff edge
+    handoffs = "handoff" in edge_types_present
+
     return {
         "fan_out": fan_out,
         "loops": loops,
@@ -137,6 +146,9 @@ def _compute_feature_flags(spec: dict) -> dict:
         "stores": stores,
         "tools": tools,
         "policies": policies,
+        "channels": channels,
+        "teams": teams,
+        "handoffs": handoffs,
     }
 
 
@@ -248,6 +260,9 @@ def format_breakdown(cov: dict) -> str:
         "stores": "stores",
         "tools": "tools",
         "policies": "policies",
+        "channels": "channels (pub/sub)",
+        "teams": "teams",
+        "handoffs": "handoffs",
     }
     count = cov["features"]["count"]
     total = cov["features"]["of"]

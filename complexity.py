@@ -31,9 +31,9 @@ def load_yaml(path):
 
 # ── Metric computation ──────────────────────────────────────
 
-ENTITY_TYPES = ("agent", "tool", "store", "human")
-PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn")
-EDGE_TYPES = ("flow", "invoke", "read", "write", "loop", "branch")
+ENTITY_TYPES = ("agent", "store", "tool", "human", "config", "channel", "team", "conversation")
+PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler")
+EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff")
 
 
 def _count_by_type(items, key, allowed_types):

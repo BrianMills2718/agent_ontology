@@ -74,10 +74,10 @@ def find_specs(directory):
 
 # ── Canonical type sets ───────────────────────────────────────────
 
-ENTITY_TYPES = ("agent", "store", "tool", "human", "config")
-PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy")
-EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe")
-FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies")
+ENTITY_TYPES = ("agent", "store", "tool", "human", "config", "channel", "team", "conversation")
+PROCESS_TYPES = ("step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler")
+EDGE_TYPES = ("flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff")
+FEATURE_FLAGS = ("fan_out", "loops", "recursive_spawn", "human_in_loop", "stores", "tools", "policies", "channels", "teams", "handoffs")
 
 
 # ── Feature extraction ───────────────────────────────────────────
@@ -135,6 +135,18 @@ def _compute_feature_flags(spec):
     # policies
     if "policy" in process_types:
         active.add("policies")
+
+    # channels (pub/sub)
+    if "channel" in entity_types:
+        active.add("channels")
+
+    # teams
+    if "team" in entity_types:
+        active.add("teams")
+
+    # handoffs
+    if "handoff" in edge_types:
+        active.add("handoffs")
 
     return active
 

@@ -859,6 +859,8 @@
                 <option value="specs/reflexion.yaml">Reflexion</option>
                 <option value="specs/mixture_of_agents.yaml">Mixture of Agents</option>
                 <option value="specs/meta_prompting.yaml">Meta Prompting</option>
+                <option value="specs/customer_support_swarm.yaml">Customer Support Swarm</option>
+                <option value="specs/software_team.yaml">Software Team</option>
             </select>
             <div class="tab-bar">
                 <button class="tab-btn active" data-view="graph">Graph</button>
@@ -906,34 +908,46 @@ const NODE_COLORS = {
     tool:   '#f39c12',
     human:  '#e6edf3',
     config: '#34495e',
+    channel:      '#1abc9c',
+    team:         '#2980b9',
+    conversation: '#16a085',
     step:       '#3498db',
     gate:       '#f1c40f',
     checkpoint: '#e67e22',
     spawn:      '#9b59b6',
     protocol:   '#3498db',
     policy:     '#e67e22',
+    error_handler: '#c0392b',
 };
 
 const EDGE_COLORS = {
-    flow:    '#3498db',
-    invoke:  '#4ecdc4',
-    loop:    '#f0883e',
-    branch:  '#e74c3c',
-    read:    '#2ecc71',
-    write:   '#e74c3c',
-    modify:  '#e67e22',
-    observe: '#95a5a6',
+    flow:      '#3498db',
+    invoke:    '#4ecdc4',
+    loop:      '#f0883e',
+    branch:    '#e74c3c',
+    read:      '#2ecc71',
+    write:     '#e74c3c',
+    modify:    '#e67e22',
+    observe:   '#95a5a6',
+    error:     '#c0392b',
+    publish:   '#1abc9c',
+    subscribe: '#1abc9c',
+    handoff:   '#8e44ad',
 };
 
 const EDGE_STYLES = {
-    flow:    'solid',
-    invoke:  'solid',
-    loop:    'dashed',
-    branch:  'dashed',
-    read:    'dotted',
-    write:   'dotted',
-    modify:  'dashed',
-    observe: 'dotted',
+    flow:      'solid',
+    invoke:    'solid',
+    loop:      'dashed',
+    branch:    'dashed',
+    read:      'dotted',
+    write:     'dotted',
+    modify:    'dashed',
+    observe:   'dotted',
+    error:     'dashed',
+    publish:   'solid',
+    subscribe: 'solid',
+    handoff:   'solid',
 };
 
 // -- State --
@@ -1839,6 +1853,8 @@ function drawLegend() {
         ['Checkpoint', NODE_COLORS.checkpoint], ['Agent', NODE_COLORS.agent],
         ['Store', NODE_COLORS.store], ['Tool', NODE_COLORS.tool],
         ['Policy', NODE_COLORS.policy], ['Spawn', NODE_COLORS.spawn],
+        ['Channel', NODE_COLORS.channel], ['Team', NODE_COLORS.team],
+        ['Conversation', NODE_COLORS.conversation],
     ];
     leg.innerHTML = types.map(([name, color]) =>
         `<div class="legend-item"><div class="legend-swatch" style="background:${color}"></div>${name}</div>`
@@ -3077,7 +3093,8 @@ const ALL_SPEC_PATHS = [
     'specs/tree_of_thought.yaml', 'specs/plan_and_solve.yaml', 'specs/self_refine.yaml',
     'specs/voyager.yaml', 'specs/lats.yaml', 'specs/multi_agent_codegen.yaml',
     'specs/map_reduce.yaml', 'specs/socratic_tutor.yaml', 'specs/reflexion.yaml',
-    'specs/mixture_of_agents.yaml', 'specs/meta_prompting.yaml'
+    'specs/mixture_of_agents.yaml', 'specs/meta_prompting.yaml',
+    'specs/customer_support_swarm.yaml', 'specs/software_team.yaml'
 ];
 let allSpecs = null;
 
