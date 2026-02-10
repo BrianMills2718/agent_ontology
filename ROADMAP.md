@@ -330,6 +330,82 @@ Reasoner updates recommendations → LLM uses updated knowledge → ...
 - **Goal**: The system designs agents better than specgen.py does today
 - **Success criteria**: Agents designed by the neuro-symbolic loop outperform LLM-only specgen on benchmarks
 
+### Abstraction Hierarchy
+
+The system operates at multiple levels of abstraction. Each level compresses the one below it and serves different audiences and use cases:
+
+```
+Level 4: Patterns           "CritiqueCycle"                (~3 words)
+         ↕ detect/compose/mutate
+Level 3: Specs              self_refine.yaml               (~100 lines)
+         ↕ instantiate
+Level 2: Generated Code     self_refine_agent.py           (~300 lines)
+         ↕ execute
+Level 1: Running System     Python process + LLM + state   (unbounded)
+```
+
+**Each level answers different questions:**
+
+| Level | Audience | Questions it answers |
+|-------|----------|---------------------|
+| Pattern | Architect, evolution engine | "What family is this?" / "What if we swap the reasoning strategy?" |
+| Spec | Developer, analysis tools | "Does data flow correctly?" / "Are there dead stores?" / "Which schemas connect?" |
+| Generated code | Runtime, debugger | "Does it produce the right answer?" / "Where does it fail?" |
+| Running system | End user | "Did I get a useful result?" |
+
+The ontology's job is to keep projections between levels **consistent** — a pattern claiming "CritiqueCycle has an evaluator" should correspond to a spec step with evaluation-related output fields, which should generate code that actually calls an LLM that critiques.
+
+### Multiple Viewpoints (Architecture Framework Analogy)
+
+This multi-level structure is well-established in architecture frameworks:
+
+- **ArchiMate** (Open Group): Formal modeling language with metamodel, multiple viewpoints (Business/Application/Technology), and aspects (Active Structure = our entities, Behavior = our processes, Passive Structure = our schemas). We're building an ArchiMate for agent architectures.
+- **C4 Model**: Four zoom levels (Context → Container → Component → Code). Our pattern → spec → code → runtime is the same idea.
+- **4+1 View Model** (Kruchten): Logical, Process, Development, Physical, Scenarios. We have Logical (graph), Process (runtime behavior), Scenarios (test cases).
+
+One spec projects into multiple consistent views:
+
+| View | Audience | What's visible | What's hidden |
+|------|----------|---------------|---------------|
+| Analytical | Evolution/mutation engine | Graph topology, edge types, schemas | Logic blocks, prompts, model names |
+| Executable | Runtime/instantiator | Everything | Nothing |
+| Expert diagram | Agent architect | Processes, data flow, schemas, edge semantics | Logic block internals |
+| Newcomer diagram | Learner | "ReAct = think → act → observe loop" | Everything else |
+| Formal (RDF/OWL) | Reasoner/classifier | Classes, reified edges, schema fields | Implementation details |
+
+The formal ontology (OWL/RDF) is what guarantees these projections are **coherent** — that the newcomer diagram isn't lying about the structure and the analytical view preserves the properties that matter for evolution.
+
+### Turing Completeness and DSL Design
+
+**Is the spec format Turing complete?** Yes — trivially, because logic blocks contain arbitrary Python. A loop + gate + `state.data["x"] += 1` is a counter machine.
+
+**Is the graph structure (without logic blocks) Turing complete?** No. It's a workflow net: finite process nodes, conditional routing (gates), loops (backward edges), state tokens flowing through schemas. Closer to a Petri net than a programming language.
+
+**Is Turing completeness desirable?** No. The value of a DSL is in what it *can't* express. A Turing-complete specification language is just a general-purpose programming language with extra syntax. Our tools work precisely because specs are constrained:
+
+- **Analyzability**: Pattern detection, similarity, topology classification work because the graph structure is finite and inspectable
+- **Composability**: `compose.py` grafts patterns because interfaces (entry, exits, inputs, outputs) are well-defined. Arbitrary code doesn't compose.
+- **Verifiability**: `validate.py` checks 21+ structural rules. You can't validate arbitrary programs.
+- **Mutation/evolution**: `mutate.py` and `evolve.py` work because the search space is structured. Mutating arbitrary code is just fuzzing.
+
+**Logic blocks are the escape hatch.** Every logic block is an admission that the graph structure couldn't express something, so we fell back to Python. Logic blocks are opaque to every analysis tool. Minimizing them maximizes the abstraction's value. The edge-driven-stores plan is an example: moving store access from logic blocks (opaque) to edges (analyzable).
+
+**Are we creating abstractions simpler than what they model?** Yes — and that's the whole point. A spec captures the *essential structure* (entities, communication patterns, data flow, decisions) and hides the *accidental complexity* (API clients, JSON parsing, retry logic, state plumbing). The generated code contains both; the spec contains only the essential. This is what makes the pipeline (analyze, compose, mutate, evolve) possible.
+
+### Why YAML + Formal Backing (Not Pure Formalism)
+
+**Why not write specs directly in OWL/RDF?** Ergonomics. YAML is human-readable, diffable, easy to author. Nobody wants to write RDF by hand.
+
+**Why not stay with ad-hoc YAML?** Because we've proven that formal data modeling adds analytical power. The Phase A.5 RDF experiment showed that reified edges + schema field semantics eliminate false positives that structural matching can't handle — and the semantic signal was already in the YAML, just not queryable.
+
+**The right architecture:**
+
+1. **Author in YAML** (Layer 2) — human-friendly, same as today
+2. **Formal meta-model in OWL** (Layer 1) — class hierarchy, property constraints, inference rules. Makes ONTOLOGY.yaml machine-checkable. This is the missing piece.
+3. **Export to RDF for analysis** (Layer 0) — reified edges, schema fields, SPARQL or Python graph queries. Already prototyped in `ontology_rdf.py`.
+
+The YAML format is not "ad-hoc" — it's a well-typed DSL backed by a formal ontology. The formalism lives underneath, not in front of the user.
+
 ### Uncertainties
 
 1. **OWL expressiveness vs complexity**: OWL-DL is decidable but limited. OWL-Full is more expressive but undecidable. Which fragment do we need?
@@ -337,6 +413,7 @@ Reasoner updates recommendations → LLM uses updated knowledge → ...
 3. **Performance**: Reasoning over 22 specs is fast. Over 10,000 specs? Unknown.
 4. **User adoption**: Will developers use OWL-powered tools, or is this too academic?
 5. **The right DL fragment**: We need enough expressiveness for pattern definitions but decidability for verification. This is a research question.
+6. **Logic block minimization**: How much computation can we push from logic blocks into declarative graph structure? `query_key` on read edges is one example. Schema mapping declarations could be another. Where's the diminishing-returns point?
 
 ### Why This Matters Beyond Agent Architectures
 
@@ -366,3 +443,7 @@ If this works — formal ontology + LLM + symbolic reasoning for agent design �
 | 2026-02-09 | Ontology assessed as substantially complete for v1.0 | Evaluated against 10 frameworks, no structural gaps found |
 | 2026-02-09 | Pursue formal OWL ontology as long-term path | Reasoning > pattern matching. Unlocks composition, verification, cross-framework alignment, neuro-symbolic loop |
 | 2026-02-09 | YAML stays as human authoring format | OWL is the formal layer underneath. Users don't need to know about DL. |
+| 2026-02-09 | Turing completeness is NOT a goal | DSL value comes from constraint, not power. Logic blocks are an escape hatch, not a feature. Minimize them. |
+| 2026-02-09 | Three-layer authoring model: YAML + OWL + RDF | Author in YAML (ergonomic), meta-model in OWL (formal), export to RDF (queryable). Each layer serves different tools. |
+| 2026-02-09 | Abstraction hierarchy is the core value proposition | Patterns compress specs, specs compress code, code compresses runtime. Each level enables different analysis. |
+| 2026-02-09 | Architecture framework analogy (ArchiMate/C4) is relevant | Multiple viewpoints on one model is a solved problem in enterprise architecture. Learn from it. |
