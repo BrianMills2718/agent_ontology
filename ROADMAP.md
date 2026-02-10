@@ -191,6 +191,139 @@ YAML autocompletion and inline validation for spec files.
 
 ---
 
+## Long-Term Vision: Formal Ontology & Neuro-Symbolic Reasoning
+
+### The Gap Between What We Have and What's Possible
+
+Our current system **describes** agent architectures (YAML schemas, string matching, structural validation). A formal ontology would let us **reason** about them (logical inference, automated classification, property verification, compositional search).
+
+This is the difference between a database schema and a knowledge base. A schema says what shape data can be. A knowledge base draws conclusions from data.
+
+### The Three-Layer Architecture
+
+```
+Layer 0: Reified Hypergraph Substrate
+         Any node, any edge, any property. The raw graph.
+         Represented in RDF/OWL. Turing-complete with rewriting rules.
+              |
+Layer 1: Formal Ontology (OWL/DL)
+         Class hierarchy, property constraints, inference rules.
+         Defines what "agent", "step", "flow" MEAN — not just their fields,
+         but their logical relationships. A reasoner operates here.
+              |
+Layer 2: Standard Vocabulary + YAML Surface
+         The 27 types users write specs with today.
+         Generated FROM the ontology, not the source of truth.
+         Keeps the simple YAML interface for humans.
+              |
+Layer 3: Tooling (validate, instantiate, visualize, analyze)
+         Operates on Layer 2 YAML for simple tasks.
+         Calls down to Layer 1 reasoner for complex tasks.
+```
+
+Users who don't care about DL stay at Layer 2 (YAML specs, same as today).
+Power users and automated tools operate at Layer 1 (reasoning, composition, verification).
+The formal ontology grows at Layer 0-1 without breaking Layer 2 compatibility.
+
+### What Reasoning Unlocks
+
+#### Capability 1: Automatic Pattern Classification
+**Current**: `detect_patterns()` checks if process IDs match hardcoded names. Fragile, label-dependent.
+**With DL**: Define patterns structurally:
+```
+SelfRefineAgent ≡ Agent ⊓
+  ∃hasProcess.(GenerationStep ⊓ ∃flowsTo.QualityGate) ⊓
+  ∃hasProcess.(QualityGate ⊓ ∃loopsTo.GenerationStep)
+```
+The reasoner classifies ANY spec as self-refine if it has this structure — regardless of naming.
+
+#### Capability 2: Compositional Architecture Search
+**Current**: `compose.py` combines patterns from a handwritten library. Manual, limited.
+**With DL**: "Give me an architecture with retrieval AND critique AND human oversight."
+The reasoner knows the interface of each pattern (inputs, outputs, entry, exit) and finds compatible compositions automatically. This is constraint satisfaction over the ontology.
+
+#### Capability 3: Property Verification
+**Current**: `validate.py` checks structural rules (references exist, types match).
+**With DL**: Prove properties about the architecture:
+- "Does every path eventually reach a terminal node?" (termination)
+- "Can agent A's output reach agent B?" (information flow)
+- "Is there a path that bypasses the safety policy?" (policy coverage)
+These are graph-theoretic properties that a reasoner derives from the formal structure.
+
+#### Capability 4: Cross-Framework Ontology Alignment
+**Current**: Hand-coded importers (planned). One per framework, maintained manually.
+**With DL**: Express both OpenClaw's ontology and LangGraph's ontology in OWL. Ontology alignment algorithms (LogMap, AML) find correspondences automatically:
+- `langgraph:StateGraphNode ≡ openclaw:Step`
+- `langgraph:ConditionalEdge ⊑ openclaw:Branch`
+This means interop emerges from the formal definitions rather than requiring bespoke code per framework.
+
+#### Capability 5: Learning from Execution (Neuro-Symbolic Loop)
+**Current**: Benchmark scores are numbers in a report. No feedback into the ontology.
+**With DL**: Feed execution traces back as assertions:
+```
+:react_agent_run_42 rdf:type :ExecutionTrace ;
+    :achievedScore 0.85 ;
+    :onBenchmark :gsm8k ;
+    :usedPattern :reasoning_loop ;
+    :failedOn :multi_hop_reasoning .
+```
+The knowledge base accumulates. The reasoner infers: "Reasoning loops achieve >80% on arithmetic but <30% on multi-hop. For multi-hop tasks, prefer architectures with retrieval AND decomposition."
+
+An LLM can query this knowledge base when designing new agents. The symbolic system constrains and validates what the LLM proposes. This is the neuro-symbolic loop:
+```
+LLM generates architecture → Reasoner verifies/classifies →
+Executor runs benchmarks → Results feed back as facts →
+Reasoner updates recommendations → LLM uses updated knowledge → ...
+```
+
+### Phased Approach
+
+#### Phase A: OWL Prototype (exploratory)
+- Translate core ontology types to OWL (Turtle format)
+- Define 2-3 patterns as DL concepts (SelfRefine, ReAct, RAG)
+- Load existing specs as OWL instances
+- Run HermiT/Pellet reasoner to auto-classify specs
+- **Goal**: Prove that automatic classification works on our 22 specs
+- **Success criteria**: Reasoner correctly identifies patterns in specs without using process ID names
+
+#### Phase B: Dual Representation
+- YAML specs remain the authoring format (human-friendly)
+- OWL version generated automatically from YAML (or vice versa)
+- Reasoning tools operate on OWL version
+- validate.py gains "deep validation" mode using reasoner
+- **Goal**: YAML and OWL coexist, each used where it's strongest
+- **Success criteria**: All 22 specs round-trip between YAML and OWL without information loss
+
+#### Phase C: Reasoning-Powered Tools
+- `compose.py` replaced by constraint-based composition over OWL
+- `detect_patterns()` replaced by DL classification
+- New tool: `verify.py` — prove properties about architectures
+- New tool: `recommend.py` — suggest architectures for tasks based on accumulated knowledge
+- **Goal**: Tools that reason, not just pattern-match
+- **Success criteria**: Given a new task description, the system recommends an architecture with justification based on past benchmark results
+
+#### Phase D: Neuro-Symbolic Agent Designer
+- LLM + Reasoner loop for agent design
+- LLM proposes architectures; reasoner verifies them
+- Execution results feed back into knowledge base
+- Self-improving system that gets better at designing agents over time
+- **Goal**: The system designs agents better than specgen.py does today
+- **Success criteria**: Agents designed by the neuro-symbolic loop outperform LLM-only specgen on benchmarks
+
+### Uncertainties
+
+1. **OWL expressiveness vs complexity**: OWL-DL is decidable but limited. OWL-Full is more expressive but undecidable. Which fragment do we need?
+2. **Tooling maturity**: OWL reasoners (HermiT, Pellet) are mature but not actively developed. Python bindings (owlready2) work but are not production-grade.
+3. **Performance**: Reasoning over 22 specs is fast. Over 10,000 specs? Unknown.
+4. **User adoption**: Will developers use OWL-powered tools, or is this too academic?
+5. **The right DL fragment**: We need enough expressiveness for pattern definitions but decidability for verification. This is a research question.
+
+### Why This Matters Beyond Agent Architectures
+
+If this works — formal ontology + LLM + symbolic reasoning for agent design — it's a template for any domain where you want to combine neural creativity with logical rigor. Software architecture, business process design, drug discovery pipeline design, circuit design. The agent ontology is the proving ground.
+
+---
+
 ## Open Questions
 
 1. **Naming**: "OpenClaw" vs something else? The name should convey "agent architecture standard."
@@ -211,3 +344,5 @@ YAML autocompletion and inline validation for spec files.
 | 2026-02-09 | Multimodal types deferred | No current spec needs them; LLM APIs handle multimodal transparently |
 | 2026-02-09 | Memory consolidation is a spec pattern, not ontology gap | Expressible as a maintenance flow with existing types |
 | 2026-02-09 | Ontology assessed as substantially complete for v1.0 | Evaluated against 10 frameworks, no structural gaps found |
+| 2026-02-09 | Pursue formal OWL ontology as long-term path | Reasoning > pattern matching. Unlocks composition, verification, cross-framework alignment, neuro-symbolic loop |
+| 2026-02-09 | YAML stays as human authoring format | OWL is the formal layer underneath. Users don't need to know about DL. |
