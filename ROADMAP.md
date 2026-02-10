@@ -145,6 +145,19 @@ AST-based parser extracts AutoGen agent code → valid YAML specs. Supports both
 - `--llm-augment` flag for LLM-enhanced import
 - CLI entry point: `ao-import-autogen`
 
+#### 2.4 OpenAI Agents SDK Importer — DONE (import_openai_agents.py)
+AST-based parser extracts OpenAI Agents SDK (`from agents import ...`) code → valid YAML specs:
+- `Agent()` definitions with name/instructions/model/tools/handoffs/output_type
+- `@function_tool` decorated functions, hosted tools (WebSearchTool, FileSearchTool, CodeInterpreterTool, etc.)
+- `agent.as_tool()` orchestrator pattern (sub-agent delegation)
+- `@input_guardrail`/`@output_guardrail` → policy processes with targets
+- `Runner.run()`/`Runner.run_sync()` → sequential step processes + flow edges
+- `asyncio.gather(Runner.run(...), ...)` → fan-out step processes
+- `.handoffs.append()` circular handoff references
+- Pydantic BaseModel/TypedDict/dataclass → output schemas
+- `--llm-augment` flag for LLM-enhanced import
+- CLI entry point: `ao-import-openai-agents`
+
 ### Phase 3: Production Code Generation
 **Goal**: Generated agents that actually work with real tools and persistent memory.
 
