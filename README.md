@@ -108,6 +108,8 @@ python3 -c "from patterns import detect_patterns; import yaml; print(detect_patt
 # 27. Run benchmark suites
 python3 benchmark.py --suite gsm8k --agent self_refine --examples 3
 python3 benchmark.py --suite hotpotqa --agent react --examples 5
+python3 benchmark.py --suite arc --agent react --examples 5
+python3 benchmark.py --suite humaneval --agent multi_agent_codegen --examples 3
 ```
 
 ## The Pipeline
@@ -121,7 +123,7 @@ Specs are YAML files following the OpenClaw ontology. You can write one by hand 
 python3 specgen.py description.md -o specs/my_agent.yaml --validate --fix
 ```
 
-The `specgen.py` pipeline loads the ontology + example specs as context for an LLM, generates a spec, validates it, and optionally auto-fixes errors.
+The `specgen.py` pipeline loads the ontology + example specs as context for an LLM, generates a spec, validates it, and optionally auto-fixes errors. Pattern-aware: scans descriptions for architectural patterns (reasoning loop, critique cycle, debate, retrieval, etc.), selects matching example specs, and includes pattern context in the prompt.
 
 ### Step 2: Validate
 
@@ -147,7 +149,7 @@ Open `spec-viewer.html` in a browser (via HTTP server). Five views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 20 agent specs.
+- **Compare All** — Side-by-side comparison table across all 22 agent specs.
 
 Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
@@ -183,11 +185,12 @@ Two backends available:
 - LangChain ChatModels (`ChatGoogleGenerativeAI`, `ChatAnthropic`, `ChatOpenAI`)
 - TypedDict-based state with fields derived from schemas + logic block analysis
 - Gate chaining support (gate → gate inserts pass-through node)
-- All 20 specs generate valid Python; verified E2E on multiple agents
+- Channel support: publish/subscribe edges generate channel read/write code
+- All 22 specs generate valid Python; verified E2E on multiple agents
 
 ## Agent Catalog
 
-20 agent specs, all validated. 19 are instantiable and runnable with `gemini-3-flash-preview`.
+22 agent specs, all validated. 21 are instantiable and runnable with `gemini-3-flash-preview`.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -211,6 +214,8 @@ Two backends available:
 | `rag` | Retrieval-augmented | 5 | 10 | 10 | 50.4 (moderate) | Working |
 | `map_reduce` | Parallel chunk processing | 4 | 6 | 11 | 48.6 (moderate) | Working |
 | `multi_agent_codegen` | Code generation pipeline | 5 | 5 | 7 | 47.4 (moderate) | Working |
+| `customer_support_swarm` | Handoff-based routing | 8 | 7 | 7 | — | Working |
+| `software_team` | Pub/sub team pipeline | 10 | 8 | 10 | — | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -224,9 +229,9 @@ version: "1.0"
 description: "What this agent does"
 entry_point: first_step
 
-entities:       # Things that exist (agents, stores, tools, humans)
+entities:       # Things that exist (agents, stores, tools, humans, channels, teams)
 processes:      # Things that happen (steps, gates, checkpoints)
-edges:          # Connections (flow, invoke, loop, branch, read, write)
+edges:          # Connections (flow, invoke, loop, branch, read, write, publish, subscribe, handoff)
 schemas:        # Data shapes flowing between components
 ```
 
@@ -236,6 +241,9 @@ schemas:        # Data shapes flowing between components
 - `tool` — External capability (API, function, system)
 - `human` — Human-in-the-loop participant
 - `config` — Static configuration
+- `channel` — Named pub/sub communication channel with message schema and reducer
+- `team` — Agent group with strategy (sequential, hierarchical, consensus, round-robin)
+- `conversation` — Multi-turn dialogue with history and persistence
 
 ### Process types
 - `step` — Do something (may include inline `logic:` as Python)
@@ -252,6 +260,8 @@ schemas:        # Data shapes flowing between components
 - `loop` — Conditional back-edge
 - `branch` — Conditional forward-edge (from gates)
 - `read` / `write` — Store access
+- `publish` / `subscribe` — Channel-based messaging
+- `handoff` — Agent-to-agent control transfer
 - `error` — Error flow routing to handler
 - `modify` / `observe` — Policy interactions
 
@@ -263,14 +273,14 @@ Full type system: `ONTOLOGY.yaml`
 |------|---------|-------|
 | `validate.py` | Check spec against ontology | `python3 validate.py spec.yaml` |
 | `instantiate.py` | Generate runnable agent (custom or LangGraph) | `python3 instantiate.py spec.yaml [--backend langgraph]` |
-| `specgen.py` | Generate spec from description | `python3 specgen.py desc.md -o spec.yaml --validate --fix` |
+| `specgen.py` | Generate spec from description (pattern-aware) | `python3 specgen.py desc.md -o spec.yaml --validate --fix` |
 | `spec-viewer.html` | Interactive visualization (5 views) | Serve via HTTP, open in browser |
 | `test_agents.py` | Automated agent testing | `python3 test_agents.py --agent react` |
 | `analyze_trace.py` | Trace analysis and comparison | `python3 analyze_trace.py trace.json` |
 | `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
 | `mutate.py` | Spec mutation engine (field + pattern-level) | `python3 mutate.py spec.yaml --random -n 5` |
 | `evolve.py` | Evolutionary search with crossover | `python3 evolve.py spec.yaml --generations 3 --crossover` |
-| `benchmark.py` | Benchmark suite (HotpotQA, GSM8K) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
+| `benchmark.py` | Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
 | `patterns.py` | Pattern library (7 patterns) | `from patterns import detect_patterns, PATTERNS` |
 | `compose.py` | Compose patterns into new specs | `python3 compose.py compose_spec.yaml -o spec.yaml` |
 | `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
@@ -282,7 +292,7 @@ Full type system: `ONTOLOGY.yaml`
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
-| `test_properties.py` | Property-based structural tests (158+) | `python3 test_properties.py` |
+| `test_properties.py` | Property-based structural tests (174+) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 
 ## Architecture
@@ -291,7 +301,7 @@ Full type system: `ONTOLOGY.yaml`
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (20 agents)
+specs/*.yaml           # Agent specifications (22 agents)
      |
      +---> validate.py       # Validation (25+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py or agents_lg/*.py
@@ -309,7 +319,7 @@ specs/*.yaml           # Agent specifications (20 agents)
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
      +---> comparative_report.py  # Cross-spec comparative analysis
-     +---> test_properties.py     # Property-based structural tests (158+)
+     +---> test_properties.py     # Property-based structural tests (174+)
      +---> spec-viewer.html  # Visualization (5 views + trace overlay)
 
 agents/*.py            # Generated runnable agents (custom backend)
@@ -371,17 +381,17 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-specs/                  # Agent specifications (YAML, 20 specs)
+specs/                  # Agent specifications (YAML, 22 specs)
 agents/                 # Generated runnable agents (custom backend)
 agents_lg/              # Generated runnable agents (LangGraph backend)
 compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing
-benchmarks/             # Benchmark datasets (HotpotQA, GSM8K) and scoring
+benchmarks/             # Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) and scoring
 traces/                 # Per-agent trace files from test runs
 ONTOLOGY.yaml           # The type system
 validate.py             # Spec validator (25+ rules)
 instantiate.py          # Code generator (custom + LangGraph backends)
-specgen.py              # Description-to-spec pipeline
+specgen.py              # Description-to-spec pipeline (pattern-aware)
 spec-viewer.html        # Interactive multi-view visualization (5 views + trace overlay)
 test_agents.py          # Automated test harness + multi-model comparison
 test_specgen.py         # E2E specgen pipeline testing
@@ -396,13 +406,13 @@ mermaid.py              # Mermaid flowchart export
 similarity.py           # Spec similarity & clustering
 migrate.py              # Spec version migration
 comparative_report.py   # Cross-spec comparative analysis
-test_properties.py      # Property-based structural tests (158+ tests)
+test_properties.py      # Property-based structural tests (174+ tests)
 patterns.py             # Pattern library (7 reusable architectural patterns)
 compose.py              # Pattern composition operator
 gaps.md                 # Ontology expressiveness gap analysis
 .github/workflows/      # CI: validate, lint, syntax-check, smoke-test
 mutate.py               # Spec mutation engine (field + pattern-level operators)
 evolve.py               # Evolutionary search with crossover + benchmark fitness
-benchmark.py            # Benchmark suite (HotpotQA, GSM8K) with multi-run stats
+benchmark.py            # Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval) with multi-run stats
 trace.json              # LLM call traces from last agent run
 ```
