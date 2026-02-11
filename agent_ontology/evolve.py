@@ -354,17 +354,310 @@ def _format_lineage_tree(history):
 
 
 # ════════════════════════════════════════════════════════════════════
+# LLM-guided mutation (Flash) and deep analysis (Mini)
+# ════════════════════════════════════════════════════════════════════
+
+FLASH_MODEL = os.environ.get("AGENT_ONTOLOGY_FLASH_MODEL", "gemini-3-flash-preview")
+ANALYST_MODEL = os.environ.get("AGENT_ONTOLOGY_ANALYST_MODEL", "gpt-5-mini")
+
+MUTATION_SYSTEM_PROMPT = """\
+You are an agent architecture mutation engine. You receive a YAML agent spec and context
+about its performance, then produce a MUTATED version of the spec.
+
+Rules:
+- Output ONLY the complete mutated YAML spec (no explanation, no markdown fences)
+- Make exactly ONE structural change (add/remove/modify a process, edge, gate condition, or schema)
+- Keep the spec valid: every process referenced in edges must exist, entry_point must exist,
+  every gate must have branches, every invoke edge needs input/output schemas
+- Preserve the name field but append a short suffix describing your change
+- Do NOT change the model fields on entities
+- Focus on architecture changes that could improve benchmark performance
+
+Common effective mutations:
+- Add a review/critique step after generation (improves quality)
+- Add a retrieval step before reasoning (adds knowledge)
+- Change gate conditions to be more/less strict
+- Add a reflection loop (retry with self-evaluation)
+- Simplify by removing unnecessary intermediate steps
+- Add parallel execution paths (fan-out + aggregation)
+"""
+
+MUTATION_USER_TEMPLATE = """\
+## Parent Spec
+```yaml
+{spec_yaml}
+```
+
+## Context
+- Detected patterns: {patterns}
+- Lint warnings: {lint_warnings}
+- Verify issues: {verify_issues}
+{benchmark_context}
+{previous_analysis}
+{knowledge_context}
+
+## Task
+Produce a mutated version of this spec that addresses the issues above and could score higher
+on the benchmark. Output ONLY the complete YAML spec.
+"""
+
+ANALYSIS_SYSTEM_PROMPT = """\
+You are a deep analyst for agent architecture evolution. You examine the top-performing
+agent specs from this generation and explain WHY they succeeded or failed.
+
+Your output must be valid JSON with exactly these fields:
+{
+  "diagnosis": "2-3 sentence explanation of what made the top candidates score well",
+  "failure_patterns": "What went wrong with candidates that scored poorly",
+  "lessons": "Reusable insight for future generations (1-2 sentences)",
+  "suggested_mutations": ["list of 2-3 specific structural changes to try next"]
+}
+"""
+
+ANALYSIS_USER_TEMPLATE = """\
+## Generation {generation} Results
+
+### Top candidates (by fitness):
+{top_candidates}
+
+### Failed/low-scoring candidates:
+{failed_candidates}
+
+### Benchmark: {benchmark}
+
+### Knowledge store context:
+{knowledge_context}
+
+Analyze these results and produce your JSON output.
+"""
+
+
+def _get_lint_warnings(spec):
+    """Get lint warnings for a spec."""
+    try:
+        from . import lint as lint_mod
+        issues = lint_mod.lint_spec(spec)
+        return "; ".join(f"{i.code}: {i.message}" for i in issues[:5])
+    except Exception:
+        return "none"
+
+
+def _get_verify_issues(spec):
+    """Get verify failures for a spec."""
+    try:
+        from . import verify as verify_mod
+        passes, failures = verify_mod.verify_spec(spec)
+        return "; ".join(failures[:5]) if failures else "none"
+    except Exception:
+        return "none"
+
+
+def _get_knowledge_context(store, benchmark, limit=5):
+    """Get relevant context from the knowledge store."""
+    if not store:
+        return "No knowledge store available."
+
+    lines = []
+    best = store.best_genotypes(benchmark, limit=limit) if benchmark else []
+    if best:
+        lines.append("Best known genotypes:")
+        for r in best:
+            lines.append(f"  - {r['spec_name']}: fitness={r['fitness']}, patterns={r['detected_patterns']}")
+
+    mut_eff = store.mutation_effectiveness()[:5]
+    if mut_eff:
+        lines.append("Most effective mutations:")
+        for r in mut_eff:
+            lines.append(f"  - {r['mutation_description']}: avg_fitness={r['avg_fitness']:.1f} (n={r['count']})")
+
+    failures = store.failure_lessons(benchmark, limit=3) if benchmark else []
+    if failures:
+        lines.append("Recent failure lessons:")
+        for r in failures:
+            err = (r.get('error_details') or '')[:100]
+            lines.append(f"  - [{r['status']}] {r['spec_name']}: {err}")
+
+    return "\n".join(lines) if lines else "No prior data."
+
+
+def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
+               benchmark_results=None, previous_analysis=None,
+               knowledge_store=None, model=None, verbose=False):
+    """Generate a mutation using an LLM (Flash model).
+
+    Returns (mutated_spec_dict, mutation_description) or raises on failure.
+    """
+    import yaml
+    from .specgen import call_llm, extract_yaml
+
+    model = model or FLASH_MODEL
+    patterns = _detect_pattern_names(parent_spec)
+
+    # Build context
+    benchmark_ctx = ""
+    if benchmark_results:
+        benchmark_ctx = f"- Benchmark ({benchmark_suite}): fitness={benchmark_results.get('fitness', 0)}, " \
+                        f"status={benchmark_results.get('status', '?')}, " \
+                        f"llm_calls={benchmark_results.get('llm_calls', 0)}"
+        if benchmark_results.get('error'):
+            benchmark_ctx += f"\n- Error: {benchmark_results['error'][:200]}"
+
+    analysis_ctx = ""
+    if previous_analysis:
+        analysis_ctx = f"- Previous generation analysis:\n  {previous_analysis.get('diagnosis', '')}\n" \
+                        f"  Suggested mutations: {previous_analysis.get('suggested_mutations', [])}"
+
+    knowledge_ctx = _get_knowledge_context(knowledge_store, benchmark_suite)
+
+    user_prompt = MUTATION_USER_TEMPLATE.format(
+        spec_yaml=parent_yaml[:3000],  # truncate very large specs
+        patterns=", ".join(patterns) if patterns else "none detected",
+        lint_warnings=_get_lint_warnings(parent_spec),
+        verify_issues=_get_verify_issues(parent_spec),
+        benchmark_context=benchmark_ctx,
+        previous_analysis=analysis_ctx,
+        knowledge_context=knowledge_ctx,
+    )
+
+    if verbose:
+        print(f"    [Flash] Generating mutation with {model}...")
+
+    # Retry up to 2 times with error feedback
+    last_error = None
+    for attempt in range(2):
+        prompt = user_prompt
+        if last_error and attempt > 0:
+            prompt += f"\n\n## IMPORTANT: Your previous attempt failed with this error:\n{last_error}\nPlease fix the issue and output ONLY valid YAML."
+
+        response = call_llm(model, MUTATION_SYSTEM_PROMPT, prompt,
+                             temperature=0.7, max_tokens=8192)
+        yaml_text = extract_yaml(response)
+
+        try:
+            mutated_spec = yaml.safe_load(yaml_text)
+            if isinstance(mutated_spec, dict) and "processes" in mutated_spec:
+                break
+            last_error = "Output is a dict but missing 'processes' key. Include ALL sections: entities, processes, edges, schemas."
+        except yaml.YAMLError as e:
+            last_error = f"YAML parse error: {e}"
+            continue
+    else:
+        raise ValueError(last_error or "LLM output is not a valid spec dict")
+
+    # Compute a description of what changed
+    orig_procs = {p["id"] for p in parent_spec.get("processes", [])}
+    new_procs = {p["id"] for p in mutated_spec.get("processes", [])}
+    added = new_procs - orig_procs
+    removed = orig_procs - new_procs
+
+    desc_parts = []
+    if added:
+        desc_parts.append(f"added {', '.join(sorted(added))}")
+    if removed:
+        desc_parts.append(f"removed {', '.join(sorted(removed))}")
+    if not desc_parts:
+        # Check edge count changes
+        orig_edges = len(parent_spec.get("edges", []))
+        new_edges = len(mutated_spec.get("edges", []))
+        if new_edges != orig_edges:
+            desc_parts.append(f"edges {orig_edges}→{new_edges}")
+        else:
+            desc_parts.append("modified structure")
+
+    mutation_desc = "llm: " + "; ".join(desc_parts)
+
+    return mutated_spec, mutation_desc, yaml_text
+
+
+def llm_analyze(generation, gen_results, benchmark_suite=None,
+                knowledge_store=None, model=None, verbose=False):
+    """Deep analysis of generation results using analyst model (Mini).
+
+    Returns analysis dict with diagnosis, failure_patterns, lessons, suggested_mutations.
+    """
+    from .specgen import call_llm
+
+    model = model or ANALYST_MODEL
+
+    # Format top candidates
+    sorted_results = sorted(gen_results, key=lambda x: x.get("fitness", 0), reverse=True)
+    top = sorted_results[:4]
+    failed = [r for r in sorted_results if r.get("fitness", 0) == 0][:4]
+
+    top_lines = []
+    for r in top:
+        patterns = r.get("lineage", {}).get("patterns", [])
+        top_lines.append(
+            f"  - {r['name']}: fitness={r.get('fitness', 0):.1f}, "
+            f"status={r.get('status')}, llm_calls={r.get('llm_calls', 0)}, "
+            f"mutations={r.get('mutations', [])}, patterns={patterns}"
+        )
+
+    failed_lines = []
+    for r in failed:
+        err = (r.get("error") or "")[:150]
+        failed_lines.append(
+            f"  - {r['name']}: status={r.get('status')}, "
+            f"mutations={r.get('mutations', [])}, error={err}"
+        )
+
+    knowledge_ctx = _get_knowledge_context(knowledge_store, benchmark_suite)
+
+    user_prompt = ANALYSIS_USER_TEMPLATE.format(
+        generation=generation,
+        top_candidates="\n".join(top_lines) if top_lines else "  (none)",
+        failed_candidates="\n".join(failed_lines) if failed_lines else "  (none)",
+        benchmark=benchmark_suite or "standard",
+        knowledge_context=knowledge_ctx,
+    )
+
+    if verbose:
+        print(f"    [Mini] Analyzing generation {generation} with {model}...")
+
+    response = call_llm(model, ANALYSIS_SYSTEM_PROMPT, user_prompt,
+                         temperature=0.3, max_tokens=1024)
+
+    # Parse JSON response
+    try:
+        # Strip markdown fences if present
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines)
+        analysis = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        analysis = {
+            "diagnosis": response[:300],
+            "failure_patterns": "",
+            "lessons": "",
+            "suggested_mutations": [],
+        }
+
+    return analysis
+
+
+# ════════════════════════════════════════════════════════════════════
 # Evolution loop
 # ════════════════════════════════════════════════════════════════════
 
 def evolve(base_spec_path, test_inputs, generations=3, population=5,
            timeout_sec=60, verbose=True, benchmark_suite=None,
            benchmark_examples=5, crossover_enabled=False,
-           crossover_rate=0.3, knowledge_store=None):
+           crossover_rate=0.3, knowledge_store=None,
+           llm_guided=False, programmatic_ratio=0.2,
+           flash_model=None, analyst_model=None):
     """Run evolutionary search. Returns list of generation results.
 
     If knowledge_store is provided (a KnowledgeStore instance), every candidate
     result is persisted for cross-run learning.
+
+    If llm_guided=True, uses Flash/Mini cascade:
+    - Flash generates mutations (sees spec + errors + previous analysis + knowledge)
+    - Mini analyzes top-K after each generation (diagnosis + lessons)
+    - programmatic_ratio controls what fraction of mutations use random mutate.py (diversity)
     """
     import yaml
 
@@ -381,6 +674,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
 
     history = []
     current_population = [("base", base_spec_path, copy.deepcopy(base_spec))]
+    previous_analysis = None  # Mini's analysis from previous generation
 
     for gen in range(generations):
         gen_results = []
@@ -389,6 +683,9 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             print(f"  Generation {gen + 1}/{generations} — {len(current_population)} parent(s)")
             if benchmark_suite:
                 print(f"  Fitness: benchmark ({benchmark_suite}, {benchmark_examples} examples)")
+            if llm_guided:
+                print(f"  Mutations: LLM-guided ({flash_model or FLASH_MODEL}) "
+                      f"+ {programmatic_ratio:.0%} programmatic diversity")
             if crossover_enabled:
                 print(f"  Crossover rate: {crossover_rate:.0%}")
             print(f"{'='*60}")
@@ -401,11 +698,16 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
 
             # Generate mutations
             mutations_per_parent = max(1, population // len(current_population))
+            parent_yaml = yaml.dump(parent_spec, default_flow_style=False)
+
             for i in range(mutations_per_parent):
-                # Decide: crossover or mutation
+                # Decide mutation method: LLM-guided, crossover, or programmatic
                 use_crossover = (crossover_enabled and
                                  len(current_population) >= 2 and
                                  random.random() < crossover_rate)
+                use_programmatic = (not use_crossover and llm_guided and
+                                    random.random() < programmatic_ratio)
+                use_llm = llm_guided and not use_crossover and not use_programmatic
 
                 try:
                     if use_crossover:
@@ -420,8 +722,24 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                             parent_list = [parent_name, other_name]
                         else:
                             use_crossover = False
+                            use_llm = llm_guided  # fallback
 
-                    if not use_crossover:
+                    if use_llm and not use_crossover:
+                        # LLM-guided mutation via Flash
+                        result, mut_desc, _ = llm_mutate(
+                            parent_spec, parent_yaml,
+                            benchmark_suite=benchmark_suite,
+                            previous_analysis=previous_analysis,
+                            knowledge_store=knowledge_store,
+                            model=flash_model,
+                            verbose=verbose,
+                        )
+                        mut_name = f"gen{gen+1}_{parent_name}_llm{i+1}"
+                        mut_ops = [mut_desc]
+                        parent_list = [parent_name]
+
+                    elif not use_crossover:
+                        # Programmatic mutation (diversity mechanism)
                         result, op_name = mutate.apply_random_mutation(parent_spec)
                         mut_name = f"gen{gen+1}_{parent_name}_mut{i+1}"
                         mut_ops = [op_name]
@@ -438,7 +756,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
 
                 except (ValueError, Exception) as e:
                     if verbose:
-                        print(f"  Warning: mutation/crossover failed: {e}")
+                        print(f"  Warning: mutation failed: {e}")
 
         if verbose:
             print(f"  {len(candidates)} candidates (parents + offspring)")
@@ -567,6 +885,52 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                 print("\n  No surviving candidates! Reverting to base.")
             current_population = [("base", base_spec_path, copy.deepcopy(base_spec))]
 
+        # Deep analysis via analyst model (Mini) — for LLM-guided mode
+        gen_analysis = None
+        if llm_guided and gen_results:
+            try:
+                gen_analysis = llm_analyze(
+                    generation=gen + 1,
+                    gen_results=gen_results,
+                    benchmark_suite=benchmark_suite,
+                    knowledge_store=knowledge_store,
+                    model=analyst_model,
+                    verbose=verbose,
+                )
+                previous_analysis = gen_analysis  # feed to next generation
+
+                if verbose and gen_analysis:
+                    print(f"\n  [Analysis] {gen_analysis.get('diagnosis', '')[:200]}")
+                    suggestions = gen_analysis.get('suggested_mutations', [])
+                    if suggestions:
+                        print(f"  [Suggestions] {', '.join(suggestions[:3])}")
+
+                # Store analysis + lessons in knowledge store for top candidates
+                if knowledge_store and gen_analysis:
+                    for fitness, name, _, _ in scored[:top_k]:
+                        if fitness > 0:
+                            try:
+                                # Update the most recent record for this candidate
+                                knowledge_store.conn.execute(
+                                    """UPDATE evolution_results
+                                       SET analysis = ?, lessons = ?
+                                       WHERE spec_name = ? AND generation = ?
+                                       ORDER BY id DESC LIMIT 1""",
+                                    (
+                                        gen_analysis.get("diagnosis", ""),
+                                        gen_analysis.get("lessons", ""),
+                                        name,
+                                        gen + 1,
+                                    ),
+                                )
+                                knowledge_store.conn.commit()
+                            except Exception:
+                                pass
+
+            except Exception as e:
+                if verbose:
+                    print(f"  Warning: analysis failed: {e}")
+
         history.append({
             "generation": gen + 1,
             "candidates": len(candidates),
@@ -574,6 +938,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             "survivors": [name for fitness, name, _, _ in scored[:top_k] if fitness > 0],
             "best_fitness": scored[0][0] if scored else 0,
             "best_name": scored[0][1] if scored else "none",
+            "analysis": gen_analysis,
         })
 
     # Final summary
@@ -650,6 +1015,14 @@ def main():
                         help="Output results as JSON")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress verbose output")
+    parser.add_argument("--llm-guided", action="store_true",
+                        help="Use LLM-guided mutations (Flash/Mini cascade)")
+    parser.add_argument("--flash-model", default=None,
+                        help=f"Model for mutation generation (default: {FLASH_MODEL})")
+    parser.add_argument("--analyst-model", default=None,
+                        help=f"Model for deep analysis (default: {ANALYST_MODEL})")
+    parser.add_argument("--programmatic-ratio", type=float, default=0.2,
+                        help="Fraction of mutations that are programmatic (0-1, default: 0.2)")
     parser.add_argument("--no-store", action="store_true",
                         help="Disable knowledge store persistence")
     parser.add_argument("--db", metavar="PATH",
@@ -687,6 +1060,10 @@ def main():
             crossover_enabled=args.crossover,
             crossover_rate=args.crossover_rate,
             knowledge_store=store,
+            llm_guided=args.llm_guided,
+            programmatic_ratio=args.programmatic_ratio,
+            flash_model=args.flash_model,
+            analyst_model=args.analyst_model,
         )
     finally:
         if store:

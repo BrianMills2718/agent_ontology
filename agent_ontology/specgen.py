@@ -228,15 +228,21 @@ def call_llm(model, system, user, temperature=0.3, max_tokens=8192):
 def _call_openai(model, system, user, temperature, max_tokens):
     from openai import OpenAI
     client = OpenAI()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    # Newer OpenAI models (gpt-5*, o3*, o4*) require max_completion_tokens
+    # and may not support temperature != 1
+    is_new_model = any(model.startswith(p) for p in ("gpt-5", "o3", "o4"))
+    token_param = "max_completion_tokens" if is_new_model else "max_tokens"
+    kwargs = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+        token_param: max_tokens,
+    }
+    if not is_new_model:
+        kwargs["temperature"] = temperature
+    response = client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
 
 
