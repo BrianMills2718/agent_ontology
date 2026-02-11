@@ -978,7 +978,7 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
             prompt += f"\n\n## IMPORTANT: Previous attempt failed:\n{last_error}\n\nOutput ONLY a valid JSON array. No markdown, no explanation. Example:\n[{{\"operator\": \"modify_prompt\", \"agent\": \"solver\", \"transform\": \"add_chain_of_thought\"}}]"
 
         response = call_llm(model, STRUCTURED_MUTATION_SYSTEM, prompt,
-                            temperature=0.7, max_tokens=2048)
+                            temperature=0.7, max_tokens=8192)
 
         try:
             selections = _extract_json_array(response)
@@ -1159,7 +1159,7 @@ def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
             prompt += f"\n\n## IMPORTANT: Your previous attempt failed:\n{last_error}\nPlease output ONLY valid JSON."
 
         response = call_llm(model, MUTATION_SYSTEM_PROMPT, prompt,
-                             temperature=0.7, max_tokens=2048)
+                             temperature=0.7, max_tokens=8192)
 
         try:
             instruction = _extract_json(response)
@@ -1228,7 +1228,7 @@ def llm_analyze(generation, gen_results, benchmark_suite=None,
         print(f"    [Mini] Analyzing generation {generation} with {model}...")
 
     response = call_llm(model, ANALYSIS_SYSTEM_PROMPT, user_prompt,
-                         temperature=0.3, max_tokens=1024)
+                         temperature=0.3, max_tokens=8192)
 
     # Parse JSON response
     try:
