@@ -32,6 +32,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from . import mutate
 from . import validate as validator_module
+from .knowledge_store import KnowledgeStore
 
 
 def validate_spec_text(yaml_text):
@@ -276,6 +277,8 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
         "status": "PASS" if score > 0 else "BENCH_FAIL",
         "llm_calls": total_calls,
         "duration_ms": total_duration_ms,
+        "score_em": round(em_mean, 4),
+        "score_f1": round(f1_mean, 4),
     }
 
     return round(score, 1), test_result
@@ -357,8 +360,12 @@ def _format_lineage_tree(history):
 def evolve(base_spec_path, test_inputs, generations=3, population=5,
            timeout_sec=60, verbose=True, benchmark_suite=None,
            benchmark_examples=5, crossover_enabled=False,
-           crossover_rate=0.3):
-    """Run evolutionary search. Returns list of generation results."""
+           crossover_rate=0.3, knowledge_store=None):
+    """Run evolutionary search. Returns list of generation results.
+
+    If knowledge_store is provided (a KnowledgeStore instance), every candidate
+    result is persisted for cross-run learning.
+    """
     import yaml
 
     base_spec_path = os.path.abspath(base_spec_path)
@@ -449,6 +456,17 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                     "mutations": mutations,
                     "lineage": spec.get("metadata", {}).get("lineage", {}),
                 })
+                if knowledge_store:
+                    try:
+                        knowledge_store.record_candidate(
+                            spec_name=name, spec=spec, base_spec=base_name,
+                            generation=gen + 1, parents=parents,
+                            mutation_description=", ".join(mutations) if mutations else None,
+                            benchmark=benchmark_suite, fitness=0.0,
+                            status="INVALID", error_details=output[:500],
+                        )
+                    except Exception:
+                        pass
                 continue
 
             # Instantiate
@@ -462,6 +480,17 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                     "mutations": mutations,
                     "lineage": spec.get("metadata", {}).get("lineage", {}),
                 })
+                if knowledge_store:
+                    try:
+                        knowledge_store.record_candidate(
+                            spec_name=name, spec=spec, base_spec=base_name,
+                            generation=gen + 1, parents=parents,
+                            mutation_description=", ".join(mutations) if mutations else None,
+                            benchmark=benchmark_suite, fitness=0.0,
+                            status="GEN_FAIL",
+                        )
+                    except Exception:
+                        pass
                 continue
 
             # Add work_dir to path for import
@@ -493,6 +522,31 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             }
             gen_results.append(entry)
             scored.append((fitness, name, spec_path, spec))
+
+            # Persist to knowledge store
+            if knowledge_store:
+                try:
+                    spec_yaml_text = yaml.dump(spec, default_flow_style=False)
+                    knowledge_store.record_candidate(
+                        spec_name=name,
+                        spec=spec,
+                        spec_yaml=spec_yaml_text if fitness > 0 else None,
+                        base_spec=base_name,
+                        generation=gen + 1,
+                        parents=parents,
+                        mutation_description=", ".join(mutations) if mutations else None,
+                        benchmark=benchmark_suite,
+                        score_em=test_result.get("score_em"),
+                        score_f1=test_result.get("score_f1"),
+                        fitness=fitness,
+                        llm_calls=test_result.get("llm_calls", 0),
+                        duration_ms=test_result.get("duration_ms", 0),
+                        status=test_result["status"],
+                        error_details=test_result.get("error"),
+                    )
+                except Exception as e:
+                    if verbose:
+                        print(f"  Warning: failed to record to knowledge store: {e}")
 
             if verbose:
                 icon = "+" if fitness > 0 else "-"
@@ -596,6 +650,10 @@ def main():
                         help="Output results as JSON")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress verbose output")
+    parser.add_argument("--no-store", action="store_true",
+                        help="Disable knowledge store persistence")
+    parser.add_argument("--db", metavar="PATH",
+                        help="Knowledge store database path (default: ~/.agent_ontology/evolution.db)")
     args = parser.parse_args()
 
     agent_name = detect_agent_name(args.spec)
@@ -606,18 +664,33 @@ def main():
         print(f"Available: {', '.join(EVOLVE_INPUTS.keys())}")
         sys.exit(1)
 
-    history = evolve(
-        args.spec,
-        test_inputs or {},
-        generations=args.generations,
-        population=args.population,
-        timeout_sec=args.timeout,
-        verbose=not args.quiet and not args.json,
-        benchmark_suite=args.benchmark,
-        benchmark_examples=args.benchmark_examples,
-        crossover_enabled=args.crossover,
-        crossover_rate=args.crossover_rate,
-    )
+    # Knowledge store
+    store = None
+    if not args.no_store:
+        try:
+            store = KnowledgeStore(args.db)
+            if not args.quiet and not args.json:
+                print(f"  Knowledge store: {store.db_path} ({store.count()} existing records)")
+        except Exception as e:
+            print(f"  Warning: could not open knowledge store: {e}")
+
+    try:
+        history = evolve(
+            args.spec,
+            test_inputs or {},
+            generations=args.generations,
+            population=args.population,
+            timeout_sec=args.timeout,
+            verbose=not args.quiet and not args.json,
+            benchmark_suite=args.benchmark,
+            benchmark_examples=args.benchmark_examples,
+            crossover_enabled=args.crossover,
+            crossover_rate=args.crossover_rate,
+            knowledge_store=store,
+        )
+    finally:
+        if store:
+            store.close()
 
     if args.json:
         print(json.dumps(history, indent=2))
