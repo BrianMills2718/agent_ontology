@@ -29,21 +29,23 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 | Component | Tool | Status |
 |-----------|------|--------|
 | Broad mutation | `mutate.py` (field + pattern level) | Working |
+| LLM-guided mutation | `evolve.py --llm-guided` (Flash generates YAML mutations) | Working |
+| Deep analysis | `evolve.py` Mini (gpt-5-mini) analyzes top-K per generation | Working |
 | Population evolution | `evolve.py` (selection, crossover, lineage) | Working |
+| Knowledge store | `knowledge_store.py` (SQLite, persistent across runs) | Working |
 | Benchmark fitness | `benchmark.py` + 4 datasets | Working |
 | LLM-guided improvement | `self_improver.yaml` (analyst → mutator → evaluator) | Working |
 | Structural verification | `verify.py` (9 checks), `lint.py` (10 rules) | Working |
 | OWL reasoning | `owl_bridge.py` (round-trip + pattern classification) | Working |
 
 ### What's Missing (in priority order)
-1. **Flash/Pro cascade** — evolve.py uses one model; should use Flash for bulk generation, Pro for deep analysis
-2. **Knowledge accumulation** — benchmark results vanish after each run; need persistent store of "pattern X scored Y on benchmark Z"
-3. **Evidence-backed reasoning** — self_improver and recommend.py use hardcoded heuristics, not accumulated evidence
-4. **Connected loop** — self_improver doesn't benchmark; evolve.py doesn't use LLM reasoning. Wire them together.
-5. **OWL-powered tools** — compose.py and detect_patterns() still use hardcoded matching, not the OWL reasoner
+1. **Evidence-backed reasoning** — self_improver and recommend.py use hardcoded heuristics, not accumulated evidence from knowledge store
+2. **Connected loop** — self_improver doesn't benchmark; evolve.py's LLM mutations + analysis are working but need reliability improvements
+3. **OWL-powered tools** — compose.py and detect_patterns() still use hardcoded matching, not the OWL reasoner
+4. **Flash mutation reliability** — ~50-70% of Flash-generated YAML specs fail parsing; needs better prompting or structured output
 
 ### Model Choices (During Development)
-- **Broad exploration**: `gemini-3-flash` — cheap, fast, generates many candidates
+- **Broad exploration**: `gemini-3-flash-preview` — cheap, fast, generates many candidates
 - **Deep analysis**: `gpt-5-mini` — higher quality reasoning for top-K refinement
 - Upgrade to Pro-tier models once the loop is proven and we're optimizing for quality
 
@@ -51,9 +53,9 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 
 **Step 0: Landscape research** — Search for existing work on automated agent architecture search. Know what exists (ADAS, AlphaEvolve, DSPy, AutoAgents, etc.) so we build on prior art rather than reinvent. Document findings.
 
-**Step 1: Knowledge store** — Persistent store (SQLite or JSON) accumulating structured facts: `{spec, pattern, benchmark, score, llm_calls, mutation, generation}`. Wire `evolve.py` and `benchmark.py` to write here after every run. This is the memory that makes the system learn.
+**Step 1: Knowledge store** — ~~Persistent store (SQLite or JSON)~~ DONE. `knowledge_store.py` with SQLite backend. Records every evolution candidate (genotype, phenotype, lineage, analysis). CLI: `ao-knowledge-store stats|best|patterns|mutations|failures|generations`. Wired into evolve.py — every run persists to `~/.agent_ontology/evolution.db`.
 
-**Step 2: Flash/Mini cascade in evolve.py** — Replace single-model evolution with: gemini-3-flash generates N mutations cheaply (broad) → automated evaluator scores all (validate + benchmark) → gpt-5-mini analyzes top-K deeply (diagnose why, propose targeted refinements).
+**Step 2: Flash/Mini cascade in evolve.py** — ~~Replace single-model evolution~~ DONE. `--llm-guided` flag enables: Flash (gemini-3-flash-preview) generates mutations informed by spec+errors+analysis+knowledge → validate+benchmark → Mini (gpt-5-mini) analyzes top-K → analysis feeds next generation. YAML retry with error feedback. Env vars: `AGENT_ONTOLOGY_FLASH_MODEL`, `AGENT_ONTOLOGY_ANALYST_MODEL`.
 
 **Step 3: Connect self_improver + benchmarks** — self_improver currently evaluates structurally (lint warnings). Add benchmark evaluation: mutate → instantiate → run on benchmark → score. The evaluator agent sees actual performance, not just lint counts.
 
@@ -97,6 +99,9 @@ python3 tests/test_agents.py --agent react --timeout 120        # Test one agent
 python3 tests/test_properties.py                                # Property tests
 python3 agent_ontology/evolve.py specs/react.yaml -g 3 -p 5    # Evolve an agent
 python3 agent_ontology/evolve.py specs/self_refine.yaml --benchmark gsm8k  # Benchmark evolution
+python3 agent_ontology/evolve.py specs/self_refine.yaml -g 3 -p 8 --benchmark gsm8k --llm-guided  # Flash/Mini cascade
+python3 -m agent_ontology.knowledge_store stats              # Query knowledge store
+python3 -m agent_ontology.knowledge_store best gsm8k         # Best genotypes for benchmark
 ```
 
 ## Design Principles
