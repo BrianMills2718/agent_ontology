@@ -42,7 +42,6 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 1. **Evidence-backed reasoning** — self_improver and recommend.py use hardcoded heuristics, not accumulated evidence from knowledge store
 2. **Connected loop** — self_improver doesn't benchmark; evolve.py's LLM mutations + analysis are working but need reliability improvements
 3. **OWL-powered tools** — compose.py and detect_patterns() still use hardcoded matching, not the OWL reasoner
-4. **Flash mutation reliability** — ~50-70% of Flash-generated YAML specs fail parsing; needs better prompting or structured output
 
 ### Model Choices (During Development)
 - **Broad exploration**: `gemini-3-flash-preview` — cheap, fast, generates many candidates

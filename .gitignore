@@ -27,6 +27,9 @@ Thumbs.db
 *.jpg
 *.jpeg
 
+# Evolution runtime outputs
+evolution*results*.json
+
 # ChromaDB data
 chroma_data/
 

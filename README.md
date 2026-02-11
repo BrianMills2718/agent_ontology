@@ -49,7 +49,7 @@ ao-trace trace.json
 # 8. Score spec complexity
 ao-complexity --all agent_ontology/specs/
 
-# 9. Run all agent tests (21/21 pass)
+# 9. Run all agent tests (22/22 pass, Claude Code is description-only)
 python3 tests/test_agents.py
 
 # 10. Override model for all agents
