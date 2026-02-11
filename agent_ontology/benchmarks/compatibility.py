@@ -16,6 +16,10 @@ COMPATIBILITY = {
     "lats":              ["hotpotqa", "gsm8k"],
     "reflexion":         ["gsm8k"],
     "multi_agent_codegen": ["humaneval"],
+    "minimal_solver":    ["gsm8k", "gsm8k_hard", "gsm8k_tricky", "arc"],
+    "multidoc_baseline": ["multidoc"],
+    "multidoc_structured": ["multidoc"],
+    "kb_react": ["kb_tool"],
 }
 
 # Dataset -> list of compatible agents (derived from COMPATIBILITY)
@@ -73,6 +77,32 @@ def format_input(agent_name, example, dataset_name):
             "language": "Python",
         }
 
-    else:
-        # Generic fallback
+    elif agent_name == "minimal_solver":
+        return {"problem": question}
+
+    elif agent_name == "kb_react":
         return {"query": question}
+
+    elif agent_name in ("multidoc_baseline", "multidoc_structured"):
+        # MultiDoc benchmark: include fact cards as context
+        fact_cards = example.get("fact_cards", [])
+        context = "\n\n".join(
+            f"[Source {card['id']}] {card['text']}" for card in fact_cards
+        )
+        return {
+            "query": question,
+            "context": context,
+            "fact_cards": fact_cards,
+        }
+
+    else:
+        # Generic fallback — also include fact_cards for multidoc if present
+        result = {"query": question}
+        if "fact_cards" in example:
+            fact_cards = example["fact_cards"]
+            context = "\n\n".join(
+                f"[Source {card['id']}] {card['text']}" for card in fact_cards
+            )
+            result["context"] = context
+            result["fact_cards"] = fact_cards
+        return result

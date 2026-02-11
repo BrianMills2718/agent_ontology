@@ -157,12 +157,15 @@ def compute_fitness(test_result):
 
 
 def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=120,
-                              base_agent_type=None):
+                              base_agent_type=None, early_stop_at=3,
+                              early_stop_threshold=0.0, verbose=False):
     """Compute fitness via benchmark suite inline. Returns (score, test_result_dict).
 
     Loads agent module directly (must be importable via sys.path),
     runs it on benchmark examples, and scores the results.
     base_agent_type: the original agent type (e.g. "self_refine") for input formatting.
+    early_stop_at: after this many examples, check if accuracy <= early_stop_threshold.
+    early_stop_threshold: if accuracy at early_stop_at is at or below this, skip remaining.
     """
     import signal
     import builtins
@@ -170,7 +173,7 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
     # Lazy imports from benchmarks subpackage
     from .benchmarks.scoring import (
         extract_answer, score_hotpotqa, score_gsm8k,
-        score_arc, score_humaneval,
+        score_arc, score_humaneval, score_multidoc, score_kb_tool,
     )
 
     # Use base_agent_type for formatting inputs (evolved agents share base schema)
@@ -195,11 +198,17 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
     except Exception as e:
         return 0.0, {"status": "IMPORT_ERROR", "llm_calls": 0, "duration_ms": 0, "error": str(e)}
 
+    # Monkey-patch tool functions for kb_tool benchmark
+    if suite == "kb_tool":
+        from .benchmarks.kb_tools import patch_agent_tools
+        patch_agent_tools(mod)
+
     # Score each example
     scores_em = []
     scores_f1 = []
     total_calls = 0
     total_duration_ms = 0
+    example_details = []
 
     original_input = builtins.input
     builtins.input = lambda prompt="": "skip"
@@ -208,7 +217,7 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
         raise TimeoutError(f"Timed out after {timeout_sec}s")
 
     try:
-        for example in dataset_examples:
+        for ex_idx, example in enumerate(dataset_examples):
             # Format input — try the base agent type for formatting
             inputs = _format_benchmark_input(agent_type, example, suite)
 
@@ -234,28 +243,76 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
                 expected = example["answer"]
                 if suite == "hotpotqa":
                     s = score_hotpotqa(predicted, str(expected))
-                elif suite == "gsm8k":
+                elif suite in ("gsm8k", "gsm8k_hard", "gsm8k_tricky"):
                     s = score_gsm8k(predicted, expected)
                 elif suite == "arc":
                     s = score_arc(predicted, expected)
                 elif suite == "humaneval":
                     s = score_humaneval(predicted, example)
+                elif suite == "multidoc":
+                    s = score_multidoc(predicted, str(expected))
+                elif suite == "kb_tool":
+                    s = score_kb_tool(predicted, str(expected))
                 else:
                     s = {"em": 1.0 if str(expected).lower() in predicted.lower() else 0.0}
 
-                scores_em.append(s.get("em", 0.0))
+                em_val = s.get("em", 0.0)
+                scores_em.append(em_val)
                 if "f1" in s:
                     scores_f1.append(s["f1"])
+
+                example_details.append({
+                    "id": example.get("id", f"ex_{ex_idx}"),
+                    "question": str(example.get("question", ""))[:100],
+                    "expected": str(expected),
+                    "predicted": str(predicted)[:200],
+                    "em": em_val,
+                    "status": "ok",
+                })
 
             except TimeoutError:
                 scores_em.append(0.0)
                 total_duration_ms += int((time.time() - t0) * 1000)
-            except Exception:
+                example_details.append({
+                    "id": example.get("id", f"ex_{ex_idx}"),
+                    "question": str(example.get("question", ""))[:100],
+                    "expected": str(example.get("answer", "")),
+                    "predicted": "",
+                    "em": 0.0,
+                    "status": "timeout",
+                })
+            except Exception as exc:
                 scores_em.append(0.0)
                 total_duration_ms += int((time.time() - t0) * 1000)
+                example_details.append({
+                    "id": example.get("id", f"ex_{ex_idx}"),
+                    "question": str(example.get("question", ""))[:100],
+                    "expected": str(example.get("answer", "")),
+                    "predicted": "",
+                    "em": 0.0,
+                    "status": f"error: {type(exc).__name__}",
+                })
             finally:
                 signal.alarm(0)
                 signal.signal(signal.SIGALRM, old_handler)
+
+            # Early stop: if first N examples all fail, skip remaining
+            if (early_stop_at > 0 and len(scores_em) == early_stop_at
+                    and sum(scores_em) / len(scores_em) <= early_stop_threshold):
+                remaining = len(dataset_examples) - len(scores_em)
+                scores_em.extend([0.0] * remaining)
+                if verbose:
+                    print(f"  (early stop: 0/{early_stop_at} correct, skipping {remaining} remaining)")
+                example_details.append({
+                    "id": "_early_stop",
+                    "question": "",
+                    "expected": "",
+                    "predicted": "",
+                    "em": 0.0,
+                    "status": f"early_stopped_after_{early_stop_at}",
+                })
+                break
+
     finally:
         builtins.input = original_input
 
@@ -266,34 +323,38 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
     em_mean = sum(scores_em) / len(scores_em)
     f1_mean = sum(scores_f1) / len(scores_f1) if scores_f1 else 0.0
 
-    # Accuracy component: EM weighted higher, scale to 100
-    accuracy_score = (em_mean * 0.7 + f1_mean * 0.3) * 100
+    # Accuracy component: heavily dominant (max 200, quadratic scaling)
+    # Going from 96%→100% is worth 200*(1.0^2 - 0.96^2) = 200*(1-0.9216) = 15.7
+    # This outweighs any efficiency penalty from adding reasoning steps
+    if scores_f1:
+        raw_accuracy = em_mean * 0.7 + f1_mean * 0.3
+    else:
+        raw_accuracy = em_mean  # No F1 available (e.g., GSM8K), use EM directly
+    accuracy_score = raw_accuracy * raw_accuracy * 200  # quadratic: rewards perfection
 
-    # Efficiency component (matters more when accuracy is saturated)
-    # Fewer LLM calls = better (scale: 1 call = 50, 5 calls = 30, 10+ = 10)
+    # Efficiency component: small tiebreaker when accuracy is equal
+    # Fewer LLM calls = better (scale: 1 call = 15, 5 calls = 5, 10+ = 0)
     avg_calls = total_calls / len(dataset_examples) if dataset_examples else 0
-    call_efficiency = max(0, 50 - avg_calls * 4) if avg_calls > 0 else 50
+    call_efficiency = max(0, 15 - avg_calls * 1.5) if avg_calls > 0 else 15
 
-    # Speed bonus: faster execution = better (scale: 1s = 30, 10s = 15, 60s = 0)
+    # Speed bonus: tiny tiebreaker (scale: 1s = 5, 10s = 0)
     avg_duration_s = (total_duration_ms / len(dataset_examples) / 1000) if dataset_examples else 0
-    speed_bonus = max(0, 30 - avg_duration_s * 0.5)
+    speed_bonus = max(0, 5 - avg_duration_s * 0.5)
 
-    # Topology simplicity: fewer processes/edges = more elegant solution
-    # This is a small tiebreaker (0-20) that rewards parsimony
-    # Passed in via module introspection if available
-    simplicity_bonus = 0
-    try:
-        if hasattr(mod, 'PROCESSES') and hasattr(mod, 'TRANSITIONS'):
-            n_procs = len(mod.PROCESSES)
-            n_trans = sum(len(v) if isinstance(v, list) else 1
-                         for v in mod.TRANSITIONS.values() if v)
-            # Fewer = better. Baseline: 8 procs + 8 transitions = 0 bonus
-            simplicity_bonus = max(0, 20 - (n_procs + n_trans - 8) * 1.5)
-    except Exception:
-        pass
+    # Total fitness: accuracy absolutely dominates
+    score = accuracy_score + call_efficiency + speed_bonus
 
-    # Total fitness: accuracy dominates, but efficiency differentiates ties
-    score = accuracy_score + call_efficiency + speed_bonus + simplicity_bonus
+    # Build failure summary from failed examples (up to 5)
+    failures = [d for d in example_details if d.get("em", 1.0) == 0.0 and d.get("id") != "_early_stop"]
+    failure_parts = []
+    for f in failures[:5]:
+        failure_parts.append(
+            f"Q:{f['id']} expected={f['expected']} got={f['predicted'][:50]}"
+            + (f" [{f['status']}]" if f["status"] != "ok" else "")
+        )
+    failure_summary = "; ".join(failure_parts) if failure_parts else ""
+
+    early_stopped = any(d.get("id") == "_early_stop" for d in example_details)
 
     test_result = {
         "status": "PASS" if score > 0 else "BENCH_FAIL",
@@ -304,7 +365,9 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
         "accuracy_component": round(accuracy_score, 1),
         "efficiency_component": round(call_efficiency, 1),
         "speed_component": round(speed_bonus, 1),
-        "simplicity_component": round(simplicity_bonus, 1),
+        "example_details": example_details,
+        "failure_summary": failure_summary,
+        "early_stopped": early_stopped,
     }
 
     return round(score, 1), test_result
@@ -556,13 +619,24 @@ Patterns detected: {patterns}
 {previous_analysis}
 {knowledge_context}
 
+## Benchmark Description
+{benchmark_description}
+
 ## Available Mutations ({option_count} options)
 {mutation_menu}
 
 ## Task
-Select 1-3 mutations from the menu above. Output a JSON array of selected mutations.
+Select 1-3 mutations from the menu above that will IMPROVE ACCURACY on the benchmark.
+Output a JSON array of selected mutations.
 Each must have "operator" plus the parameter fields shown. Example:
 [{{"operator": "modify_prompt", "agent": "solver", "transform": "add_chain_of_thought"}}]
+
+Key insights for math/reasoning benchmarks:
+- modify_prompt with add_chain_of_thought or add_verification often helps accuracy
+- add_review_step adds a second LLM call to check the answer — helpful if accuracy < 100%
+- insert_pattern(critique_cycle) adds generation+critique — useful for iterative refinement
+- Structural changes (add processes, patterns) only help if they improve reasoning quality
+- Prefer accuracy-improving mutations over efficiency-optimizing ones
 """
 
 ANALYSIS_SYSTEM_PROMPT = """\
@@ -614,6 +688,34 @@ def _get_verify_issues(spec):
         return "; ".join(failures[:5]) if failures else "none"
     except Exception:
         return "none"
+
+
+def _get_benchmark_description(benchmark_suite):
+    """Return a human-readable description of what the benchmark tests."""
+    descriptions = {
+        "gsm8k": "Grade school math problems requiring multi-step arithmetic reasoning. "
+                 "Accuracy improves with chain-of-thought and step-by-step problem decomposition.",
+        "gsm8k_hard": "Difficult multi-step math problems (4-8 reasoning steps). "
+                      "Benefits from structured reasoning, verification, and problem decomposition.",
+        "gsm8k_tricky": "Tricky math/logic problems with common-error traps (bat-and-ball, etc). "
+                        "Quick guessing fails; careful step-by-step reasoning and answer verification help. "
+                        "Key failure: intuitive answers are wrong (e.g., bat-and-ball costs 5 cents, not 10).",
+        "arc": "Science multiple-choice questions (A/B/C/D). "
+               "Requires scientific reasoning and knowledge application.",
+        "hotpotqa": "Multi-hop question answering requiring information from multiple sources. "
+                    "Benefits from retrieval augmentation and reasoning chains.",
+        "humaneval": "Python code generation from docstrings. "
+                     "Benefits from code review and test-driven verification.",
+        "multidoc": "Multi-document reasoning with traps. Questions require cross-referencing 3-5 fact cards. "
+                    "Trap types include contradictions between sources, misleading details, arithmetic aggregation, "
+                    "negation, and temporal reasoning. Benefits from retrieve-relevant-facts → cross-check → "
+                    "reason → verify architectures. Single LLM calls struggle on hard cross-reference + trap combos.",
+        "kb_tool": "Multi-tool reasoning over a fictional knowledge base. Questions require 2-4 chained tool calls "
+                   "(search → lookup → lookup → calculate). All entities are fictional so LLM knowledge alone gives 0%. "
+                   "Question types: chain lookup, multi-hop, aggregation, comparison, temporal. "
+                   "Benefits from planning tool sequences, caching intermediate results, and verifying tool outputs.",
+    }
+    return descriptions.get(benchmark_suite, f"Benchmark: {benchmark_suite}")
 
 
 def _get_knowledge_context(store, benchmark, limit=5):
@@ -895,6 +997,9 @@ def _format_mutation_menu(options, max_per_operator=5):
         # Skip change_model — model is controlled externally
         if opt["operator"] == "change_model":
             continue
+        # Skip insert_pattern — blacklisted (destroys task-specific accuracy)
+        if opt["operator"] == "insert_pattern":
+            continue
         by_op[opt["operator"]].append(opt)
 
     lines = []
@@ -933,7 +1038,7 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
     summary = _summarize_spec(parent_spec)
 
     # Enumerate all valid mutations for this spec
-    options = mutate.enumerate_mutations(parent_spec)
+    options = mutate.enumerate_mutations(parent_spec, benchmark_suite=benchmark_suite)
     if not options:
         raise ValueError("No mutations available for this spec")
 
@@ -943,10 +1048,13 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
     benchmark_ctx = ""
     if benchmark_results:
         benchmark_ctx = f"Benchmark ({benchmark_suite}): fitness={benchmark_results.get('fitness', 0)}, " \
+                        f"EM={benchmark_results.get('score_em', 0)}, " \
                         f"status={benchmark_results.get('status', '?')}, " \
                         f"llm_calls={benchmark_results.get('llm_calls', 0)}"
         if benchmark_results.get('error'):
             benchmark_ctx += f"\nError: {benchmark_results['error'][:200]}"
+        if benchmark_results.get('failure_summary'):
+            benchmark_ctx += f"\nFailures: {benchmark_results['failure_summary']}"
 
     analysis_ctx = ""
     if previous_analysis:
@@ -954,6 +1062,8 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
                        f"Suggested: {previous_analysis.get('suggested_mutations', [])}"
 
     knowledge_ctx = _get_knowledge_context(knowledge_store, benchmark_suite)
+
+    bench_desc = _get_benchmark_description(benchmark_suite)
 
     user_prompt = STRUCTURED_MUTATION_USER.format(
         spec_name=summary["spec_name"],
@@ -963,6 +1073,7 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
         benchmark_context=benchmark_ctx or "No benchmark data yet.",
         previous_analysis=analysis_ctx or "First generation.",
         knowledge_context=knowledge_ctx,
+        benchmark_description=bench_desc,
         option_count=len(options),
         mutation_menu=menu_text,
     )
@@ -1024,6 +1135,366 @@ def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
             continue
 
     raise ValueError(last_error or "LLM failed to select valid mutations")
+
+
+# ════════════════════════════════════════════════════════════════════
+# Progressive Disclosure Mutation Pipeline
+# ════════════════════════════════════════════════════════════════════
+# Instead of a single LLM call picking from a menu, this uses 2 focused calls:
+#   1. Diagnose: "Here are failed examples. What pattern explains the failures?"
+#   2. Prescribe: "Given diagnosis, here's the spec. Write a specific fix."
+# This lets the LLM *generate* fixes from error patterns rather than picking
+# from pre-coded transforms. Falls back to menu selection when no failure data.
+
+DIAGNOSE_SYSTEM = """\
+You are an agent architecture diagnostician. You receive a summary of failed \
+benchmark examples from an agent and identify the root cause pattern.
+
+Rules:
+- Output ONLY valid JSON with exactly these fields
+- Focus on WHY the agent failed, not just WHAT failed
+- Identify patterns across failures (e.g., "all failures involve contradictions", \
+"agent outputs numbers instead of letters", "arithmetic is wrong when >2 steps")
+- Be specific enough that a fix could be derived from your diagnosis
+
+Output format:
+{"diagnosis": "1-2 sentence root cause", "failure_type": "one of: format_mismatch|missing_reasoning_step|contradiction_handling|arithmetic_error|information_loss|prompt_ambiguity|other", "affected_agents": ["agent_ids that need fixing"], "fix_hint": "specific suggestion for what to change"}
+"""
+
+DIAGNOSE_USER = """\
+## Agent: {spec_name}
+Entities: {entity_ids}
+Processes: {process_ids}
+
+## Failed Examples
+{failure_summary}
+
+## Agent Prompts
+{agent_prompts}
+
+Diagnose why this agent is failing on these examples. Output JSON only.
+"""
+
+PRESCRIBE_SYSTEM = """\
+You are an agent architecture optimizer. Given a diagnosis of why an agent fails \
+and the agent's current spec, prescribe a specific fix.
+
+You can prescribe ONE of these fix types (in order of preference):
+
+1. **Menu selection** (PREFERRED — safest, pre-validated) — pick from mutation operators:
+{{"action": "menu_selection", "selections": [{{"operator": "modify_prompt", "agent": "solver", "transform": "add_chain_of_thought"}}], "description": "why this helps"}}
+
+2. **Edit prompt** (SURGICAL — targeted find-and-replace on a specific part of the prompt) — \
+finds exact text in the agent's prompt and replaces it with new text. Like a code editor's \
+find-and-replace — only changes the targeted section, everything else stays exactly the same:
+{{"action": "edit_prompt", "agent": "agent_id", "old_text": "exact text currently in the prompt to replace", "new_text": "replacement text", "description": "what this changes and why"}}
+
+3. **Append to prompt** (SAFE — adds instructions without removing anything) — append extra \
+instructions to the END of an agent's existing prompt:
+{{"action": "append_to_prompt", "agent": "agent_id", "text": "Additional instruction text to append", "description": "what this adds and why"}}
+
+4. **Structural change** (for adding new processing stages):
+{{"action": "structural", "instruction": {{"action": "add_process", "process": {{"id": "new_step", "type": "step", "label": "New Step", "description": "..."}}, "add_edges": [...], "remove_edges": [...], "description": "..."}}, "description": "why this helps"}}
+
+Rules:
+- Output ONLY valid JSON, no markdown fences or explanation
+- STRONGLY PREFER menu_selection when a known transform matches the diagnosis
+- Use edit_prompt when you need to change specific wording in the prompt — the old_text MUST \
+be an EXACT substring of the current prompt (copy it character-for-character from the prompt shown below)
+- Use append_to_prompt only when you need to ADD new instructions, not change existing ones
+- DO NOT use rewrite_prompt — it destroys existing correctness
+- Structural changes are for adding new processing stages (expensive, use sparingly)
+- All string values must be on single lines (no literal newlines — use \\n if needed)
+"""
+
+PRESCRIBE_USER = """\
+## Diagnosis
+{diagnosis}
+
+## Current Spec: {spec_name}
+Entities: {entity_ids}
+Processes: {process_ids}
+
+## Current Agent Prompts
+{agent_prompts}
+
+## Available Menu Options (if you prefer a safe pre-validated mutation)
+{mutation_menu_summary}
+
+## Benchmark
+{benchmark_description}
+
+Prescribe a specific fix. Output JSON only.
+"""
+
+
+def llm_diagnose_failures(failure_summary, parent_spec, model=None, verbose=False):
+    """Call 1 of progressive disclosure: diagnose failure patterns.
+
+    Args:
+        failure_summary: String like "Q:md_1 expected=MIT got=Stanford; Q:md_3 ..."
+        parent_spec: The spec dict that produced these failures
+        model: LLM model to use (default: FLASH_MODEL)
+
+    Returns: diagnosis dict with keys: diagnosis, failure_type, affected_agents, fix_hint
+    """
+    from .specgen import call_llm
+
+    model = model or FLASH_MODEL
+    summary = _summarize_spec(parent_spec)
+
+    # Build agent prompts section
+    agents = parent_spec.get("entities", [])
+    prompt_lines = []
+    for a in agents:
+        if a.get("type") == "agent" and a.get("system_prompt"):
+            prompt_text = a["system_prompt"][:300]
+            prompt_lines.append(f"  {a['id']}: {prompt_text}")
+
+    user_prompt = DIAGNOSE_USER.format(
+        spec_name=summary["spec_name"],
+        entity_ids=summary["entity_ids"],
+        process_ids=summary["process_ids"],
+        failure_summary=failure_summary,
+        agent_prompts="\n".join(prompt_lines) if prompt_lines else "No agent prompts.",
+    )
+
+    if verbose:
+        print(f"    [Diagnose] Analyzing {len(failure_summary.split(';'))} failures with {model}...")
+
+    response = call_llm(model, DIAGNOSE_SYSTEM, user_prompt,
+                        temperature=0.3, max_tokens=2048)
+
+    try:
+        diagnosis = _extract_json(response)
+    except (json.JSONDecodeError, ValueError):
+        diagnosis = {
+            "diagnosis": response[:300],
+            "failure_type": "other",
+            "affected_agents": [],
+            "fix_hint": "",
+        }
+
+    if verbose:
+        print(f"    [Diagnose] {diagnosis.get('failure_type', '?')}: {diagnosis.get('diagnosis', '')[:120]}")
+
+    return diagnosis
+
+
+def llm_prescribe_mutation(diagnosis, parent_spec, benchmark_suite=None,
+                           model=None, verbose=False):
+    """Call 2 of progressive disclosure: prescribe a specific fix.
+
+    Args:
+        diagnosis: Dict from llm_diagnose_failures
+        parent_spec: The spec dict to fix
+        benchmark_suite: Name of benchmark for context
+        model: LLM model to use
+
+    Returns: (mutated_spec, mutation_description, yaml_text)
+    """
+    import yaml
+    from .specgen import call_llm
+
+    model = model or FLASH_MODEL
+    summary = _summarize_spec(parent_spec)
+
+    # Agent prompts — show full text so LLM can do exact find-and-replace edits
+    agents = parent_spec.get("entities", [])
+    prompt_lines = []
+    for a in agents:
+        if a.get("type") == "agent" and a.get("system_prompt"):
+            prompt_text = a["system_prompt"][:2000]
+            prompt_lines.append(f"  {a['id']}: {prompt_text}")
+
+    # Compact mutation menu summary (just operator names + counts)
+    options = mutate.enumerate_mutations(parent_spec, benchmark_suite=benchmark_suite)
+    from collections import Counter
+    op_counts = Counter(opt["operator"] for opt in options
+                        if opt["operator"] not in ("change_model", "insert_pattern"))
+    menu_summary = ", ".join(f"{op}({n})" for op, n in sorted(op_counts.items()))
+
+    bench_desc = _get_benchmark_description(benchmark_suite)
+
+    diagnosis_text = (
+        f"Root cause: {diagnosis.get('diagnosis', 'unknown')}\n"
+        f"Type: {diagnosis.get('failure_type', 'unknown')}\n"
+        f"Affected agents: {diagnosis.get('affected_agents', [])}\n"
+        f"Fix hint: {diagnosis.get('fix_hint', '')}"
+    )
+
+    user_prompt = PRESCRIBE_USER.format(
+        diagnosis=diagnosis_text,
+        spec_name=summary["spec_name"],
+        entity_ids=summary["entity_ids"],
+        process_ids=summary["process_ids"],
+        agent_prompts="\n".join(prompt_lines) if prompt_lines else "No agent prompts.",
+        mutation_menu_summary=menu_summary or "No menu options available.",
+        benchmark_description=bench_desc,
+    )
+
+    if verbose:
+        print(f"    [Prescribe] Generating fix with {model}...")
+
+    # Retry up to 3 times
+    last_error = None
+    for attempt in range(3):
+        prompt = user_prompt
+        if last_error and attempt > 0:
+            prompt += f"\n\nPrevious attempt failed: {last_error}\nOutput ONLY valid JSON."
+
+        response = call_llm(model, PRESCRIBE_SYSTEM, prompt,
+                            temperature=0.5, max_tokens=8192)
+
+        try:
+            prescription = _extract_json(response)
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = f"JSON parse error: {e}"
+            continue
+
+        action = prescription.get("action", "")
+        desc = prescription.get("description", "progressive disclosure fix")
+
+        try:
+            if action == "append_to_prompt":
+                # Append instructions to existing prompt (safe, additive)
+                agent_id = prescription.get("agent")
+                append_text = prescription.get("text")
+                if not agent_id or not append_text:
+                    last_error = "append_to_prompt requires 'agent' and 'text' fields"
+                    continue
+                selection = {
+                    "operator": "append_to_prompt",
+                    "agent": agent_id,
+                    "text": append_text,
+                    "description": desc,
+                }
+                result = mutate.apply_selected_mutation(copy.deepcopy(parent_spec), selection)
+                yaml_text = yaml.dump(result, default_flow_style=False)
+                if verbose:
+                    print(f"    [Prescribe] Appending to {agent_id}: {append_text[:80]}")
+                return result, f"progressive: append({agent_id}) — {desc}", yaml_text
+
+            elif action == "edit_prompt":
+                # Surgical find-and-replace on prompt text
+                agent_id = prescription.get("agent")
+                old_text = prescription.get("old_text")
+                new_text = prescription.get("new_text")
+                if not agent_id or old_text is None or new_text is None:
+                    last_error = "edit_prompt requires 'agent', 'old_text', and 'new_text' fields"
+                    continue
+                selection = {
+                    "operator": "edit_prompt",
+                    "agent": agent_id,
+                    "old_text": old_text,
+                    "new_text": new_text,
+                    "description": desc,
+                }
+                result = mutate.apply_selected_mutation(copy.deepcopy(parent_spec), selection)
+                yaml_text = yaml.dump(result, default_flow_style=False)
+                if verbose:
+                    print(f"    [Prescribe] Edit {agent_id}: '{old_text[:50]}' → '{new_text[:50]}'")
+                return result, f"progressive: edit({agent_id}) — {desc}", yaml_text
+
+            elif action == "rewrite_prompt":
+                # Convert rewrite to edit if possible, else append
+                agent_id = prescription.get("agent")
+                new_prompt = prescription.get("new_prompt", "")
+                if not agent_id or not new_prompt:
+                    last_error = "rewrite_prompt requires 'agent' and 'new_prompt'"
+                    continue
+                if verbose:
+                    print(f"    [Prescribe] Converting rewrite to append for safety")
+                selection = {
+                    "operator": "append_to_prompt",
+                    "agent": agent_id,
+                    "text": new_prompt,
+                    "description": f"(converted from rewrite) {desc}",
+                }
+                result = mutate.apply_selected_mutation(copy.deepcopy(parent_spec), selection)
+                yaml_text = yaml.dump(result, default_flow_style=False)
+                return result, f"progressive: append({agent_id}) — {desc}", yaml_text
+
+            elif action == "menu_selection":
+                # Delegate to existing menu-based application
+                selections = prescription.get("selections", [])
+                if not selections:
+                    last_error = "menu_selection requires non-empty 'selections' array"
+                    continue
+                current_spec = copy.deepcopy(parent_spec)
+                applied = []
+                for sel in selections[:3]:
+                    current_spec = mutate.apply_selected_mutation(current_spec, sel)
+                    applied.append(sel.get("operator", "?"))
+                yaml_text = yaml.dump(current_spec, default_flow_style=False)
+                mut_desc = f"progressive: menu({'+'.join(applied)}) — {desc}"
+                if verbose:
+                    print(f"    [Prescribe] Menu selection: {'+'.join(applied)}: {desc[:80]}")
+                return current_spec, mut_desc, yaml_text
+
+            elif action == "structural":
+                # Structural change via mutation instruction
+                instruction = prescription.get("instruction", {})
+                if not instruction.get("action"):
+                    last_error = "structural requires 'instruction' with 'action' field"
+                    continue
+                result, struct_desc = _apply_mutation_instruction(parent_spec, instruction)
+                yaml_text = yaml.dump(result, default_flow_style=False)
+                if verbose:
+                    print(f"    [Prescribe] Structural: {struct_desc[:80]}")
+                return result, f"progressive: structural — {desc}", yaml_text
+
+            else:
+                last_error = f"Unknown action '{action}'. Must be menu_selection, edit_prompt, append_to_prompt, or structural."
+                continue
+
+        except (KeyError, ValueError, TypeError) as e:
+            last_error = f"Failed to apply prescription: {e}"
+            continue
+
+    raise ValueError(last_error or "LLM failed to prescribe a valid fix")
+
+
+def llm_progressive_mutate(parent_spec, parent_yaml, benchmark_suite=None,
+                           benchmark_results=None, previous_analysis=None,
+                           knowledge_store=None, model=None, verbose=False):
+    """Progressive disclosure mutation: diagnose → prescribe → apply.
+
+    When failure data exists, uses 2-call pipeline for targeted fixes.
+    Falls back to menu selection when no failure data is available.
+
+    Returns (mutated_spec, mutation_description, yaml_text).
+    """
+    failure_summary = ""
+    if benchmark_results:
+        failure_summary = benchmark_results.get("failure_summary", "")
+
+    if not failure_summary:
+        # No failure data — fall back to standard menu selection
+        if verbose:
+            print(f"    [Progressive] No failure data, falling back to menu selection")
+        return llm_select_mutations(
+            parent_spec, parent_yaml,
+            benchmark_suite=benchmark_suite,
+            benchmark_results=benchmark_results,
+            previous_analysis=previous_analysis,
+            knowledge_store=knowledge_store,
+            model=model,
+            verbose=verbose,
+        )
+
+    # Call 1: Diagnose
+    diagnosis = llm_diagnose_failures(
+        failure_summary, parent_spec, model=model, verbose=verbose,
+    )
+
+    # Call 2: Prescribe
+    return llm_prescribe_mutation(
+        diagnosis, parent_spec,
+        benchmark_suite=benchmark_suite,
+        model=model,
+        verbose=verbose,
+    )
 
 
 def _extract_json_array(text):
@@ -1253,7 +1724,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
            benchmark_examples=5, crossover_enabled=False,
            crossover_rate=0.3, knowledge_store=None,
            llm_guided=False, programmatic_ratio=0.2,
-           flash_model=None, analyst_model=None):
+           flash_model=None, analyst_model=None, eval_runs=1):
     """Run evolutionary search. Returns list of generation results.
 
     If knowledge_store is provided (a KnowledgeStore instance), every candidate
@@ -1280,6 +1751,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
     history = []
     current_population = [("base", base_spec_path, copy.deepcopy(base_spec))]
     previous_analysis = None  # Mini's analysis from previous generation
+    parent_test_results = {}  # Track last test_result per parent for error context
 
     for gen in range(generations):
         gen_results = []
@@ -1330,11 +1802,13 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                             use_llm = llm_guided  # fallback
 
                     if use_llm and not use_crossover:
-                        # Structured LLM mutation selection (menu-based)
-                        result, mut_desc, _ = llm_select_mutations(
+                        # Progressive disclosure: diagnose failures → prescribe fix
+                        # Falls back to menu selection when no failure data
+                        parent_bench = parent_test_results.get(parent_name)
+                        result, mut_desc, _ = llm_progressive_mutate(
                             parent_spec, parent_yaml,
                             benchmark_suite=benchmark_suite,
-                            benchmark_results=None,
+                            benchmark_results=parent_bench,
                             previous_analysis=previous_analysis,
                             knowledge_store=knowledge_store,
                             model=flash_model,
@@ -1424,15 +1898,44 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
             # Score fitness
             if benchmark_suite:
                 module_name = f"{name}_agent"
-                fitness, test_result = compute_fitness_benchmark(
-                    module_name, benchmark_suite, benchmark_examples,
-                    timeout_sec=timeout_sec,
-                    base_agent_type=base_agent_type,
-                )
+                if eval_runs > 1:
+                    run_scores = []
+                    for _run in range(eval_runs):
+                        f_i, tr_i = compute_fitness_benchmark(
+                            module_name, benchmark_suite, benchmark_examples,
+                            timeout_sec=timeout_sec,
+                            base_agent_type=base_agent_type,
+                            verbose=verbose,
+                        )
+                        run_scores.append((f_i, tr_i))
+                    if verbose and eval_runs > 1:
+                        per_run = [f"{s[0]:.1f}" for s in run_scores]
+                        print(f"    Per-run scores: [{', '.join(per_run)}]")
+                    fitness = round(sum(s for s, _ in run_scores) / len(run_scores), 1)
+                    # Use the median run's details
+                    test_result = sorted(run_scores, key=lambda x: x[0])[len(run_scores) // 2][1]
+                else:
+                    fitness, test_result = compute_fitness_benchmark(
+                        module_name, benchmark_suite, benchmark_examples,
+                        timeout_sec=timeout_sec,
+                        base_agent_type=base_agent_type,
+                        verbose=verbose,
+                    )
             else:
                 module_name = f"{name}_agent"
                 test_result = run_agent_test(module_name, test_inputs, timeout_sec)
                 fitness = compute_fitness(test_result)
+
+            # Store test_result so LLM mutations for this parent's children
+            # can see failure details
+            parent_test_results[name] = {
+                "fitness": fitness,
+                "status": test_result.get("status", "?"),
+                "llm_calls": test_result.get("llm_calls", 0),
+                "failure_summary": test_result.get("failure_summary", ""),
+                "score_em": test_result.get("score_em", 0.0),
+                "error": test_result.get("error"),
+            }
 
             entry = {
                 "name": name,
@@ -1443,6 +1946,7 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                 "mutations": mutations,
                 "error": test_result.get("error"),
                 "lineage": spec.get("metadata", {}).get("lineage", {}),
+                "failure_summary": test_result.get("failure_summary", ""),
             }
             gen_results.append(entry)
             scored.append((fitness, name, spec_path, spec))
@@ -1579,6 +2083,10 @@ EVOLVE_INPUTS = {
     "plan_and_solve": {"problem": "How to make a sandwich?", "max_retries": 1},
     "debate": {"topic": "Should AI be regulated?"},
     "rag": {"query": "What is machine learning?"},
+    "minimal_solver": {"problem": "What is 2+2?"},
+    "multidoc_baseline": {"query": "Where did the founder earn her PhD?", "context": "[Source A] Founded by Dr. Chen. [Source B] PhD from MIT."},
+    "multidoc_structured": {"query": "Where did the founder earn her PhD?", "context": "[Source A] Founded by Dr. Chen. [Source B] PhD from MIT."},
+    "kb_react": {"query": "What city is the headquarters of the company that manufactures the NeuroSync Headset?"},
 }
 
 
@@ -1629,6 +2137,8 @@ def main():
                         help=f"Model for deep analysis (default: {ANALYST_MODEL})")
     parser.add_argument("--programmatic-ratio", type=float, default=0.2,
                         help="Fraction of mutations that are programmatic (0-1, default: 0.2)")
+    parser.add_argument("--eval-runs", type=int, default=1,
+                        help="Number of evaluation runs per candidate (averaged for fitness)")
     parser.add_argument("--no-store", action="store_true",
                         help="Disable knowledge store persistence")
     parser.add_argument("--db", metavar="PATH",
@@ -1670,6 +2180,7 @@ def main():
             programmatic_ratio=args.programmatic_ratio,
             flash_model=args.flash_model,
             analyst_model=args.analyst_model,
+            eval_runs=args.eval_runs,
         )
     finally:
         if store:

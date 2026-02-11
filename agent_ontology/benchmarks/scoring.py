@@ -284,6 +284,80 @@ def execute_code_with_tests(code_str, test_cases_str, timeout=5):
         os.unlink(tmp_path)
 
 
+def score_multidoc(predicted, expected):
+    """Score a MultiDoc prediction. Returns dict with em and f1.
+
+    Uses flexible matching: tries exact match first, then numeric match,
+    then containment (expected answer found within predicted text).
+    """
+    em = exact_match(predicted, expected)
+    if em == 1.0:
+        return {"em": 1.0, "f1": 1.0}
+
+    # Try numeric match (handles "1200" vs "1,200 participants" and "$10.2 million" vs "10200000")
+    def _parse_number_with_multiplier(s):
+        """Parse numbers with optional multipliers (million, billion, etc.)."""
+        s_clean = re.sub(r'[,$]', '', str(s)).strip()
+        multipliers = {'thousand': 1e3, 'million': 1e6, 'billion': 1e9, 'trillion': 1e12}
+        for word, mult in multipliers.items():
+            if word in s_clean.lower():
+                num_part = re.search(r'[\d.]+', s_clean)
+                if num_part:
+                    return float(num_part.group()) * mult
+        try:
+            return float(re.sub(r'[^\d.\-]', '', s_clean))
+        except (ValueError, TypeError):
+            return None
+
+    exp_num = _parse_number_with_multiplier(expected)
+    pred_num = _parse_number_with_multiplier(predicted)
+    if exp_num is not None and pred_num is not None:
+        if abs(exp_num) < 1e-9:
+            if abs(pred_num) < 1e-9:
+                return {"em": 1.0, "f1": 1.0}
+        elif abs(pred_num - exp_num) / max(abs(exp_num), 1e-9) < 0.001:
+            return {"em": 1.0, "f1": 1.0}
+
+    # Try bidirectional containment (handles "MIT" vs "...MIT..." and "8.4 miles" vs "8.4")
+    norm_pred = normalize_answer(predicted)
+    norm_exp = normalize_answer(expected)
+    if norm_exp and norm_pred and (norm_exp in norm_pred or norm_pred in norm_exp):
+        return {"em": 1.0, "f1": 1.0}
+
+    return {"em": 0.0, "f1": f1_score(predicted, expected)}
+
+
+def score_kb_tool(predicted, expected):
+    """Score a KB tool prediction. Returns dict with em and f1.
+
+    Uses flexible matching: exact match, then numeric, then containment, then F1.
+    Same logic as score_multidoc — works for both string and numeric answers.
+    """
+    em = exact_match(predicted, expected)
+    if em == 1.0:
+        return {"em": 1.0, "f1": 1.0}
+
+    # Try numeric match
+    try:
+        exp_num = float(re.sub(r'[,$]', '', str(expected)))
+        pred_num = float(re.sub(r'[,$]', '', str(predicted)))
+        if abs(exp_num) < 1e-9:
+            if abs(pred_num) < 1e-9:
+                return {"em": 1.0, "f1": 1.0}
+        elif abs(pred_num - exp_num) / max(abs(exp_num), 1e-9) < 0.001:
+            return {"em": 1.0, "f1": 1.0}
+    except (ValueError, TypeError):
+        pass
+
+    # Try bidirectional containment
+    norm_pred = normalize_answer(predicted)
+    norm_exp = normalize_answer(expected)
+    if norm_exp and norm_pred and (norm_exp in norm_pred or norm_pred in norm_exp):
+        return {"em": 1.0, "f1": 1.0}
+
+    return {"em": 0.0, "f1": f1_score(predicted, expected)}
+
+
 def score_humaneval(predicted, example):
     """Score a HumanEval prediction. Returns dict with pass_at_1."""
     code = extract_code(predicted)

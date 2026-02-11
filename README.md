@@ -49,7 +49,7 @@ ao-trace trace.json
 # 8. Score spec complexity
 ao-complexity --all agent_ontology/specs/
 
-# 9. Run all agent tests (26/26 pass, Claude Code is description-only)
+# 9. Run all agent tests (Claude Code is description-only)
 python3 tests/test_agents.py
 
 # 10. Override model for all agents
@@ -89,7 +89,7 @@ ao-mermaid agent_ontology/specs/react.yaml
 # 21. Spec similarity and clustering
 ao-similarity --all agent_ontology/specs/ --top 5 --clusters 5
 
-# 22. Run property-based tests (no API keys needed, 214 tests)
+# 22. Run property-based tests (no API keys needed, 238 tests)
 python3 tests/test_properties.py
 
 # 23. Generate comparative analysis report
@@ -155,7 +155,7 @@ Open `spec-viewer.html` in a browser (via HTTP server). Five views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 27 agent specs.
+- **Compare All** — Side-by-side comparison table across all agent specs.
 
 Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
@@ -196,7 +196,7 @@ Two backends available:
 
 ## Agent Catalog
 
-27 agent specs, all validated. 26 are instantiable and runnable with `gemini-3-flash-preview` — **all 26 pass automated tests**.
+31 agent specs, all validated. 30 are instantiable and runnable with `gemini-3-flash-preview` (1 description-only).
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -227,6 +227,10 @@ Two backends available:
 | `pddl_planner` | NL→PDDL→plan→NL | 3 | 8 | 5 | — | Working |
 | `rap` | Reasoning via Planning (MCTS) | 5 | 7 | 5 | — | Working |
 | `alpha_geometry` | LLM+symbolic deduction | 4 | 8 | 6 | — | Working |
+| `minimal_solver` | Minimal single-LLM baseline | 1 | 2 | 3 | — | Working |
+| `multidoc_baseline` | Single-shot multi-doc QA | 1 | 3 | 4 | — | Working |
+| `multidoc_structured` | Structured multi-doc QA | 2 | 8 | 7 | — | Working |
+| `kb_react` | KB tool-using ReAct | 6 | 8 | 8 | — | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -295,7 +299,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
 | `mutate.py` | Spec mutation engine (field + pattern-level) | `python3 mutate.py spec.yaml --random -n 5` |
 | `evolve.py` | Evolutionary search with crossover | `python3 evolve.py spec.yaml --generations 3 --crossover` |
-| `benchmark.py` | Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
+| `benchmark.py` | Benchmark suite (8 datasets) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
 | `patterns.py` | Pattern library (7 patterns) | `from patterns import detect_patterns, PATTERNS` |
 | `compose.py` | Compose patterns into new specs | `python3 compose.py compose_spec.yaml -o spec.yaml` |
 | `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
@@ -307,7 +311,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
-| `test_properties.py` | Property-based structural tests (214) | `python3 test_properties.py` |
+| `test_properties.py` | Property-based structural tests (246) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 | `import_langgraph.py` | Import LangGraph StateGraph → YAML spec | `python3 import_langgraph.py agent.py -o spec.yaml` |
 | `import_crewai.py` | Import CrewAI → YAML spec | `python3 import_crewai.py crew.py -o spec.yaml` |
@@ -329,7 +333,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (27 agents)
+specs/*.yaml           # Agent specifications (31 agents)
      |
      +---> validate.py       # Validation (25+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py or agents_lg/*.py
@@ -351,14 +355,14 @@ specs/*.yaml           # Agent specifications (27 agents)
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
      +---> comparative_report.py  # Cross-spec comparative analysis
-     +---> test_properties.py     # Property-based structural tests (214)
+     +---> test_properties.py     # Property-based structural tests (246)
      +---> spec-viewer.html  # Visualization (5 views + trace overlay)
 
 agents/*.py            # Generated runnable agents (custom backend)
 agents_lg/*.py         # Generated runnable agents (LangGraph backend)
      |
      +---> test_agents.py    # Automated testing + multi-model comparison
-     +---> benchmark.py      # Benchmark suite (HotpotQA, GSM8K, ARC, HumanEval)
+     +---> benchmark.py      # Benchmark suite (8 datasets)
      +---> trace.json        # Runtime traces
               |
               v
@@ -418,9 +422,9 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 
 ```
 agent_ontology/         # Python package (33 modules, pip install -e .)
-  ONTOLOGY.yaml         #   The type system (9 entity types, 10 process types, 12 edge types)
-  specs/                #   Agent specifications (27 YAML specs)
-  benchmarks/           #   Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) + scoring
+  ONTOLOGY.yaml         #   The type system (9 entity types, 10 process types, 13 edge types)
+  specs/                #   Agent specifications (31 YAML specs)
+  benchmarks/           #   Benchmark datasets (HotpotQA, GSM8K, GSM8K-Hard, GSM8K-Tricky, ARC, HumanEval, MultiDoc, KB-Tool) + scoring
   spec-viewer.html      #   Interactive multi-view visualization (5 views + trace overlay)
   validate.py           #   Spec validator (25+ rules)
   instantiate.py        #   Code generator (custom + LangGraph backends)
@@ -449,11 +453,11 @@ agent_ontology/         # Python package (33 modules, pip install -e .)
   mermaid.py            #   Mermaid flowchart export
   ...                   #   + analyze_trace, spec_diff, dashboard, comparative_report, etc.
 tests/                  # Test suite
-  test_agents.py        #   Automated agent testing (26/26 pass)
-  test_properties.py    #   Property-based structural tests (214 tests)
+  test_agents.py        #   Automated agent testing
+  test_properties.py    #   Property-based structural tests (246)
   test_specgen.py       #   E2E specgen pipeline testing
   test_roundtrip.py     #   LangGraph import round-trip tests (8 tests)
-agents/                 # Generated runnable agents (custom backend, 27 agents)
+agents/                 # Generated runnable agents (custom backend, 31 agents)
 agents_lg/              # Generated runnable agents (LangGraph backend, 27 agents)
 compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing

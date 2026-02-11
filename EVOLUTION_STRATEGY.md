@@ -78,24 +78,61 @@ Spec-level search:  LLM sees architecture → structured errors → reasons abou
 | Agent execution | gemini-3-flash | Benchmark inputs (the agents themselves run on Flash) | Agent outputs for scoring |
 | Deep analyst | gpt-5-mini | Top-K specs + diffs + benchmark scores + error details + detected patterns | Diagnosis, lessons learned, targeted mutation suggestions |
 
-## Mutation Approach
+## Mutation Approach (v2: Progressive Disclosure)
 
-**All mutations are LLM-guided.** Flash is cheap enough that every mutation gets informed context. The prompt includes:
-- The parent spec (full YAML)
-- Lint warnings and verify failures from the parent
-- Benchmark results from the parent (if available)
-- Mini's analysis from the previous generation (if available)
-- Knowledge store context: "patterns that have worked well on this benchmark"
+### The Problem with v1 (Menu Selection)
+v1 gave Flash a menu of ~150 pre-defined mutations and asked it to pick 1-3. This was safe (every mutation goes through battle-tested operators) but limited:
+- Flash always picked the same combo (add_chain_of_thought + insert_pattern)
+- It couldn't *generate* new fixes — only select from existing ones
+- Diagnosis and prescription were smashed into one prompt
+- Domain-specific fixes (e.g., "output letters not numbers") had to be hand-coded
 
-Flash proposes a structural change: add/remove/modify processes, edges, gate conditions, schemas. The output is a complete mutated YAML spec.
+### v2: Multi-Call Pipeline (Diagnose → Prescribe → Apply)
+Each LLM-guided mutation uses 2-3 focused calls instead of 1 overloaded call:
 
-**Programmatic mutations (`mutate.py`) are kept as a small diversity mechanism** — maybe 10-20% of candidates — to explore parts of the space the LLM might not consider. These include crossover between parents.
+**Call 1 — Diagnose (Flash, cheap):**
+Input: Failure details (5 failed examples with expected vs predicted, error types)
+Output: A 1-2 sentence diagnosis of the failure pattern
+Example: "The agent outputs numeric indices (1, 2, 3) instead of choice letters (A, B, C). This is a format mismatch between the agent's output and the expected answer format."
+
+**Call 2 — Prescribe (Flash, cheap):**
+Input: The diagnosis + the parent spec + the enumerated mutation menu
+Output: Either (a) a menu selection, or (b) a freeform prompt rewrite with specific text
+Example: `{"action": "rewrite_prompt", "agent": "solver", "new_prompt": "...Answer with ONLY the letter A, B, C, or D..."}`
+
+This is the key difference: the LLM can now *generate* prompt text it hasn't seen before, informed by the specific failure pattern. It's not limited to pre-coded transforms.
+
+**Call 3 — Analyze (Mini, after generation):**
+Same as v1: Mini analyzes top-K candidates, explains why the best worked, proposes next-generation mutations. This already exists.
+
+### When Progressive Disclosure is Used
+- When `benchmark_results` has `failure_summary` (i.e., there are failures to diagnose) → use progressive pipeline
+- When no failure data exists (first generation, or parent scored 100%) → fall back to menu selection
+
+### Freeform Prompt Rewrite
+The prescription call can output a new action type: `rewrite_prompt`. This bypasses the pre-coded `_PROMPT_TRANSFORMS` menu and lets Flash write arbitrary prompt text. The rewritten prompt:
+- Replaces the agent's `system_prompt` entirely (not append-only)
+- Must preserve the output format instructions (JSON schema)
+- Is validated by re-running the full pipeline (validate → instantiate → benchmark)
+
+### Programmatic Diversity (20%)
+Unchanged from v1: ~20% of mutations use random `mutate.py` operators (crossover, swap_process_order, change_model, etc.) to explore parts of the space the LLM wouldn't think of. `insert_pattern` is blacklisted (consistently destroys accuracy, avg fitness 37.5).
+
+### Why This is Better Than a DSL
+We considered encoding algorithmic choices as typed spec fields (e.g., `reasoning_strategy: chain_of_thought` vs `tree_search`). This would make mutations more structured but requires designing a complete DSL for agent behavior — a massive effort.
+
+The progressive disclosure approach gets 80% of the benefit:
+- The LLM reasons about what's wrong (diagnosis) at the semantic level
+- The LLM generates domain-specific fixes (prescription) using natural language
+- Validation ensures structural correctness regardless of what the LLM generates
+- No new ontology types or fields needed
 
 ## Selection
 
-**v1: Simple top-K.** Take the top K candidates by fitness. K = max(2, population // 2).
+**Simple top-K.** Take the top K candidates by fitness. K = max(2, population // 2).
 
-Fitness = benchmark accuracy (70%) + efficiency bonus (30%, fewer LLM calls = better).
+Fitness v2 = accuracy² × 200 (max 200, quadratic rewards perfection) + call_efficiency (max 15) + speed (max 5).
+Going from 96%→100% accuracy is worth +15.7 fitness points, which outweighs any efficiency penalty from added reasoning steps.
 
 ## Defaults
 

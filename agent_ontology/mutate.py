@@ -660,10 +660,19 @@ _PROMPT_TRANSFORMS = [
     },
     {
         "name": "add_chain_of_thought",
-        "description": "Append chain-of-thought instructions",
+        "description": "Add chain-of-thought reasoning (overrides speed/guessing instructions)",
         "transform": lambda p: (
-            p + "\n\nBefore giving your final answer, think step-by-step. "
-            "Show your reasoning process explicitly."
+            # Remove conflicting speed/guessing instructions
+            "\n".join(
+                line for line in p.split("\n")
+                if not any(w in line.lower() for w in [
+                    "just guess", "no calculation", "no steps", "no explanation",
+                    "speed over accuracy", "first instinct", "be quick",
+                ])
+            ).strip()
+            + "\n\nIMPORTANT: Think step-by-step before answering. "
+            "Show your reasoning, verify your answer, then output your final answer. "
+            "Your output JSON 'answer' field must contain ONLY the final value, not your reasoning."
         ),
     },
     {
@@ -699,6 +708,128 @@ _PROMPT_TRANSFORMS = [
         ),
     },
 ]
+
+
+# Benchmark-specific prompt transforms — only shown when evolving against a specific benchmark.
+# These address domain-specific format mismatches that generic transforms can't fix.
+_BENCHMARK_PROMPT_TRANSFORMS = {
+    "arc": [
+        {
+            "name": "answer_with_letter",
+            "description": "[BENCHMARK] Answer with ONLY the letter A/B/C/D for ARC science questions",
+            "transform": lambda p: (
+                p + "\n\nIMPORTANT: Your answer must be ONLY a single letter: A, B, C, or D. "
+                "Do not output a number or index. Output the LETTER of the correct choice."
+            ),
+        },
+        {
+            "name": "science_reasoning",
+            "description": "[BENCHMARK] Add scientific reasoning guidance for ARC",
+            "transform": lambda p: (
+                p + "\n\nApply scientific reasoning: identify the relevant scientific concept, "
+                "eliminate incorrect options, then select the best answer letter (A/B/C/D)."
+            ),
+        },
+    ],
+    "gsm8k": [
+        {
+            "name": "show_work_final_number",
+            "description": "[BENCHMARK] Show work but put only the final number in the answer",
+            "transform": lambda p: (
+                p + "\n\nShow your work step by step. Your final answer MUST be a single number "
+                "with no units, no commas, no dollar signs. Just the number."
+            ),
+        },
+        {
+            "name": "watch_for_traps",
+            "description": "[BENCHMARK] Watch for common math traps and verify answers",
+            "transform": lambda p: (
+                p + "\n\nWARNING: These problems may contain traps. Do NOT trust your first instinct. "
+                "Set up equations carefully. For example, if X + Y = 1.10 and X = Y + 1.00, "
+                "solve algebraically — don't guess. Verify your answer by plugging it back in."
+            ),
+        },
+    ],
+    "gsm8k_tricky": [
+        {
+            "name": "show_work_final_number",
+            "description": "[BENCHMARK] Show work but put only the final number in the answer",
+            "transform": lambda p: (
+                p + "\n\nShow your work step by step. Your final answer MUST be a single number "
+                "with no units, no commas, no dollar signs. Just the number."
+            ),
+        },
+        {
+            "name": "watch_for_traps",
+            "description": "[BENCHMARK] Watch for common math traps and verify answers",
+            "transform": lambda p: (
+                p + "\n\nWARNING: These problems may contain traps. Do NOT trust your first instinct. "
+                "Set up equations carefully. For example, if X + Y = 1.10 and X = Y + 1.00, "
+                "solve algebraically — don't guess. Verify your answer by plugging it back in."
+            ),
+        },
+    ],
+    "gsm8k_hard": [
+        {
+            "name": "show_work_final_number",
+            "description": "[BENCHMARK] Show work but put only the final number in the answer",
+            "transform": lambda p: (
+                p + "\n\nShow your work step by step. Your final answer MUST be a single number "
+                "with no units, no commas, no dollar signs. Just the number."
+            ),
+        },
+    ],
+    "hotpotqa": [
+        {
+            "name": "extract_short_answer",
+            "description": "[BENCHMARK] Output a short factual answer, not a full sentence",
+            "transform": lambda p: (
+                p + "\n\nYour answer must be a SHORT factual answer — a name, date, number, or phrase. "
+                "Do NOT write a full sentence. Just the answer."
+            ),
+        },
+    ],
+    "humaneval": [
+        {
+            "name": "code_only",
+            "description": "[BENCHMARK] Output only the Python function body, no explanation",
+            "transform": lambda p: (
+                p + "\n\nOutput ONLY the Python code for the function body. "
+                "No explanation, no markdown fences, no test cases. Just the code."
+            ),
+        },
+    ],
+    "multidoc": [
+        {
+            "name": "check_contradictions",
+            "description": "[BENCHMARK] Explicitly check for contradictions between fact cards",
+            "transform": lambda p: (
+                p + "\n\nIMPORTANT: Some fact cards may contain contradictions. "
+                "When sources disagree, prefer independent audits/studies over self-reported claims. "
+                "Always note which source you are using for your answer."
+            ),
+        },
+        {
+            "name": "extract_then_reason",
+            "description": "[BENCHMARK] Extract key facts first, then reason about the answer",
+            "transform": lambda p: (
+                p + "\n\nApproach: First extract the specific facts relevant to the question from each source. "
+                "Then reason step-by-step using only those extracted facts. "
+                "For arithmetic questions, show your calculation. "
+                "Your final answer should be concise — a name, number, or short phrase."
+            ),
+        },
+        {
+            "name": "verify_against_sources",
+            "description": "[BENCHMARK] Verify your answer against each source before finalizing",
+            "transform": lambda p: (
+                p + "\n\nBefore giving your final answer, verify it against each fact card. "
+                "Ask: does any source contradict my answer? Did I miss any relevant information? "
+                "Did I compute arithmetic correctly? Only then give your final answer."
+            ),
+        },
+    ],
+}
 
 
 def modify_prompt(spec):
@@ -1204,11 +1335,29 @@ _PATTERN_MUTATIONS = {
     },
 }
 
-# Combined registry
-MUTATIONS = {**_FIELD_MUTATIONS, **_PATTERN_MUTATIONS}
+# Mutations that consistently destroy task-specific accuracy and waste evaluation budget.
+# insert_pattern injects generic patterns (critique_cycle, debate) that replace task solving
+# with content generation, averaging fitness ~37.5 across 64 candidates (vs ~200 baseline).
+_BLACKLISTED_MUTATIONS = {"insert_pattern"}
+
+# Combined registry (includes progressive disclosure operators)
+MUTATIONS = {**_FIELD_MUTATIONS, **_PATTERN_MUTATIONS,
+    "rewrite_prompt": {
+        "fn": None, "weight": 0,
+        "description": "Freeform prompt rewrite prescribed by LLM diagnosis",
+    },
+    "append_to_prompt": {
+        "fn": None, "weight": 0,
+        "description": "Append instructions to existing prompt (safe, additive only)",
+    },
+    "edit_prompt": {
+        "fn": None, "weight": 0,
+        "description": "Targeted find-and-replace on an agent's prompt (surgical, preserves context)",
+    },
+}
 
 
-def enumerate_mutations(spec):
+def enumerate_mutations(spec, benchmark_suite=None):
     """Inspect a spec and return every concrete mutation option with parameters.
 
     Returns a list of dicts, each describing one applicable mutation:
@@ -1216,6 +1365,7 @@ def enumerate_mutations(spec):
          "description": "Apply chain-of-thought to critic agent's prompt"}
 
     The LLM can select from this menu instead of inventing freeform mutations.
+    If benchmark_suite is provided, also includes benchmark-specific prompt transforms.
     """
     options = []
 
@@ -1235,6 +1385,17 @@ def enumerate_mutations(spec):
                 "transform": t["name"],
                 "description": f"Apply '{t['name']}' to {agent.get('label', agent['id'])} prompt",
             })
+
+    # --- modify_prompt: benchmark-specific transforms ---
+    if benchmark_suite and benchmark_suite in _BENCHMARK_PROMPT_TRANSFORMS:
+        for agent in agents_with_prompts:
+            for t in _BENCHMARK_PROMPT_TRANSFORMS[benchmark_suite]:
+                options.append({
+                    "operator": "modify_prompt",
+                    "agent": agent["id"],
+                    "transform": t["name"],
+                    "description": f"[BENCHMARK] Apply '{t['name']}' to {agent.get('label', agent['id'])} prompt",
+                })
 
     # --- duplicate_with_variation: agent × variation ---
     variations = ["cautious", "creative", "concise", "detailed", "skeptical", "optimistic"]
@@ -1320,29 +1481,18 @@ def enumerate_mutations(spec):
                 "description": f"Add {st} store written by {step.get('label', step['id'])}",
             })
 
-    # --- insert_pattern: flow_edge × pattern ---
-    try:
-        pat_mod = _get_patterns_module()
-        pattern_names = list(pat_mod.PATTERN_LIBRARY.keys()) if hasattr(pat_mod, 'PATTERN_LIBRARY') else []
-    except Exception:
-        pattern_names = []
-    proc_ids = {p["id"] for p in spec.get("processes", [])}
-    for edge in flow:
-        if edge.get("from") in proc_ids and edge.get("to") in proc_ids:
-            for pname in pattern_names:
-                options.append({
-                    "operator": "insert_pattern",
-                    "flow_edge_from": edge["from"],
-                    "flow_edge_to": edge["to"],
-                    "pattern": pname,
-                    "description": f"Insert {pname} pattern between {edge['from']} and {edge['to']}",
-                })
+    # --- insert_pattern: SKIPPED (blacklisted) ---
+    # insert_pattern consistently destroys task-specific accuracy by injecting generic
+    # patterns (critique_cycle, debate) that replace task solving with content generation.
+    # Average fitness ~37.5 across 64 candidates vs ~200 baseline. See _BLACKLISTED_MUTATIONS.
 
     # --- swap_pattern / remove_pattern: detected patterns ---
     try:
         pat_mod = _get_patterns_module()
+        pattern_names = list(pat_mod.PATTERN_LIBRARY.keys()) if hasattr(pat_mod, 'PATTERN_LIBRARY') else []
         detected = pat_mod.detect_patterns(spec) if hasattr(pat_mod, 'detect_patterns') else []
     except Exception:
+        pattern_names = []
         detected = []
     for det_name, det_pids, det_prefix in detected:
         # swap options
@@ -1389,6 +1539,12 @@ def apply_selected_mutation(spec, selection):
         if not agent or not agent.get("system_prompt"):
             raise ValueError(f"Agent {agent_id} not found or has no prompt")
         tdef = next((t for t in _PROMPT_TRANSFORMS if t["name"] == transform_name), None)
+        if not tdef:
+            # Search benchmark-specific transforms
+            for bench_transforms in _BENCHMARK_PROMPT_TRANSFORMS.values():
+                tdef = next((t for t in bench_transforms if t["name"] == transform_name), None)
+                if tdef:
+                    break
         if not tdef:
             raise ValueError(f"Unknown prompt transform: {transform_name}")
         agent["system_prompt"] = tdef["transform"](agent["system_prompt"])
@@ -1473,6 +1629,68 @@ def apply_selected_mutation(spec, selection):
     elif op == "remove_pattern":
         return remove_pattern(spec)
 
+    elif op == "rewrite_prompt":
+        # Freeform prompt rewrite — prescribed by progressive disclosure pipeline
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        new_prompt = selection.get("new_prompt")
+        if not agent_id or not new_prompt:
+            raise ValueError("rewrite_prompt requires 'agent' and 'new_prompt' fields")
+        agents = _agent_entities(result)
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found")
+        agent["system_prompt"] = new_prompt
+        _record_mutation(result, "rewrite_prompt", {
+            "agent": agent_id,
+            "description": selection.get("description", "LLM-prescribed prompt rewrite"),
+        })
+        return result
+
+    elif op == "append_to_prompt":
+        # Append instructions to existing prompt — safe, can't break what works
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        append_text = selection.get("text")
+        if not agent_id or not append_text:
+            raise ValueError("append_to_prompt requires 'agent' and 'text' fields")
+        agents = _agent_entities(result)
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found")
+        existing = agent.get("system_prompt", "")
+        agent["system_prompt"] = existing.rstrip() + "\n\n" + append_text
+        _record_mutation(result, "append_to_prompt", {
+            "agent": agent_id,
+            "appended": append_text[:200],
+            "description": selection.get("description", "LLM-prescribed prompt addition"),
+        })
+        return result
+
+    elif op == "edit_prompt":
+        # Targeted find-and-replace on an agent's prompt — surgical, preserves context
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        old_text = selection.get("old_text")
+        new_text = selection.get("new_text")
+        if not agent_id or old_text is None or new_text is None:
+            raise ValueError("edit_prompt requires 'agent', 'old_text', and 'new_text' fields")
+        agents = _agent_entities(result)
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found")
+        prompt = agent.get("system_prompt", "")
+        if old_text not in prompt:
+            raise ValueError(f"old_text not found in {agent_id}'s prompt")
+        agent["system_prompt"] = prompt.replace(old_text, new_text, 1)
+        _record_mutation(result, "edit_prompt", {
+            "agent": agent_id,
+            "old_text": old_text[:100],
+            "new_text": new_text[:100],
+            "description": selection.get("description", "LLM-prescribed prompt edit"),
+        })
+        return result
+
     else:
         raise ValueError(f"Unknown operator: {op}")
 
@@ -1501,11 +1719,11 @@ def apply_random_mutation(spec, donor_spec=None, pattern_weight=0.4):
         except ValueError:
             pass  # Fall through to regular mutations
 
-    # Decide: pattern-level or field-level
+    # Decide: pattern-level or field-level (excluding blacklisted)
     if random.random() < pattern_weight:
-        pool = list(_PATTERN_MUTATIONS.keys())
+        pool = [k for k in _PATTERN_MUTATIONS if k not in _BLACKLISTED_MUTATIONS]
     else:
-        pool = list(_FIELD_MUTATIONS.keys())
+        pool = [k for k in _FIELD_MUTATIONS if k not in _BLACKLISTED_MUTATIONS]
 
     random.shuffle(pool)
     for name in pool:
@@ -1515,8 +1733,8 @@ def apply_random_mutation(spec, donor_spec=None, pattern_weight=0.4):
         except ValueError:
             continue
 
-    # Fallback: try all mutations
-    all_mutations = list(MUTATIONS.keys())
+    # Fallback: try all mutations (excluding blacklisted)
+    all_mutations = [k for k in MUTATIONS if k not in _BLACKLISTED_MUTATIONS]
     random.shuffle(all_mutations)
     for name in all_mutations:
         try:

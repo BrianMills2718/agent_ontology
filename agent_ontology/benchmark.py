@@ -39,7 +39,8 @@ KNOWN_AGENTS = [
     "react", "debate", "babyagi", "babyagi_autogen",
     "autogpt", "rag", "code_reviewer", "crew",
     "plan_and_solve", "self_refine", "tree_of_thought",
-    "lats", "reflexion",
+    "lats", "reflexion", "minimal_solver",
+    "kb_react",
 ]
 
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "benchmarks", "datasets")
@@ -506,7 +507,7 @@ def run_suite_benchmark(agent_name, example, dataset_name, dataset_meta,
     from benchmarks.compatibility import format_input
     from benchmarks.scoring import (
         extract_answer, score_hotpotqa, score_gsm8k,
-        score_arc, score_humaneval, extract_code,
+        score_arc, score_humaneval, extract_code, score_kb_tool,
     )
 
     module_name = f"agents.{agent_name}_agent"
@@ -543,6 +544,11 @@ def run_suite_benchmark(agent_name, example, dataset_name, dataset_meta,
     if dry_run:
         result["status"] = "DRY_RUN"
         return result
+
+    # Monkey-patch tool functions for kb_tool benchmark
+    if dataset_name == "kb_tool":
+        from benchmarks.kb_tools import patch_agent_tools
+        patch_agent_tools(mod)
 
     # Build input
     inputs = format_input(agent_name, example, dataset_name)
@@ -586,12 +592,14 @@ def run_suite_benchmark(agent_name, example, dataset_name, dataset_meta,
 
         if dataset_name == "hotpotqa":
             result["scores"] = score_hotpotqa(predicted, str(expected))
-        elif dataset_name == "gsm8k":
+        elif dataset_name in ("gsm8k", "gsm8k_hard", "gsm8k_tricky"):
             result["scores"] = score_gsm8k(predicted, expected)
         elif dataset_name == "arc":
             result["scores"] = score_arc(predicted, expected)
         elif dataset_name == "humaneval":
             result["scores"] = score_humaneval(predicted, example)
+        elif dataset_name == "kb_tool":
+            result["scores"] = score_kb_tool(predicted, str(expected))
         else:
             result["scores"] = {"em": 1.0 if str(expected).lower() in predicted.lower() else 0.0}
 
@@ -815,8 +823,8 @@ Examples:
     # Suite mode args
     parser.add_argument(
         "--suite",
-        choices=["hotpotqa", "gsm8k", "all"],
-        help="Run dataset-driven benchmark suite (hotpotqa, gsm8k, or all)",
+        choices=["hotpotqa", "gsm8k", "gsm8k_hard", "gsm8k_tricky", "arc", "humaneval", "multidoc", "kb_tool", "all"],
+        help="Run dataset-driven benchmark suite",
     )
     parser.add_argument(
         "--n-runs",
@@ -839,7 +847,7 @@ Examples:
 
     # ── Suite mode ──
     if args.suite:
-        datasets = ["hotpotqa", "gsm8k"] if args.suite == "all" else [args.suite]
+        datasets = ["hotpotqa", "gsm8k", "gsm8k_hard", "gsm8k_tricky", "arc", "humaneval", "multidoc", "kb_tool"] if args.suite == "all" else [args.suite]
         all_suite_results = []
 
         for ds_name in datasets:
