@@ -49,7 +49,7 @@ ao-trace trace.json
 # 8. Score spec complexity
 ao-complexity --all agent_ontology/specs/
 
-# 9. Run all agent tests (22/22 pass, Claude Code is description-only)
+# 9. Run all agent tests (26/26 pass, Claude Code is description-only)
 python3 tests/test_agents.py
 
 # 10. Override model for all agents
@@ -89,7 +89,7 @@ ao-mermaid agent_ontology/specs/react.yaml
 # 21. Spec similarity and clustering
 ao-similarity --all agent_ontology/specs/ --top 5 --clusters 5
 
-# 22. Run property-based tests (no API keys needed, 174 tests)
+# 22. Run property-based tests (no API keys needed, 214 tests)
 python3 tests/test_properties.py
 
 # 23. Generate comparative analysis report
@@ -155,7 +155,7 @@ Open `spec-viewer.html` in a browser (via HTTP server). Five views:
 - **Graph** — Interactive canvas flowchart. Drag nodes, click for details, hover for tooltips.
 - **State Machine** — Linear process flow with gates, branches, loops, and agent invocations.
 - **Schemas** — All data schemas with field types and cross-references.
-- **Compare All** — Side-by-side comparison table across all 22 agent specs.
+- **Compare All** — Side-by-side comparison table across all 27 agent specs.
 
 Supports trace overlay: load a `trace.json` to see execution counts, durations, and LLM call heat-maps on the State Machine view.
 
@@ -192,11 +192,11 @@ Two backends available:
 - TypedDict-based state with fields derived from schemas + logic block analysis
 - Gate chaining support (gate → gate inserts pass-through node)
 - Channel support: publish/subscribe edges generate channel read/write code
-- All 22 specs generate valid Python; verified E2E on multiple agents
+- All 27 specs generate valid Python; verified E2E on multiple agents
 
 ## Agent Catalog
 
-22 agent specs, all validated. 21 are instantiable and runnable with `gemini-3-flash-preview` — **all 21 pass automated tests**.
+27 agent specs, all validated. 26 are instantiable and runnable with `gemini-3-flash-preview` — **all 26 pass automated tests**.
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -222,6 +222,11 @@ Two backends available:
 | `multi_agent_codegen` | Code generation pipeline | 5 | 5 | 7 | 47.4 (moderate) | Working |
 | `customer_support_swarm` | Handoff-based routing | 8 | 7 | 7 | — | Working |
 | `software_team` | Pub/sub team pipeline | 10 | 8 | 10 | — | Working |
+| `self_improver` | Meta-agent spec optimizer | 3 | 16 | 8 | — | Working |
+| `kg_rag` | Knowledge graph RAG | 3 | 6 | 4 | — | Working |
+| `pddl_planner` | NL→PDDL→plan→NL | 3 | 8 | 5 | — | Working |
+| `rap` | Reasoning via Planning (MCTS) | 5 | 7 | 5 | — | Working |
+| `alpha_geometry` | LLM+symbolic deduction | 4 | 8 | 6 | — | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -243,13 +248,14 @@ schemas:        # Data shapes flowing between components
 
 ### Entity types
 - `agent` — LLM-backed component with system prompt, model, I/O schemas
-- `store` — Persistent state (queue, vector, buffer, log)
+- `store` — Persistent state (queue, vector, buffer, log, knowledge_graph, ontology, logic_program, pddl_domain)
 - `tool` — External capability (API, function, system)
 - `human` — Human-in-the-loop participant
 - `config` — Static configuration
 - `channel` — Named pub/sub communication channel with message schema and reducer
 - `team` — Agent group with strategy (sequential, hierarchical, consensus, round-robin)
 - `conversation` — Multi-turn dialogue with history and persistence
+- `world_model` — State transition model T(s'|s,a) for planning agents
 
 ### Process types
 - `step` — Do something (may include inline `logic:` as Python)
@@ -259,6 +265,9 @@ schemas:        # Data shapes flowing between components
 - `protocol` — Multi-party interaction
 - `policy` — Cross-cutting constraint
 - `error_handler` — Structured error handling with retry, fallback, timeout
+- `symbolic_inference` — Deterministic non-LLM reasoning (Z3, Prolog, DL classification)
+- `formal_translation` — NL↔formal language translation (NL→SPARQL, NL→PDDL, etc.)
+- `search` — Systematic search over possibility spaces (MCTS, beam search, A*)
 
 ### Edge types
 - `flow` — Sequential control flow
@@ -298,9 +307,18 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
-| `test_properties.py` | Property-based structural tests (174+) | `python3 test_properties.py` |
+| `test_properties.py` | Property-based structural tests (214) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 | `import_langgraph.py` | Import LangGraph StateGraph → YAML spec | `python3 import_langgraph.py agent.py -o spec.yaml` |
+| `import_crewai.py` | Import CrewAI → YAML spec | `python3 import_crewai.py crew.py -o spec.yaml` |
+| `import_autogen.py` | Import AutoGen → YAML spec | `python3 import_autogen.py autogen_app.py -o spec.yaml` |
+| `import_openai_agents.py` | Import OpenAI Agents SDK → YAML spec | `python3 import_openai_agents.py app.py -o spec.yaml` |
+| `import_google_adk.py` | Import Google ADK → YAML spec | `python3 import_google_adk.py app.py -o spec.yaml` |
+| `design.py` | End-to-end agent design pipeline | `python3 -m agent_ontology.design "task" --benchmark gsm8k --evolve` |
+| `ingest.py` | Corpus ingestion for ChromaDB vector stores | `python3 -m agent_ontology.ingest docs/ --store my_kb` |
+| `knowledge_store.py` | SQLite store for evolution results | `python3 -m agent_ontology.knowledge_store stats` |
+| `verify.py` | Semantic property verification (9 checks) | `python3 verify.py spec.yaml` |
+| `recommend.py` | Evidence-backed architecture recommender | `python3 -m agent_ontology.recommend "task description"` |
 | `owl_bridge.py` | OWL dual representation: YAML<->OWL round-trip + classification | `python3 owl_bridge.py --round-trip` |
 | `ontology_owl.py` | OWL/DL pattern classification | `python3 ontology_owl.py` |
 | `ontology_rdf.py` | RDF export + semantic pattern queries | `python3 ontology_rdf.py` |
@@ -311,15 +329,19 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (22 agents)
+specs/*.yaml           # Agent specifications (27 agents)
      |
      +---> validate.py       # Validation (25+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py or agents_lg/*.py
      +---> complexity.py     # Complexity scoring (10 metrics)
      +---> mutate.py         # Spec mutation engine (field + pattern-level)
      +---> evolve.py         # Evolutionary search (mutate → test → select)
+     +---> design.py         # End-to-end agent design pipeline
+     +---> knowledge_store.py # Persistent evolution results (SQLite)
+     +---> recommend.py      # Evidence-backed architecture recommender
      +---> patterns.py       # Pattern library (7 reusable patterns)
      +---> compose.py        # Compose patterns into new specs
+     +---> verify.py         # Semantic property verification (9 checks)
      +---> coverage.py       # Ontology feature coverage report
      +---> lint.py           # Anti-pattern detection (10 rules)
      +---> topology.py       # Control-flow topology classifier
@@ -329,7 +351,7 @@ specs/*.yaml           # Agent specifications (22 agents)
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
      +---> comparative_report.py  # Cross-spec comparative analysis
-     +---> test_properties.py     # Property-based structural tests (174+)
+     +---> test_properties.py     # Property-based structural tests (214)
      +---> spec-viewer.html  # Visualization (5 views + trace overlay)
 
 agents/*.py            # Generated runnable agents (custom backend)
@@ -395,23 +417,29 @@ ANTHROPIC_API_KEY=...  # optional, for Claude model agents
 ## Project Structure
 
 ```
-agent_ontology/         # Python package (pip install -e .)
-  ONTOLOGY.yaml         #   The type system (entity/process/edge types, validation rules)
-  specs/                #   Agent specifications (22 YAML specs)
+agent_ontology/         # Python package (33 modules, pip install -e .)
+  ONTOLOGY.yaml         #   The type system (9 entity types, 10 process types, 12 edge types)
+  specs/                #   Agent specifications (27 YAML specs)
   benchmarks/           #   Benchmark datasets (HotpotQA, GSM8K, ARC, HumanEval) + scoring
   spec-viewer.html      #   Interactive multi-view visualization (5 views + trace overlay)
   validate.py           #   Spec validator (25+ rules)
   instantiate.py        #   Code generator (custom + LangGraph backends)
   specgen.py            #   Description-to-spec pipeline (pattern-aware)
+  design.py             #   End-to-end agent design pipeline (ao-design)
+  evolve.py             #   Evolutionary search with crossover + benchmark fitness
+  knowledge_store.py    #   SQLite store for evolution results
+  recommend.py          #   Evidence-backed architecture recommender
+  ingest.py             #   Corpus ingestion for ChromaDB vector stores
   patterns.py           #   Pattern library (7 reusable architectural patterns)
   compose.py            #   Pattern composition operator
   verify.py             #   Semantic property verification (9 checks)
-  recommend.py          #   Architecture recommender
+  mutate.py             #   Spec mutation engine (field + pattern-level)
   import_langgraph.py   #   Import LangGraph StateGraph → YAML spec
   import_crewai.py      #   Import CrewAI → YAML spec
+  import_autogen.py     #   Import AutoGen → YAML spec
+  import_openai_agents.py # Import OpenAI Agents SDK → YAML spec
+  import_google_adk.py  #   Import Google ADK → YAML spec
   owl_bridge.py         #   OWL dual representation: YAML<->OWL round-trip
-  mutate.py             #   Spec mutation engine (field + pattern-level)
-  evolve.py             #   Evolutionary search with crossover + benchmark fitness
   complexity.py         #   Spec complexity scoring
   coverage.py           #   Ontology feature coverage report
   lint.py               #   Anti-pattern linter (10 rules)
@@ -421,12 +449,12 @@ agent_ontology/         # Python package (pip install -e .)
   mermaid.py            #   Mermaid flowchart export
   ...                   #   + analyze_trace, spec_diff, dashboard, comparative_report, etc.
 tests/                  # Test suite
-  test_agents.py        #   Automated agent testing (21/21 pass)
-  test_properties.py    #   Property-based structural tests (174 tests)
+  test_agents.py        #   Automated agent testing (26/26 pass)
+  test_properties.py    #   Property-based structural tests (214 tests)
   test_specgen.py       #   E2E specgen pipeline testing
   test_roundtrip.py     #   LangGraph import round-trip tests (8 tests)
-agents/                 # Generated runnable agents (custom backend, 22 agents)
-agents_lg/              # Generated runnable agents (LangGraph backend, 22 agents)
+agents/                 # Generated runnable agents (custom backend, 27 agents)
+agents_lg/              # Generated runnable agents (LangGraph backend, 27 agents)
 compose_specs/          # Pattern composition recipes (3 examples)
 test_descriptions/      # Natural language descriptions for specgen testing
 pyproject.toml          # Package config with CLI entry points (ao-*)
