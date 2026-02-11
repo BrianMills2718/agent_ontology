@@ -11,11 +11,11 @@ entities:
     label: "Query Generator"
     model: "gemini-3-flash-preview"
     system_prompt: >
-      You are a SPARQL query generator. Given a natural language question and a
-      knowledge graph schema, generate a SPARQL query that retrieves relevant facts.
-      Output only the SPARQL query, no explanation.
+      You are a knowledge graph query planner. Given a natural language question and a
+      knowledge graph schema (entities and relations), extract the key entities to look up.
+      Output the entity names that should be searched in the knowledge graph.
     input_schema: QueryGenInput
-    output_schema: SPARQLQuery
+    output_schema: KGQuery
 
   - id: answer_agent
     type: agent
@@ -40,9 +40,10 @@ schemas:
     fields:
       - { name: question, type: string }
       - { name: kg_schema, type: string }
-  - name: SPARQLQuery
+  - name: KGQuery
     fields:
-      - { name: sparql, type: string }
+      - { name: entities, type: "list<string>" }
+      - { name: relation, type: string }
   - name: AnswerInput
     fields:
       - { name: question, type: string }
@@ -59,6 +60,8 @@ processes:
     logic: |
       state.data["question"] = state.data.get("query", state.data.get("question", ""))
       state.data["kg_schema"] = "Entities: Person, Organization, Location. Relations: worksAt, locatedIn, foundedBy"
+      for triple in state.data.get("_kg_triples", []):
+          state.knowledge_graph.write(tuple(triple))
 
   - id: generate_sparql
     type: formal_translation
@@ -73,11 +76,17 @@ processes:
 
   - id: execute_query
     type: step
-    label: "Execute SPARQL Query"
+    label: "Execute KG Query"
     logic: |
-      sparql = state.data.get("sparql", "")
-      results = state.knowledge_graph.read(sparql)
-      state.data["results"] = [str(r) for r in results] if results else ["No results found"]
+      entities = state.data.get("entities", [])
+      relation = state.data.get("relation", "")
+      all_results = []
+      for entity in entities:
+          matches = state.knowledge_graph.read(entity)
+          all_results.extend(matches)
+      if relation and not all_results:
+          all_results = state.knowledge_graph.read(relation)
+      state.data["results"] = [str(r) for r in all_results] if all_results else ["No results found"]
 
   - id: synthesize_answer
     type: step
@@ -92,9 +101,9 @@ processes:
 edges:
   - { type: flow, from: receive_query, to: generate_sparql }
   - { type: flow, from: generate_sparql, to: invoke_query_gen }
-  - { type: invoke, from: invoke_query_gen, to: query_agent, input: QueryGenInput, output: SPARQLQuery }
+  - { type: invoke, from: invoke_query_gen, to: query_agent, input: QueryGenInput, output: KGQuery }
   - { type: flow, from: invoke_query_gen, to: execute_query }
-  - { type: read, from: execute_query, to: knowledge_graph, query_key: sparql }
+  - { type: read, from: execute_query, to: knowledge_graph }
   - { type: flow, from: execute_query, to: synthesize_answer }
   - { type: invoke, from: synthesize_answer, to: answer_agent, input: AnswerInput, output: AnswerOutput }
   - { type: flow, from: synthesize_answer, to: emit_answer }

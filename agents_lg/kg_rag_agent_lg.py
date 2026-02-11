@@ -174,9 +174,9 @@ SCHEMAS = {
         "description": """""",
         "fields": [{"name": "question", "type": "string"}, {"name": "kg_schema", "type": "string"}],
     },
-    "SPARQLQuery": {
+    "KGQuery": {
         "description": """""",
-        "fields": [{"name": "sparql", "type": "string"}],
+        "fields": [{"name": "entities", "type": "list<string>"}, {"name": "relation", "type": "string"}],
     },
     "AnswerInput": {
         "description": """""",
@@ -292,16 +292,18 @@ class AgentState(TypedDict, total=False):
     _canned_responses: list
     _done: bool
     _iteration: int
+    _kg_triples: Any
     _schema_violations: Annotated[int, operator.add]
     answer: str
+    entities: list
     invoke_query_gen_result: Any
     kg_schema: str
     knowledge_graph: dict
     query: Any
     question: str
+    relation: str
     results: list
     sources: list
-    sparql: str
     synthesize_answer_result: Any
 
 
@@ -356,7 +358,7 @@ _store_knowledge_graph = Store_knowledge_graph()
 
 def invoke_query_agent(user_message, output_schema=None):
     """Query Generator"""
-    system = """You are a SPARQL query generator. Given a natural language question and a knowledge graph schema, generate a SPARQL query that retrieves relevant facts. Output only the SPARQL query, no explanation.
+    system = """You are a knowledge graph query planner. Given a natural language question and a knowledge graph schema (entities and relations), extract the key entities to look up. Output the entity names that should be searched in the knowledge graph.
 """
     if output_schema:
         system += output_instruction(output_schema)
@@ -405,6 +407,8 @@ def node_receive_query(state: AgentState) -> dict:
     # Logic from spec
     updates["question"] = state.get("query", state.get("question", ""))
     updates["kg_schema"] = "Entities: Person, Organization, Location. Relations: worksAt, locatedIn, foundedBy"
+    for triple in state.get("_kg_triples", []):
+        _store_knowledge_graph.write(tuple(triple))
     if updates.get("_done") or state.get("_done"):
         return updates
 
@@ -433,11 +437,11 @@ def node_invoke_query_gen(state: AgentState) -> dict:
     _cur.update(updates)
     query_agent_input = build_input(_cur, "QueryGenInput")
     query_agent_msg = json.dumps(query_agent_input, default=str)
-    query_agent_raw = invoke_query_agent(query_agent_msg, output_schema="SPARQLQuery")
-    query_agent_result = parse_response(query_agent_raw, "SPARQLQuery")
-    updates["_schema_violations"] = len(validate_output(query_agent_result, "SPARQLQuery"))
+    query_agent_raw = invoke_query_agent(query_agent_msg, output_schema="KGQuery")
+    query_agent_result = parse_response(query_agent_raw, "KGQuery")
+    updates["_schema_violations"] = len(validate_output(query_agent_result, "KGQuery"))
     updates.update(query_agent_result)
-    updates["sparql_query"] = query_agent_result
+    updates["kg_query"] = query_agent_result
     updates["invoke_query_gen_result"] = query_agent_result
     print(f"    ← Query Generator: {query_agent_result}")
 
@@ -446,19 +450,25 @@ def node_invoke_query_gen(state: AgentState) -> dict:
 
 def node_execute_query(state: AgentState) -> dict:
     """
-    Execute SPARQL Query
+    Execute KG Query
     """
-    print(f"  → Execute SPARQL Query")
+    print(f"  → Execute KG Query")
     updates = {}
 
     # Read: 
-    knowledge_graph_data = _store_knowledge_graph.read(key=state.get("sparql", ""))
+    knowledge_graph_data = _store_knowledge_graph.read()
     updates["knowledge_graph"] = knowledge_graph_data
 
     # Logic from spec
-    sparql = state.get("sparql", "")
-    results = _store_knowledge_graph.read(sparql)
-    updates["results"] = [str(r) for r in results] if results else ["No results found"]
+    entities = state.get("entities", [])
+    relation = state.get("relation", "")
+    all_results = []
+    for entity in entities:
+        matches = _store_knowledge_graph.read(entity)
+        all_results.extend(matches)
+    if relation and not all_results:
+        all_results = _store_knowledge_graph.read(relation)
+    updates["results"] = [str(r) for r in all_results] if all_results else ["No results found"]
     if updates.get("_done") or state.get("_done"):
         return updates
 

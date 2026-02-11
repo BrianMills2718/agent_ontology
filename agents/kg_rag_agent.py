@@ -204,9 +204,9 @@ SCHEMAS = {
         "description": """""",
         "fields": [{"name": "question", "type": "string"}, {"name": "kg_schema", "type": "string"}],
     },
-    "SPARQLQuery": {
+    "KGQuery": {
         "description": """""",
-        "fields": [{"name": "sparql", "type": "string"}],
+        "fields": [{"name": "entities", "type": "list<string>"}, {"name": "relation", "type": "string"}],
     },
     "AnswerInput": {
         "description": """""",
@@ -374,7 +374,7 @@ class Store_knowledge_graph:
 
 def invoke_query_agent(user_message, output_schema=None):
     """Query Generator"""
-    system = """You are a SPARQL query generator. Given a natural language question and a knowledge graph schema, generate a SPARQL query that retrieves relevant facts. Output only the SPARQL query, no explanation.
+    system = """You are a knowledge graph query planner. Given a natural language question and a knowledge graph schema (entities and relations), extract the key entities to look up. Output the entity names that should be searched in the knowledge graph.
 """
     if output_schema:
         system += output_instruction(output_schema)
@@ -435,6 +435,8 @@ def process_receive_query(state):
     # Logic from spec
     state.data["question"] = state.data.get("query", state.data.get("question", ""))
     state.data["kg_schema"] = "Entities: Person, Organization, Location. Relations: worksAt, locatedIn, foundedBy"
+    for triple in state.data.get("_kg_triples", []):
+        state.knowledge_graph.write(tuple(triple))
     if state.data.get("_done"):
         return state
 
@@ -458,12 +460,12 @@ def process_invoke_query_gen(state):
     # Invoke: query_agent
     query_agent_input = build_input(state, "QueryGenInput")
     query_agent_msg = json.dumps(query_agent_input, default=str)
-    query_agent_raw = invoke_query_agent(query_agent_msg, output_schema="SPARQLQuery")
-    query_agent_result = parse_response(query_agent_raw, "SPARQLQuery")
+    query_agent_raw = invoke_query_agent(query_agent_msg, output_schema="KGQuery")
+    query_agent_result = parse_response(query_agent_raw, "KGQuery")
     # Validate and merge output fields into state.data
-    state.schema_violations += len(validate_output(query_agent_result, "SPARQLQuery"))
+    state.schema_violations += len(validate_output(query_agent_result, "KGQuery"))
     state.data.update(query_agent_result)
-    state.data["sparql_query"] = query_agent_result
+    state.data["kg_query"] = query_agent_result
     state.data["invoke_query_gen_result"] = query_agent_result
     print(f"    ← Query Generator: {query_agent_result}")
 
@@ -472,18 +474,24 @@ def process_invoke_query_gen(state):
 
 def process_execute_query(state):
     """
-    Execute SPARQL Query
+    Execute KG Query
     """
-    print(f"  → Execute SPARQL Query")
+    print(f"  → Execute KG Query")
 
     # Read: 
-    knowledge_graph_data = state.knowledge_graph.read(key=state.data.get("sparql", ""))
+    knowledge_graph_data = state.knowledge_graph.read()
     state.data["knowledge_graph"] = knowledge_graph_data
 
     # Logic from spec
-    sparql = state.data.get("sparql", "")
-    results = state.knowledge_graph.read(sparql)
-    state.data["results"] = [str(r) for r in results] if results else ["No results found"]
+    entities = state.data.get("entities", [])
+    relation = state.data.get("relation", "")
+    all_results = []
+    for entity in entities:
+        matches = state.knowledge_graph.read(entity)
+        all_results.extend(matches)
+    if relation and not all_results:
+        all_results = state.knowledge_graph.read(relation)
+    state.data["results"] = [str(r) for r in all_results] if all_results else ["No results found"]
     if state.data.get("_done"):
         return state
 

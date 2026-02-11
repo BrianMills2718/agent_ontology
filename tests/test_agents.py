@@ -134,7 +134,15 @@ TEST_INPUTS = {
         "max_rounds": 1,
     },
     "kg_rag": {
-        "query": "Who founded the company located in Seattle?",
+        "query": "Who founded Nexara Technologies?",
+        "_kg_triples": [
+            ["Nexara Technologies", "foundedBy", "Dr. Elara Voss"],
+            ["Nexara Technologies", "locatedIn", "Seattle"],
+            ["Dr. Elara Voss", "worksAt", "Nexara Technologies"],
+            ["Nexara Technologies", "type", "Organization"],
+            ["Dr. Elara Voss", "type", "Person"],
+            ["Seattle", "type", "Location"],
+        ],
     },
     "pddl_planner": {
         "task": "Stack block A on block B",
@@ -340,10 +348,20 @@ def validate_self_improver(state):
     return issues
 
 def validate_kg_rag(state):
-    """KG RAG should produce an answer."""
+    """KG RAG should produce an answer grounded in KG data."""
     issues = []
-    if not state.data.get("answer"):
+    answer = state.data.get("answer", "")
+    if not answer:
         issues.append("No answer produced")
+    else:
+        # Check answer mentions KG entity (the fictional founder)
+        answer_lower = answer.lower()
+        if "elara" not in answer_lower and "voss" not in answer_lower:
+            issues.append(f"Answer doesn't reference KG data (expected 'Dr. Elara Voss'): {answer[:100]}")
+    # Check that results came from the KG (not empty)
+    results = state.data.get("results", [])
+    if results and all("No results" in str(r) for r in results):
+        issues.append("KG query returned no results — KG was not used")
     return issues
 
 def validate_pddl_planner(state):
