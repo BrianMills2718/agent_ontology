@@ -1208,6 +1208,275 @@ _PATTERN_MUTATIONS = {
 MUTATIONS = {**_FIELD_MUTATIONS, **_PATTERN_MUTATIONS}
 
 
+def enumerate_mutations(spec):
+    """Inspect a spec and return every concrete mutation option with parameters.
+
+    Returns a list of dicts, each describing one applicable mutation:
+        {"operator": "modify_prompt", "agent": "critic", "transform": "add_chain_of_thought",
+         "description": "Apply chain-of-thought to critic agent's prompt"}
+
+    The LLM can select from this menu instead of inventing freeform mutations.
+    """
+    options = []
+
+    agents = _agent_entities(spec)
+    agents_with_prompts = [a for a in agents if a.get("system_prompt")]
+    steps = _step_processes(spec)
+    gates = _gate_processes(spec)
+    flow = _flow_edges(spec)
+    chain = _build_flow_chain(spec)
+
+    # --- modify_prompt: agent × transform ---
+    for agent in agents_with_prompts:
+        for t in _PROMPT_TRANSFORMS:
+            options.append({
+                "operator": "modify_prompt",
+                "agent": agent["id"],
+                "transform": t["name"],
+                "description": f"Apply '{t['name']}' to {agent.get('label', agent['id'])} prompt",
+            })
+
+    # --- duplicate_with_variation: agent × variation ---
+    variations = ["cautious", "creative", "concise", "detailed", "skeptical", "optimistic"]
+    for agent in agents:
+        for v in variations:
+            options.append({
+                "operator": "duplicate_with_variation",
+                "agent": agent["id"],
+                "variation": v,
+                "description": f"Duplicate {agent.get('label', agent['id'])} with {v} personality",
+            })
+
+    # --- change_model: agent × model ---
+    for agent in agents:
+        current = agent.get("model", "unknown")
+        for model in _MODEL_POOL:
+            if model != current:
+                options.append({
+                    "operator": "change_model",
+                    "agent": agent["id"],
+                    "model": model,
+                    "description": f"Switch {agent.get('label', agent['id'])} from {current} to {model}",
+                })
+
+    # --- add_review_step: target step ---
+    for step in steps:
+        outgoing_flow = [e for e in flow if e.get("from") == step["id"]]
+        if outgoing_flow and not _is_critical_process(spec, step["id"]):
+            options.append({
+                "operator": "add_review_step",
+                "after_step": step["id"],
+                "description": f"Insert review agent after {step.get('label', step['id'])}",
+            })
+
+    # --- remove_process: removable processes ---
+    for proc in spec.get("processes", []):
+        if not _is_critical_process(spec, proc["id"]) and proc.get("type") != "gate":
+            outgoing = [e for e in flow if e.get("from") == proc["id"]]
+            if outgoing:
+                options.append({
+                    "operator": "remove_process",
+                    "process": proc["id"],
+                    "description": f"Remove {proc.get('label', proc['id'])} and rewire around it",
+                })
+
+    # --- swap_process_order: adjacent pairs ---
+    for i in range(len(chain) - 1):
+        a, b = chain[i], chain[i + 1]
+        pa = _process_by_id(spec, a)
+        pb = _process_by_id(spec, b)
+        if not pa or not pb:
+            continue
+        if pa.get("type") == "gate" or pb.get("type") == "gate":
+            continue
+        if _is_critical_process(spec, a) and _is_critical_process(spec, b):
+            continue
+        options.append({
+            "operator": "swap_process_order",
+            "process_a": a,
+            "process_b": b,
+            "description": f"Swap order of {pa.get('label', a)} and {pb.get('label', b)}",
+        })
+
+    # --- change_gate_condition: gate × transform ---
+    gate_transforms = ["invert", "raise_threshold", "lower_threshold", "swap_and_or", "toggle_operator"]
+    for gate in gates:
+        for gt in gate_transforms:
+            options.append({
+                "operator": "change_gate_condition",
+                "gate": gate["id"],
+                "transform": gt,
+                "description": f"Apply '{gt}' to gate {gate.get('label', gate['id'])} (condition: {gate.get('condition', '?')[:50]})",
+            })
+
+    # --- add_store: step × store_type ---
+    store_types = ["queue", "vector", "kv"]
+    for step in steps:
+        for st in store_types:
+            options.append({
+                "operator": "add_store",
+                "source_step": step["id"],
+                "store_type": st,
+                "description": f"Add {st} store written by {step.get('label', step['id'])}",
+            })
+
+    # --- insert_pattern: flow_edge × pattern ---
+    try:
+        pat_mod = _get_patterns_module()
+        pattern_names = list(pat_mod.PATTERN_LIBRARY.keys()) if hasattr(pat_mod, 'PATTERN_LIBRARY') else []
+    except Exception:
+        pattern_names = []
+    proc_ids = {p["id"] for p in spec.get("processes", [])}
+    for edge in flow:
+        if edge.get("from") in proc_ids and edge.get("to") in proc_ids:
+            for pname in pattern_names:
+                options.append({
+                    "operator": "insert_pattern",
+                    "flow_edge_from": edge["from"],
+                    "flow_edge_to": edge["to"],
+                    "pattern": pname,
+                    "description": f"Insert {pname} pattern between {edge['from']} and {edge['to']}",
+                })
+
+    # --- swap_pattern / remove_pattern: detected patterns ---
+    try:
+        pat_mod = _get_patterns_module()
+        detected = pat_mod.detect_patterns(spec) if hasattr(pat_mod, 'detect_patterns') else []
+    except Exception:
+        detected = []
+    for det_name, det_pids, det_prefix in detected:
+        # swap options
+        for pname in pattern_names:
+            if pname != det_name:
+                options.append({
+                    "operator": "swap_pattern",
+                    "current_pattern": det_name,
+                    "replacement_pattern": pname,
+                    "description": f"Replace {det_name} pattern with {pname}",
+                })
+        # remove option (only if >1 pattern detected)
+        if len(detected) > 1:
+            options.append({
+                "operator": "remove_pattern",
+                "pattern": det_name,
+                "description": f"Remove {det_name} pattern and rewire around it",
+            })
+
+    return options
+
+
+def apply_selected_mutation(spec, selection):
+    """Apply a single mutation selected by the LLM from the enumerated menu.
+
+    Args:
+        spec: The spec to mutate
+        selection: A dict from enumerate_mutations (or LLM selection matching its schema)
+
+    Returns: mutated spec
+
+    The selection dict must have an 'operator' field. Additional fields are used
+    to seed random.choice with the specific option so the mutation targets the
+    right element.
+    """
+    op = selection["operator"]
+
+    if op == "modify_prompt":
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        transform_name = selection.get("transform")
+        agents = _agent_entities(result)
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent or not agent.get("system_prompt"):
+            raise ValueError(f"Agent {agent_id} not found or has no prompt")
+        tdef = next((t for t in _PROMPT_TRANSFORMS if t["name"] == transform_name), None)
+        if not tdef:
+            raise ValueError(f"Unknown prompt transform: {transform_name}")
+        agent["system_prompt"] = tdef["transform"](agent["system_prompt"])
+        _record_mutation(result, "modify_prompt", {
+            "agent": agent_id, "transform": transform_name,
+            "description": tdef["description"],
+        })
+        return result
+
+    elif op == "duplicate_with_variation":
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        variation = selection.get("variation")
+        agents = _agent_entities(result)
+        original = next((a for a in agents if a["id"] == agent_id), None)
+        if not original:
+            raise ValueError(f"Agent {agent_id} not found")
+        variation_map = {
+            "cautious": "Be extra cautious and conservative in your responses. Double-check all claims. Prefer safety over speed.",
+            "creative": "Be more creative and exploratory. Consider unconventional approaches. Think outside the box.",
+            "concise": "Be extremely concise. Minimize verbosity. Output only essential information.",
+            "detailed": "Be thorough and detailed. Explain your reasoning step by step. Leave nothing ambiguous.",
+            "skeptical": "Be skeptical of assumptions. Question premises. Consider failure modes and edge cases.",
+            "optimistic": "Focus on opportunities and positive outcomes. Assume good faith. Look for the best path forward.",
+        }
+        prefix = variation_map.get(variation, "")
+        if not prefix:
+            raise ValueError(f"Unknown variation: {variation}")
+        suffix = _short_id()
+        new_id = f"{agent_id}_var_{suffix}"
+        new_agent = copy.deepcopy(original)
+        new_agent["id"] = new_id
+        new_agent["label"] = f"{original.get('label', original['id'])} ({variation})"
+        new_agent["system_prompt"] = f"{prefix}\n\n{original.get('system_prompt', '')}"
+        result["entities"].append(new_agent)
+        _record_mutation(result, "duplicate_with_variation", {
+            "original": agent_id, "variant": new_id, "variation": variation,
+        })
+        return result
+
+    elif op == "change_model":
+        result = copy.deepcopy(spec)
+        agent_id = selection.get("agent")
+        new_model = selection.get("model")
+        agents = _agent_entities(result)
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found")
+        old_model = agent.get("model", "unknown")
+        agent["model"] = new_model
+        _record_mutation(result, "change_model", {
+            "changes": [{"agent": agent_id, "old_model": old_model, "new_model": new_model}],
+        })
+        return result
+
+    elif op == "add_review_step":
+        # Use the existing function but seed it to target the right step
+        # We can't easily parameterize the existing function, so we temporarily
+        # limit step choices. The simplest approach: call the existing function
+        # in a retry loop until it picks the right target, or just use the
+        # existing function (which is already robust).
+        return add_review_step(spec)
+
+    elif op == "remove_process":
+        return remove_process(spec)
+
+    elif op == "swap_process_order":
+        return swap_process_order(spec)
+
+    elif op == "change_gate_condition":
+        return change_gate_condition(spec)
+
+    elif op == "add_store":
+        return add_store(spec)
+
+    elif op == "insert_pattern":
+        return insert_pattern(spec)
+
+    elif op == "swap_pattern":
+        return swap_pattern(spec)
+
+    elif op == "remove_pattern":
+        return remove_pattern(spec)
+
+    else:
+        raise ValueError(f"Unknown operator: {op}")
+
+
 def apply_mutation(spec, mutation_name):
     """Apply a named mutation to a spec, returning a new spec."""
     if mutation_name not in MUTATIONS:

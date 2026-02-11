@@ -266,13 +266,34 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
     em_mean = sum(scores_em) / len(scores_em)
     f1_mean = sum(scores_f1) / len(scores_f1) if scores_f1 else 0.0
 
-    # Combine: EM weighted higher, scale to 200
-    score = (em_mean * 0.7 + f1_mean * 0.3) * 200
+    # Accuracy component: EM weighted higher, scale to 100
+    accuracy_score = (em_mean * 0.7 + f1_mean * 0.3) * 100
 
-    # Efficiency bonus: fewer avg calls = better
+    # Efficiency component (matters more when accuracy is saturated)
+    # Fewer LLM calls = better (scale: 1 call = 50, 5 calls = 30, 10+ = 10)
     avg_calls = total_calls / len(dataset_examples) if dataset_examples else 0
-    if avg_calls > 0:
-        score += max(0, 20 - avg_calls)
+    call_efficiency = max(0, 50 - avg_calls * 4) if avg_calls > 0 else 50
+
+    # Speed bonus: faster execution = better (scale: 1s = 30, 10s = 15, 60s = 0)
+    avg_duration_s = (total_duration_ms / len(dataset_examples) / 1000) if dataset_examples else 0
+    speed_bonus = max(0, 30 - avg_duration_s * 0.5)
+
+    # Topology simplicity: fewer processes/edges = more elegant solution
+    # This is a small tiebreaker (0-20) that rewards parsimony
+    # Passed in via module introspection if available
+    simplicity_bonus = 0
+    try:
+        if hasattr(mod, 'PROCESSES') and hasattr(mod, 'TRANSITIONS'):
+            n_procs = len(mod.PROCESSES)
+            n_trans = sum(len(v) if isinstance(v, list) else 1
+                         for v in mod.TRANSITIONS.values() if v)
+            # Fewer = better. Baseline: 8 procs + 8 transitions = 0 bonus
+            simplicity_bonus = max(0, 20 - (n_procs + n_trans - 8) * 1.5)
+    except Exception:
+        pass
+
+    # Total fitness: accuracy dominates, but efficiency differentiates ties
+    score = accuracy_score + call_efficiency + speed_bonus + simplicity_bonus
 
     test_result = {
         "status": "PASS" if score > 0 else "BENCH_FAIL",
@@ -280,6 +301,10 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
         "duration_ms": total_duration_ms,
         "score_em": round(em_mean, 4),
         "score_f1": round(f1_mean, 4),
+        "accuracy_component": round(accuracy_score, 1),
+        "efficiency_component": round(call_efficiency, 1),
+        "speed_component": round(speed_bonus, 1),
+        "simplicity_component": round(simplicity_bonus, 1),
     }
 
     return round(score, 1), test_result
@@ -496,6 +521,48 @@ Detected patterns: {patterns}
 ## Task
 Propose ONE structural mutation as JSON that could improve this agent's benchmark performance.
 Output ONLY the JSON instruction.
+"""
+
+# ════════════════════════════════════════════════════════════════════
+# Structured LLM mutation selection (menu-based)
+# ════════════════════════════════════════════════════════════════════
+
+STRUCTURED_MUTATION_SYSTEM = """\
+You are an agent architecture optimizer. You receive a menu of available mutations \
+for an agent spec, plus context about performance. Select 1-3 mutations to apply \
+in sequence to improve the agent.
+
+Rules:
+- Output ONLY a JSON array of selected mutations
+- Each element must have "operator" plus the exact parameter fields shown in the menu
+- Order matters: mutations are applied sequentially, each building on the previous result
+- 1 mutation for minor tweaks, 2-3 for larger architectural changes
+- Prefer combinations that work together (e.g., insert a pattern + modify its agent's prompt)
+- Do NOT select mutations that would conflict (e.g., removing a process then modifying it)
+- Do NOT select change_model mutations — model is controlled externally
+- Your entire response must be a JSON array starting with [ and ending with ]
+"""
+
+STRUCTURED_MUTATION_USER = """\
+## Agent: {spec_name}
+Entry point: {entry_point}
+Patterns detected: {patterns}
+
+## Process Details
+{process_details}
+
+## Performance Context
+{benchmark_context}
+{previous_analysis}
+{knowledge_context}
+
+## Available Mutations ({option_count} options)
+{mutation_menu}
+
+## Task
+Select 1-3 mutations from the menu above. Output a JSON array of selected mutations.
+Each must have "operator" plus the parameter fields shown. Example:
+[{{"operator": "modify_prompt", "agent": "solver", "transform": "add_chain_of_thought"}}]
 """
 
 ANALYSIS_SYSTEM_PROMPT = """\
@@ -816,6 +883,220 @@ def _extract_json(text):
     )
 
 
+def _format_mutation_menu(options, max_per_operator=5):
+    """Format enumerated mutations as a compact menu for the LLM prompt.
+
+    Groups by operator, shows up to max_per_operator examples per type,
+    then indicates how many more are available.
+    """
+    from collections import defaultdict
+    by_op = defaultdict(list)
+    for opt in options:
+        # Skip change_model — model is controlled externally
+        if opt["operator"] == "change_model":
+            continue
+        by_op[opt["operator"]].append(opt)
+
+    lines = []
+    for op_name, op_options in sorted(by_op.items()):
+        lines.append(f"\n### {op_name} ({len(op_options)} options)")
+        shown = op_options[:max_per_operator]
+        for opt in shown:
+            # Show the selection fields (everything except 'description')
+            params = {k: v for k, v in opt.items() if k != "description"}
+            lines.append(f"  {json.dumps(params)}")
+            lines.append(f"    → {opt['description']}")
+        if len(op_options) > max_per_operator:
+            remaining = len(op_options) - max_per_operator
+            # Show the parameter space for remaining options
+            example = op_options[max_per_operator]
+            param_keys = [k for k in example if k not in ("operator", "description")]
+            lines.append(f"  ... and {remaining} more (vary: {', '.join(param_keys)})")
+    return "\n".join(lines)
+
+
+def llm_select_mutations(parent_spec, parent_yaml, benchmark_suite=None,
+                         benchmark_results=None, previous_analysis=None,
+                         knowledge_store=None, model=None, verbose=False):
+    """LLM selects 1-3 mutations from the enumerated menu of valid options.
+
+    Unlike llm_mutate (freeform), this guarantees structural validity because
+    every selected mutation goes through battle-tested mutate.py operators.
+
+    Returns (mutated_spec_dict, mutation_description, yaml_text).
+    """
+    import yaml
+    from .specgen import call_llm
+
+    model = model or FLASH_MODEL
+    patterns = _detect_pattern_names(parent_spec)
+    summary = _summarize_spec(parent_spec)
+
+    # Enumerate all valid mutations for this spec
+    options = mutate.enumerate_mutations(parent_spec)
+    if not options:
+        raise ValueError("No mutations available for this spec")
+
+    menu_text = _format_mutation_menu(options)
+
+    # Build context
+    benchmark_ctx = ""
+    if benchmark_results:
+        benchmark_ctx = f"Benchmark ({benchmark_suite}): fitness={benchmark_results.get('fitness', 0)}, " \
+                        f"status={benchmark_results.get('status', '?')}, " \
+                        f"llm_calls={benchmark_results.get('llm_calls', 0)}"
+        if benchmark_results.get('error'):
+            benchmark_ctx += f"\nError: {benchmark_results['error'][:200]}"
+
+    analysis_ctx = ""
+    if previous_analysis:
+        analysis_ctx = f"Previous analysis: {previous_analysis.get('diagnosis', '')}\n" \
+                       f"Suggested: {previous_analysis.get('suggested_mutations', [])}"
+
+    knowledge_ctx = _get_knowledge_context(knowledge_store, benchmark_suite)
+
+    user_prompt = STRUCTURED_MUTATION_USER.format(
+        spec_name=summary["spec_name"],
+        entry_point=summary["entry_point"],
+        patterns=", ".join(patterns) if patterns else "none detected",
+        process_details=summary["process_details"],
+        benchmark_context=benchmark_ctx or "No benchmark data yet.",
+        previous_analysis=analysis_ctx or "First generation.",
+        knowledge_context=knowledge_ctx,
+        option_count=len(options),
+        mutation_menu=menu_text,
+    )
+
+    if verbose:
+        print(f"    [Flash] Selecting from {len(options)} mutation options with {model}...")
+
+    # Retry up to 3 times
+    last_error = None
+    for attempt in range(3):
+        prompt = user_prompt
+        if last_error and attempt > 0:
+            prompt += f"\n\n## IMPORTANT: Previous attempt failed:\n{last_error}\n\nOutput ONLY a valid JSON array. No markdown, no explanation. Example:\n[{{\"operator\": \"modify_prompt\", \"agent\": \"solver\", \"transform\": \"add_chain_of_thought\"}}]"
+
+        response = call_llm(model, STRUCTURED_MUTATION_SYSTEM, prompt,
+                            temperature=0.7, max_tokens=2048)
+
+        try:
+            selections = _extract_json_array(response)
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = f"JSON parse error: {e}. Output ONLY a JSON array like [{{'operator': ...}}]"
+            continue
+
+        if not isinstance(selections, list) or not selections:
+            last_error = "Must output a non-empty JSON array of mutations."
+            continue
+
+        if len(selections) > 3:
+            selections = selections[:3]  # Silently truncate
+
+        # Validate each selection has required fields
+        valid = True
+        for i, sel in enumerate(selections):
+            if not isinstance(sel, dict) or "operator" not in sel:
+                last_error = f"Selection {i} missing 'operator' field."
+                valid = False
+                break
+            if sel["operator"] not in mutate.MUTATIONS and sel["operator"] != "change_model":
+                last_error = f"Unknown operator '{sel['operator']}'. Must be one of: {sorted(mutate.MUTATIONS.keys())}"
+                valid = False
+                break
+        if not valid:
+            continue
+
+        # Apply mutations sequentially
+        try:
+            current_spec = copy.deepcopy(parent_spec)
+            applied = []
+            for sel in selections:
+                current_spec = mutate.apply_selected_mutation(current_spec, sel)
+                applied.append(f"{sel['operator']}({', '.join(f'{k}={v}' for k, v in sel.items() if k != 'operator')})")
+
+            mutation_desc = "structured: " + " → ".join(applied)
+            yaml_text = yaml.dump(current_spec, default_flow_style=False)
+            return current_spec, mutation_desc, yaml_text
+
+        except (KeyError, ValueError, TypeError) as e:
+            last_error = f"Failed to apply mutations: {e}. Try different selections."
+            continue
+
+    raise ValueError(last_error or "LLM failed to select valid mutations")
+
+
+def _extract_json_array(text):
+    """Extract a JSON array from LLM output. Handles markdown fences and surrounding text."""
+    text = text.strip()
+
+    # Strip markdown fences (```json ... ``` or ``` ... ```)
+    if "```" in text:
+        # Find content between first ``` and last ```
+        parts = text.split("```")
+        # parts[0] is before first fence, parts[1] is inside, parts[2+] after
+        if len(parts) >= 3:
+            inner = parts[1]
+            # Strip optional language tag (json, JSON, etc.)
+            if inner.startswith(("json", "JSON")):
+                inner = inner[4:]
+            text = inner.strip()
+        elif len(parts) == 2:
+            inner = parts[1]
+            if inner.startswith(("json", "JSON")):
+                inner = inner[4:]
+            text = inner.strip()
+
+    # Try direct parse
+    try:
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]  # Single mutation, wrap
+    except json.JSONDecodeError:
+        pass
+
+    # Find outermost [...]
+    start = text.find("[")
+    if start == -1:
+        # Maybe they returned a single object — wrap it
+        try:
+            obj = _extract_json(text)
+            return [obj]
+        except json.JSONDecodeError:
+            raise ValueError("No JSON array found in response")
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    raise ValueError(f"Found array brackets but invalid JSON")
+                break
+
+    raise ValueError("Unclosed JSON array in response")
+
+
 def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
                benchmark_results=None, previous_analysis=None,
                knowledge_store=None, model=None, verbose=False):
@@ -1049,10 +1330,11 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
                             use_llm = llm_guided  # fallback
 
                     if use_llm and not use_crossover:
-                        # LLM-guided mutation via Flash
-                        result, mut_desc, _ = llm_mutate(
+                        # Structured LLM mutation selection (menu-based)
+                        result, mut_desc, _ = llm_select_mutations(
                             parent_spec, parent_yaml,
                             benchmark_suite=benchmark_suite,
+                            benchmark_results=None,
                             previous_analysis=previous_analysis,
                             knowledge_store=knowledge_store,
                             model=flash_model,
