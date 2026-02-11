@@ -133,6 +133,22 @@ TEST_INPUTS = {
         "spec_yaml": open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_ontology", "specs", "self_refine.yaml")).read(),
         "max_rounds": 1,
     },
+    "kg_rag": {
+        "query": "Who founded the company located in Seattle?",
+    },
+    "pddl_planner": {
+        "task": "Stack block A on block B",
+    },
+    "rap": {
+        "problem": "What is 15 * 7?",
+        "max_iterations": 2,
+    },
+    "alpha_geometry": {
+        "problem": "Given triangle ABC where AB = AC, prove it is isosceles",
+        "goal": "Prove triangle ABC is isosceles",
+        "known_facts": ["AB = AC", "angle BAC = 60"],
+        "max_iterations": 2,
+    },
 }
 
 # ── Validation criteria per agent ──
@@ -142,9 +158,11 @@ def validate_react(state):
     issues = []
     if not state.data.get("answer") and not state.data.get("final_answer"):
         issues.append("No answer produced")
+    # Trajectory check: only flag if there's also no answer (direct answers skip trajectory)
     trajectory = state.data.get("trajectory", [])
-    if len(trajectory) < 1:
-        issues.append("No reasoning steps recorded")
+    has_answer = state.data.get("answer") or state.data.get("final_answer")
+    if len(trajectory) < 1 and not has_answer:
+        issues.append("No reasoning steps recorded and no answer produced")
     return issues
 
 def validate_debate(state):
@@ -321,6 +339,36 @@ def validate_self_improver(state):
         issues.append("No improvement count")
     return issues
 
+def validate_kg_rag(state):
+    """KG RAG should produce an answer."""
+    issues = []
+    if not state.data.get("answer"):
+        issues.append("No answer produced")
+    return issues
+
+def validate_pddl_planner(state):
+    """PDDL planner should produce an explanation or handle unsolvable."""
+    issues = []
+    if not state.data.get("explanation") and not state.data.get("answer"):
+        issues.append("No explanation or answer produced")
+    return issues
+
+def validate_rap(state):
+    """RAP should produce an answer after search iterations."""
+    issues = []
+    if not state.data.get("answer"):
+        issues.append("No answer produced")
+    return issues
+
+def validate_alpha_geometry(state):
+    """AlphaGeometry should produce a proof or reach iteration limit."""
+    issues = []
+    if not state.data.get("answer"):
+        issues.append("No answer produced")
+    if state.data.get("proved") is None:
+        issues.append("No proved flag set")
+    return issues
+
 VALIDATORS = {
     "react": validate_react,
     "debate": validate_debate,
@@ -344,6 +392,10 @@ VALIDATORS = {
     "customer_support_swarm": validate_customer_support_swarm,
     "software_team": validate_software_team,
     "self_improver": validate_self_improver,
+    "kg_rag": validate_kg_rag,
+    "pddl_planner": validate_pddl_planner,
+    "rap": validate_rap,
+    "alpha_geometry": validate_alpha_geometry,
 }
 
 # ── Timeout context manager ──
@@ -465,6 +517,7 @@ AGENT_NAMES = [
     "reflexion", "mixture_of_agents", "meta_prompting",
     "customer_support_swarm", "software_team",
     "self_improver",
+    "kg_rag", "pddl_planner", "rap", "alpha_geometry",
 ]
 
 DEFAULT_COMPARE_MODELS = [

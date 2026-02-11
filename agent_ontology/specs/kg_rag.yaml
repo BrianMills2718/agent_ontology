@@ -1,0 +1,100 @@
+name: "Knowledge Graph RAG"
+version: "1.0"
+description: >
+  RAG agent that queries a knowledge graph via SPARQL instead of vector search.
+  Demonstrates knowledge_graph store type with formalism and reasoner properties.
+entry_point: receive_query
+
+entities:
+  - id: query_agent
+    type: agent
+    label: "Query Generator"
+    model: "gemini-3-flash-preview"
+    system_prompt: >
+      You are a SPARQL query generator. Given a natural language question and a
+      knowledge graph schema, generate a SPARQL query that retrieves relevant facts.
+      Output only the SPARQL query, no explanation.
+    input_schema: QueryGenInput
+    output_schema: SPARQLQuery
+
+  - id: answer_agent
+    type: agent
+    label: "Answer Synthesizer"
+    model: "gemini-3-flash-preview"
+    system_prompt: >
+      You synthesize answers from knowledge graph query results.
+      Given the original question and SPARQL query results (as triples),
+      generate a clear, factual answer grounded in the retrieved facts.
+    input_schema: AnswerInput
+    output_schema: AnswerOutput
+
+  - id: knowledge_graph
+    type: store
+    label: "Knowledge Graph"
+    store_type: knowledge_graph
+    formalism: sparql
+    retention: persistent
+
+schemas:
+  - name: QueryGenInput
+    fields:
+      - { name: question, type: string }
+      - { name: kg_schema, type: string }
+  - name: SPARQLQuery
+    fields:
+      - { name: sparql, type: string }
+  - name: AnswerInput
+    fields:
+      - { name: question, type: string }
+      - { name: results, type: "list<string>" }
+  - name: AnswerOutput
+    fields:
+      - { name: answer, type: string }
+      - { name: sources, type: "list<string>" }
+
+processes:
+  - id: receive_query
+    type: step
+    label: "Receive Query"
+    logic: |
+      state.data["question"] = state.data.get("query", state.data.get("question", ""))
+      state.data["kg_schema"] = "Entities: Person, Organization, Location. Relations: worksAt, locatedIn, foundedBy"
+
+  - id: generate_sparql
+    type: formal_translation
+    label: "NL → SPARQL"
+    source_formalism: natural_language
+    target_formalism: sparql
+    translator: llm
+
+  - id: invoke_query_gen
+    type: step
+    label: "Invoke Query Generator"
+
+  - id: execute_query
+    type: step
+    label: "Execute SPARQL Query"
+    logic: |
+      sparql = state.data.get("sparql", "")
+      results = state.knowledge_graph.read(sparql)
+      state.data["results"] = [str(r) for r in results] if results else ["No results found"]
+
+  - id: synthesize_answer
+    type: step
+    label: "Synthesize Answer"
+
+  - id: emit_answer
+    type: step
+    label: "Emit Answer"
+    logic: |
+      state.data["_done"] = True
+
+edges:
+  - { type: flow, from: receive_query, to: generate_sparql }
+  - { type: flow, from: generate_sparql, to: invoke_query_gen }
+  - { type: invoke, from: invoke_query_gen, to: query_agent, input: QueryGenInput, output: SPARQLQuery }
+  - { type: flow, from: invoke_query_gen, to: execute_query }
+  - { type: read, from: execute_query, to: knowledge_graph, query_key: sparql }
+  - { type: flow, from: execute_query, to: synthesize_answer }
+  - { type: invoke, from: synthesize_answer, to: answer_agent, input: AnswerInput, output: AnswerOutput }
+  - { type: flow, from: synthesize_answer, to: emit_answer }

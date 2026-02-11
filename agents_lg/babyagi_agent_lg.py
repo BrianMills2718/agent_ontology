@@ -136,6 +136,34 @@ def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=409
                 print(f"    [FAIL] {type(e).__name__}: {e} after {retries} attempts")
                 return json.dumps({"stub": True, "model": model, "error": str(e)})
 
+
+def call_embedding(texts, model="text-embedding-3-small", provider="openai"):
+    """Generate embeddings for a list of texts."""
+    if isinstance(texts, str):
+        texts = [texts]
+    if provider == "openai" or model.startswith("text-embedding"):
+        from openai import OpenAI
+        client = OpenAI()
+        response = client.embeddings.create(model=model, input=texts)
+        return [item.embedding for item in response.data]
+    elif provider == "google" or model.startswith("models/"):
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        result = client.models.embed_content(model=model or "models/text-embedding-004", contents=texts)
+        return result.embeddings
+    elif provider == "huggingface" or provider == "local":
+        try:
+            from sentence_transformers import SentenceTransformer
+            _emb_model = SentenceTransformer(model or "all-MiniLM-L6-v2")
+            return _emb_model.encode(texts).tolist()
+        except ImportError:
+            return [[] for _ in texts]
+    else:
+        from openai import OpenAI
+        client = OpenAI()
+        response = client.embeddings.create(model=model, input=texts)
+        return [item.embedding for item in response.data]
+
 # ═══════════════════════════════════════════════════════════
 # Schema Registry
 # ═══════════════════════════════════════════════════════════
@@ -323,18 +351,34 @@ except ImportError:
 
 
 class _ChromaVectorStore:
-    def __init__(self, name):
+    def __init__(self, name, embedding_model=None, embedding_provider=None):
         self._fallback = []
         self._collection = None
+        self._embedding_model = embedding_model
+        self._embedding_provider = embedding_provider
         if _USE_CHROMA:
             self._collection = _chroma_client.get_or_create_collection(name)
         else:
             print(f"    [VectorStore] using in-memory fallback")
 
+    def _embed(self, texts):
+        if not self._embedding_model:
+            return None
+        try:
+            return call_embedding(texts, model=self._embedding_model, provider=self._embedding_provider or "openai")
+        except Exception:
+            return None
+
     def read(self, query=None, top_k=5):
         if self._collection is not None:
             if query:
-                results = self._collection.query(query_texts=[query], n_results=min(top_k, max(self._collection.count(), 1)))
+                kwargs = {"n_results": min(top_k, max(self._collection.count(), 1))}
+                emb = self._embed([query])
+                if emb:
+                    kwargs["query_embeddings"] = emb
+                else:
+                    kwargs["query_texts"] = [query]
+                results = self._collection.query(**kwargs)
                 docs = results.get("documents", [[]])[0]
                 metas = results.get("metadatas", [[]])[0]
                 return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]
@@ -358,7 +402,13 @@ class _ChromaVectorStore:
                 clean_meta[k] = str(v)
         if self._collection is not None:
             doc_id = key or f"doc_{self._collection.count()}"
-            self._collection.add(documents=[text], metadatas=[clean_meta], ids=[doc_id])
+            kwargs = {"documents": [text], "ids": [doc_id]}
+            if clean_meta:
+                kwargs["metadatas"] = [clean_meta]
+            emb = self._embed([text])
+            if emb:
+                kwargs["embeddings"] = emb
+            self._collection.add(**kwargs)
         else:
             self._fallback.append(value if isinstance(value, dict) else {"text": text, "metadata": clean_meta})
 

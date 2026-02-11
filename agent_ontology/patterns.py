@@ -377,12 +377,56 @@ def compatible_patterns(pattern_a_name, pattern_b_name):
     return bool(a_outputs & b_inputs)
 
 
-def detect_patterns(spec):
-    """Detect which patterns are present in a spec by matching process IDs.
+def detect_patterns(spec, spec_path=None):
+    """Detect which patterns are present in a spec.
+
+    Uses OWL DL structural classification when available, falling back to
+    ID-based matching. Returns a list of (pattern_name, matched_process_ids, prefix) tuples.
+    """
+    # Try OWL structural detection first (label-independent, topology-based)
+    try:
+        from .owl_bridge import build_bridge_ontology_in_world, spec_to_owl
+        from .ontology_owl import classify_structural
+        from owlready2 import World
+
+        world = World()
+        onto = build_bridge_ontology_in_world(world)
+        spec_inst = spec_to_owl(onto, spec if spec_path is None else spec_path)
+        results = classify_structural(onto, [spec_inst])
+
+        owl_detected = []
+        for _spec_name, owl_patterns in results.items():
+            for owl_pat in owl_patterns:
+                canon = _OWL_TO_PATTERN.get(owl_pat, owl_pat.lower())
+                owl_detected.append((canon, set(), "owl"))
+        if owl_detected:
+            # Merge with ID-based for process ID info
+            id_results = _detect_patterns_by_id(spec)
+            id_map = {name: (pids, prefix) for name, pids, prefix in id_results}
+            merged = []
+            seen = set()
+            for name, _, _ in owl_detected:
+                if name in id_map:
+                    merged.append((name, id_map[name][0], id_map[name][1]))
+                else:
+                    merged.append((name, set(), "owl"))
+                seen.add(name)
+            # Add any ID-only detections not found by OWL
+            for name, pids, prefix in id_results:
+                if name not in seen:
+                    merged.append((name, pids, prefix))
+            return merged
+    except Exception:
+        pass
+
+    # Fallback to ID-based detection
+    return _detect_patterns_by_id(spec)
+
+
+def _detect_patterns_by_id(spec):
+    """Detect patterns by matching process IDs (original heuristic method).
 
     Returns a list of (pattern_name, matched_process_ids, prefix) tuples.
-    A pattern is "detected" if a significant fraction of its process IDs
-    appear in the spec (possibly with a namespace prefix).
     """
     spec_process_ids = {p.get("id") for p in spec.get("processes", []) if p.get("id")}
     detected = []
@@ -398,8 +442,7 @@ def detect_patterns(spec):
             detected.append((pname, overlap, ""))
             continue
 
-        # Try with prefix detection: for each spec process ID, check if
-        # stripping a prefix yields a pattern process ID
+        # Try with prefix detection
         prefixes = set()
         for spid in spec_process_ids:
             for ppid in pattern_pids:

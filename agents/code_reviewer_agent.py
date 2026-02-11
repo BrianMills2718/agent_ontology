@@ -165,6 +165,35 @@ def _call_gemini(model, system_prompt, user_message, temperature, max_tokens):
     )
     return response.text
 
+
+def call_embedding(texts, model="text-embedding-3-small", provider="openai"):
+    """Generate embeddings for a list of texts. Returns list of float vectors."""
+    if isinstance(texts, str):
+        texts = [texts]
+    if provider == "openai" or model.startswith("text-embedding"):
+        from openai import OpenAI
+        client = OpenAI()
+        response = client.embeddings.create(model=model, input=texts)
+        return [item.embedding for item in response.data]
+    elif provider == "google" or model.startswith("models/"):
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        result = client.models.embed_content(model=model or "models/text-embedding-004", contents=texts)
+        return result.embeddings
+    elif provider == "huggingface" or provider == "local":
+        try:
+            from sentence_transformers import SentenceTransformer
+            _emb_model = SentenceTransformer(model or "all-MiniLM-L6-v2")
+            return _emb_model.encode(texts).tolist()
+        except ImportError:
+            print("    [WARN] sentence-transformers not installed, returning empty embeddings")
+            return [[] for _ in texts]
+    else:
+        from openai import OpenAI
+        client = OpenAI()
+        response = client.embeddings.create(model=model, input=texts)
+        return [item.embedding for item in response.data]
+
 # ═══════════════════════════════════════════════════════════
 # Schema Registry
 # ═══════════════════════════════════════════════════════════

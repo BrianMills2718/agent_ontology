@@ -285,6 +285,85 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
     return round(score, 1), test_result
 
 
+def benchmark_candidate(spec, benchmark_suite="gsm8k", benchmark_examples=5,
+                        timeout_sec=120, base_agent_type=None, verbose=False):
+    """End-to-end benchmark evaluation of a spec dict.
+
+    Takes a spec dict → validates → instantiates → benchmarks → returns results.
+    Designed to be called from both evolve() and self_improver/design pipelines.
+
+    Returns dict with:
+        ok: bool, fitness: float, score_em: float, score_f1: float,
+        llm_calls: int, duration_ms: int, status: str, error: str|None
+    """
+    import yaml
+
+    result = {
+        "ok": False, "fitness": 0.0, "score_em": 0.0, "score_f1": 0.0,
+        "llm_calls": 0, "duration_ms": 0, "status": "unknown", "error": None,
+    }
+
+    work_dir = tempfile.mkdtemp(prefix="bench_candidate_")
+    try:
+        # Write spec to temp file
+        spec_name = spec.get("name", "candidate").lower().replace(" ", "_")
+        spec_path = os.path.join(work_dir, f"{spec_name}.yaml")
+        with open(spec_path, "w") as f:
+            yaml.dump(spec, f, default_flow_style=False)
+
+        # Validate
+        ok, output = validate_spec_file(spec_path)
+        if not ok:
+            result["status"] = "INVALID"
+            result["error"] = output[:500]
+            return result
+
+        # Instantiate
+        agent_path = os.path.join(work_dir, f"{spec_name}_agent.py")
+        ok = instantiate_spec(spec_path, agent_path)
+        if not ok:
+            result["status"] = "GEN_FAIL"
+            result["error"] = "Code generation failed"
+            return result
+
+        # Add to import path
+        if work_dir not in sys.path:
+            sys.path.insert(0, work_dir)
+
+        # Run benchmark
+        module_name = f"{spec_name}_agent"
+        agent_type = base_agent_type or spec_name
+        fitness, test_result = compute_fitness_benchmark(
+            module_name, benchmark_suite, benchmark_examples,
+            timeout_sec=timeout_sec, base_agent_type=agent_type,
+        )
+
+        result["ok"] = fitness > 0
+        result["fitness"] = fitness
+        result["score_em"] = test_result.get("score_em", 0.0)
+        result["score_f1"] = test_result.get("score_f1", 0.0)
+        result["llm_calls"] = test_result.get("llm_calls", 0)
+        result["duration_ms"] = test_result.get("duration_ms", 0)
+        result["status"] = test_result.get("status", "unknown")
+
+        if verbose:
+            print(f"  Benchmark result: fitness={fitness:.1f}, "
+                  f"EM={result['score_em']:.3f}, F1={result['score_f1']:.3f}, "
+                  f"calls={result['llm_calls']}, status={result['status']}")
+
+    except Exception as e:
+        result["status"] = "ERROR"
+        result["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        # Cleanup
+        if work_dir in sys.path:
+            sys.path.remove(work_dir)
+        import shutil
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    return result
+
+
 def _format_benchmark_input(agent_type, example, dataset_name):
     """Format a benchmark example into agent input.
 

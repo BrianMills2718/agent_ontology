@@ -17,7 +17,8 @@
     "schemas":     { "type": "array", "items": { "$ref": "#/$defs/schema_definition" } },
     "metadata":    { "type": "object" },
     "state":       { "$ref": "#/$defs/state_config" },
-    "checkpointing": { "$ref": "#/$defs/checkpointing_config" }
+    "checkpointing": { "$ref": "#/$defs/checkpointing_config" },
+    "contracts":   { "$ref": "#/$defs/contracts_config" }
   },
 
   "$defs": {
@@ -27,7 +28,7 @@
       "required": ["id", "type", "label"],
       "properties": {
         "id":    { "type": "string" },
-        "type":  { "enum": ["agent", "store", "tool", "human", "config", "channel", "team", "conversation"] },
+        "type":  { "enum": ["agent", "store", "tool", "human", "config", "channel", "team", "conversation", "world_model"] },
         "label": { "type": "string" }
       },
       "allOf": [
@@ -62,6 +63,10 @@
         {
           "if": { "properties": { "type": { "const": "conversation" } } },
           "then": { "$ref": "#/$defs/entity_conversation" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "world_model" } } },
+          "then": { "$ref": "#/$defs/entity_world_model" }
         }
       ]
     },
@@ -92,12 +97,23 @@
         "id":         { "type": "string" },
         "type":       { "const": "store" },
         "label":      { "type": "string" },
-        "store_type":   { "enum": ["vector", "file", "kv", "queue", "relational", "blackboard"] },
+        "store_type":   { "enum": ["vector", "file", "kv", "queue", "relational", "blackboard", "knowledge_graph", "ontology", "logic_program", "pddl_domain"] },
         "schema":       { "type": "string" },
         "description":  { "type": "string" },
         "retention":    { "enum": ["ephemeral", "session", "persistent"], "default": "persistent" },
         "access":       { "enum": ["read", "write", "readwrite"], "default": "readwrite" },
-        "config":       { "type": "object" }
+        "config":       { "type": "object" },
+        "reasoner":     { "enum": ["z3", "hermit", "pellet", "clingo", "fast_downward", "prolog", "none"] },
+        "formalism":    { "enum": ["owl", "fol", "description_logic", "horn_clauses", "datalog", "sparql", "cypher", "pddl", "none"] },
+        "embedding_config": {
+          "type": "object",
+          "properties": {
+            "model":      { "type": "string", "description": "Embedding model identifier (e.g. text-embedding-3-small)" },
+            "provider":   { "enum": ["openai", "google", "huggingface", "local"], "default": "openai" },
+            "dimensions": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -192,12 +208,30 @@
       "additionalProperties": false
     },
 
+    "entity_world_model": {
+      "type": "object",
+      "required": ["model_type"],
+      "properties": {
+        "id":                  { "type": "string" },
+        "type":                { "const": "world_model" },
+        "label":               { "type": "string" },
+        "description":         { "type": "string" },
+        "model_type":          { "enum": ["llm_simulated", "learned", "hand_coded", "physics_engine"] },
+        "state_schema":        { "type": "string", "description": "Schema for world states" },
+        "action_schema":       { "type": "string", "description": "Schema for actions" },
+        "transition_function": { "type": "string", "description": "Reference to transition function T(s'|s,a)" },
+        "reward_function":     { "type": "string", "description": "Reference to reward function R(s,a,s')" },
+        "deterministic":       { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+
     "process": {
       "type": "object",
       "required": ["id", "type", "label"],
       "properties": {
         "id":    { "type": "string" },
-        "type":  { "enum": ["step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler"] },
+        "type":  { "enum": ["step", "gate", "checkpoint", "spawn", "protocol", "policy", "error_handler", "symbolic_inference", "formal_translation", "search"] },
         "label": { "type": "string" }
       },
       "allOf": [
@@ -228,6 +262,18 @@
         {
           "if": { "properties": { "type": { "const": "error_handler" } } },
           "then": { "$ref": "#/$defs/process_error_handler" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "symbolic_inference" } } },
+          "then": { "$ref": "#/$defs/process_symbolic_inference" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "formal_translation" } } },
+          "then": { "$ref": "#/$defs/process_formal_translation" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "search" } } },
+          "then": { "$ref": "#/$defs/process_search" }
         }
       ]
     },
@@ -235,15 +281,17 @@
     "process_step": {
       "type": "object",
       "properties": {
-        "id":          { "type": "string" },
-        "type":        { "const": "step" },
-        "label":       { "type": "string" },
-        "description": { "type": "string" },
-        "logic":       { "type": "string", "description": "Inline Python logic block" },
-        "data_in":     { "type": "string", "description": "Input schema name" },
-        "data_out":    { "type": "string", "description": "Output schema name" },
-        "timeout":     { "oneOf": [{ "type": "string" }, { "type": "integer" }], "description": "Max execution time (e.g. '30s', '5m', or seconds as integer)" },
-        "on_error":    { "enum": ["fail", "skip", "retry", "fallback"], "default": "fail" }
+        "id":             { "type": "string" },
+        "type":           { "const": "step" },
+        "label":          { "type": "string" },
+        "description":    { "type": "string" },
+        "logic":          { "type": "string", "description": "Inline Python logic block" },
+        "data_in":        { "type": "string", "description": "Input schema name" },
+        "data_out":       { "type": "string", "description": "Output schema name" },
+        "timeout":        { "oneOf": [{ "type": "string" }, { "type": "integer" }], "description": "Max execution time (e.g. '30s', '5m', or seconds as integer)" },
+        "on_error":       { "enum": ["fail", "skip", "retry", "fallback"], "default": "fail" },
+        "precondition":   { "type": "string", "description": "Condition that must hold before execution" },
+        "postcondition":  { "type": "string", "description": "Condition that must hold after execution" }
       },
       "additionalProperties": false
     },
@@ -377,6 +425,67 @@
       "additionalProperties": false
     },
 
+    "process_symbolic_inference": {
+      "type": "object",
+      "required": ["engine", "formalism"],
+      "properties": {
+        "id":            { "type": "string" },
+        "type":          { "const": "symbolic_inference" },
+        "label":         { "type": "string" },
+        "description":   { "type": "string" },
+        "engine":        { "enum": ["z3", "clingo", "fast_downward", "prolog", "hermit", "pellet", "owlready", "custom"] },
+        "formalism":     { "enum": ["sat", "smt", "asp", "pddl", "horn_clauses", "description_logic", "fol", "datalog", "custom"] },
+        "query":         { "type": "string", "description": "Inference query in engine's syntax or template" },
+        "timeout":       { "oneOf": [{ "type": "string" }, { "type": "integer" }] },
+        "fallback":      { "type": "string", "description": "Process ID to route to on failure/timeout" },
+        "deterministic": { "type": "boolean", "default": true },
+        "data_in":       { "type": "string" },
+        "data_out":      { "type": "string" },
+        "logic":         { "type": "string", "description": "Setup/pre-processing logic before inference" }
+      },
+      "additionalProperties": false
+    },
+
+    "process_formal_translation": {
+      "type": "object",
+      "required": ["source_formalism", "target_formalism"],
+      "properties": {
+        "id":               { "type": "string" },
+        "type":             { "const": "formal_translation" },
+        "label":            { "type": "string" },
+        "description":      { "type": "string" },
+        "source_formalism": { "enum": ["natural_language", "owl", "fol", "pddl", "sparql", "cypher", "python", "smtlib", "asp", "datalog", "custom"] },
+        "target_formalism": { "enum": ["natural_language", "owl", "fol", "pddl", "sparql", "cypher", "python", "smtlib", "asp", "datalog", "custom"] },
+        "translator":       { "enum": ["llm", "rule_based", "hybrid"], "default": "llm" },
+        "data_in":          { "type": "string" },
+        "data_out":         { "type": "string" },
+        "validation":       { "type": "boolean", "default": false, "description": "Whether to validate translated output" },
+        "logic":            { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "process_search": {
+      "type": "object",
+      "required": ["algorithm"],
+      "properties": {
+        "id":                  { "type": "string" },
+        "type":                { "const": "search" },
+        "label":               { "type": "string" },
+        "description":         { "type": "string" },
+        "algorithm":           { "enum": ["mcts", "beam_search", "best_first", "a_star", "iterative_deepening", "genetic", "random_sampling"] },
+        "evaluation_function": { "type": "string", "description": "Process or agent ID that evaluates candidate states" },
+        "max_iterations":      { "type": "integer", "minimum": 1 },
+        "branching_factor":    { "type": "integer", "minimum": 1 },
+        "beam_width":          { "type": "integer", "minimum": 1 },
+        "exploration_weight":  { "type": "number" },
+        "data_in":             { "type": "string" },
+        "data_out":            { "type": "string" },
+        "logic":               { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
     "retry_config": {
       "type": "object",
       "properties": {
@@ -393,7 +502,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff"] }
+        "type": { "enum": ["flow", "invoke", "loop", "branch", "read", "write", "modify", "observe", "error", "publish", "subscribe", "handoff", "verify"] }
       },
       "allOf": [
         {
@@ -443,6 +552,10 @@
         {
           "if": { "properties": { "type": { "const": "handoff" } } },
           "then": { "$ref": "#/$defs/edge_handoff" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "verify" } } },
+          "then": { "$ref": "#/$defs/edge_verify" }
         }
       ]
     },
@@ -618,6 +731,21 @@
       "additionalProperties": false
     },
 
+    "edge_verify": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "type":     { "const": "verify" },
+        "from":     { "type": "string", "description": "Constraint source (store or inline)" },
+        "to":       { "type": "string", "description": "Process being verified" },
+        "label":    { "type": "string" },
+        "phase":    { "enum": ["precondition", "postcondition", "invariant"], "default": "precondition" },
+        "on_fail":  { "enum": ["block", "warn", "log", "fallback"], "default": "block" },
+        "fallback": { "type": "string", "description": "Where to route on verification failure" }
+      },
+      "additionalProperties": false
+    },
+
     "schema_definition": {
       "type": "object",
       "required": ["name", "fields"],
@@ -742,6 +870,17 @@
         "strategy":    { "enum": ["every_step", "every_gate", "on_error", "manual"], "default": "every_step" },
         "storage":     { "enum": ["memory", "file", "database"], "default": "memory" },
         "time_travel": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+
+    "contracts_config": {
+      "type": "object",
+      "properties": {
+        "invariants":     { "type": "array", "items": { "type": "string" }, "description": "Conditions that must hold at every step boundary" },
+        "preconditions":  { "type": "array", "items": { "type": "string" }, "description": "Conditions before spec execution begins" },
+        "postconditions": { "type": "array", "items": { "type": "string" }, "description": "Conditions when spec execution completes" },
+        "formalism":      { "enum": ["natural_language", "fol", "python", "smtlib", "custom"], "default": "natural_language" }
       },
       "additionalProperties": false
     }

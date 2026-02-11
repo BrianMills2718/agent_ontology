@@ -236,9 +236,44 @@ class Recommendation:
         self.benchmark_info = benchmark_info
 
 
+def _get_knowledge_store_data(benchmark: str | None = None) -> dict[str, Any]:
+    """Query the knowledge store for evidence-backed pattern performance data."""
+    try:
+        from .knowledge_store import KnowledgeStore
+        store = KnowledgeStore()
+        data: dict[str, Any] = {}
+
+        # Best genotypes per benchmark
+        for suite in (["gsm8k", "hotpotqa", "arc", "humaneval"] if not benchmark else [benchmark]):
+            best = store.best_genotypes(suite, limit=10)
+            if best:
+                data.setdefault("best_by_benchmark", {})[suite] = best
+
+        # Pattern performance across benchmarks
+        for suite in (["gsm8k", "hotpotqa", "arc", "humaneval"] if not benchmark else [benchmark]):
+            perf = store.pattern_performance(suite)
+            if perf:
+                data.setdefault("pattern_performance", {})[suite] = perf
+
+        # Mutation effectiveness
+        mut_eff = store.mutation_effectiveness()[:10]
+        if mut_eff:
+            data["mutation_effectiveness"] = mut_eff
+
+        store.close()
+        return data
+    except Exception:
+        return {}
+
+
 def recommend(task_description: str, specs_dir: str | None = None,
-              top_n: int = 3, verbose: bool = False) -> list[Recommendation]:
-    """Generate architecture recommendations for a task description."""
+              top_n: int = 3, verbose: bool = False,
+              use_knowledge_store: bool = True) -> list[Recommendation]:
+    """Generate architecture recommendations for a task description.
+
+    If use_knowledge_store=True and a knowledge store exists, recommendations
+    are boosted by actual benchmark performance data from evolution runs.
+    """
     # Score patterns by task match
     pattern_scores = _match_task_to_patterns(task_description)
 
@@ -250,6 +285,49 @@ def recommend(task_description: str, specs_dir: str | None = None,
     if specs_dir is None:
         specs_dir = os.path.join(SCRIPT_DIR, "specs")
     catalog = _load_spec_catalog(specs_dir)
+
+    # Query knowledge store for evidence
+    knowledge_data: dict[str, Any] = {}
+    if use_knowledge_store:
+        # Determine relevant benchmarks from task keywords
+        task_lower = task_description.lower()
+        relevant_benchmark = None
+        if any(kw in task_lower for kw in ["math", "arithmetic", "calculation"]):
+            relevant_benchmark = "gsm8k"
+        elif any(kw in task_lower for kw in ["question", "qa", "knowledge", "multi-hop"]):
+            relevant_benchmark = "hotpotqa"
+        elif any(kw in task_lower for kw in ["code", "programming"]):
+            relevant_benchmark = "humaneval"
+        elif any(kw in task_lower for kw in ["science", "multiple choice"]):
+            relevant_benchmark = "arc"
+        knowledge_data = _get_knowledge_store_data(relevant_benchmark)
+
+    # Build evidence-backed pattern scores from knowledge store
+    ks_pattern_scores: dict[str, float] = {}
+    ks_spec_scores: dict[str, tuple[float, str]] = {}
+
+    for suite, perf_list in knowledge_data.get("pattern_performance", {}).items():
+        for perf in perf_list:
+            patterns_str = perf.get("detected_patterns", "")
+            avg_fitness = perf.get("avg_fitness", 0)
+            if patterns_str and avg_fitness > 0:
+                for pat in patterns_str.split(","):
+                    pat = pat.strip().lower().replace(" ", "_")
+                    if pat:
+                        ks_pattern_scores[pat] = max(ks_pattern_scores.get(pat, 0), avg_fitness / 100.0)
+
+    for suite, best_list in knowledge_data.get("best_by_benchmark", {}).items():
+        for entry in best_list:
+            spec_name = entry.get("spec_name", "")
+            fitness = entry.get("fitness", 0)
+            patterns = entry.get("detected_patterns", "")
+            # Extract base spec name (strip gen prefixes)
+            base = spec_name.split("_mut")[0].split("_llm")[0].split("_cx")[0]
+            base = re.sub(r"^gen\d+_", "", base)
+            if base and fitness > 0:
+                prev_fitness, prev_info = ks_spec_scores.get(base, (0, ""))
+                if fitness > prev_fitness:
+                    ks_spec_scores[base] = (fitness, f"{suite}: fitness={fitness:.1f}")
 
     # Detect patterns using combined OWL structural + ID-based methods
     owl_patterns: dict[str, list[str]] = {}
@@ -292,10 +370,16 @@ def recommend(task_description: str, specs_dir: str | None = None,
                 matched_patterns.append(pattern)
                 reasons.append(f"matches '{pattern}' pattern")
 
+            # Evidence boost from knowledge store
+            if pattern_key in ks_pattern_scores:
+                boost = ks_pattern_scores[pattern_key]
+                spec_score += boost
+                reasons.append(f"'{pattern}' scored {boost:.1f} in evolution")
+
         if not matched_patterns:
             continue
 
-        # Benchmark bonus
+        # Benchmark bonus from hardcoded results
         benchmark_info = ""
         if spec_name in BENCHMARK_RESULTS:
             for dataset, results in BENCHMARK_RESULTS[spec_name].items():
@@ -308,6 +392,13 @@ def recommend(task_description: str, specs_dir: str | None = None,
                     f1 = results.get("f1", 0)
                     spec_score += f1 * 2.0
                     benchmark_info += f"HotpotQA F1={f1:.1%} "
+
+        # Evidence bonus from knowledge store (spec-level)
+        if spec_name in ks_spec_scores:
+            ks_fitness, ks_info = ks_spec_scores[spec_name]
+            spec_score += ks_fitness / 50.0  # normalize to comparable range
+            benchmark_info += f"[KS: {ks_info}] "
+            reasons.append(f"knowledge store: {ks_info}")
 
         complexity = _get_spec_complexity(spec)
         reasoning = "; ".join(reasons)
