@@ -22,6 +22,7 @@ import copy
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -361,35 +362,52 @@ FLASH_MODEL = os.environ.get("AGENT_ONTOLOGY_FLASH_MODEL", "gemini-3-flash-previ
 ANALYST_MODEL = os.environ.get("AGENT_ONTOLOGY_ANALYST_MODEL", "gpt-5-mini")
 
 MUTATION_SYSTEM_PROMPT = """\
-You are an agent architecture mutation engine. You receive a YAML agent spec and context
-about its performance, then produce a MUTATED version of the spec.
+You are an agent architecture mutation engine. You receive an agent spec and context
+about its performance, then propose a SINGLE structural mutation as a JSON instruction.
+
+Your output must be valid JSON with exactly ONE of these mutation types:
+
+1. Add a process:
+{"action": "add_process", "process": {"id": "verify_answer", "type": "step", "label": "Verify Answer", "description": "Check the answer against known constraints"}, "add_edges": [{"type": "flow", "from": "generate", "to": "verify_answer"}, {"type": "flow", "from": "verify_answer", "to": "emit_answer"}], "remove_edges": [{"type": "flow", "from": "generate", "to": "emit_answer"}], "description": "Add verification step between generate and emit"}
+
+2. Remove a process:
+{"action": "remove_process", "process_id": "unnecessary_step", "rewire": {"from": "step_before", "to": "step_after"}, "description": "Remove redundant step, connect its neighbors"}
+
+3. Modify a gate condition:
+{"action": "modify_gate", "process_id": "quality_gate", "new_condition": "score >= 8", "description": "Raise quality threshold from 7 to 8"}
+
+4. Add an entity (agent, tool, store):
+{"action": "add_entity", "entity": {"id": "verifier", "type": "agent", "label": "Verifier", "model": "gemini-3-flash-preview", "system_prompt": "You verify answers for correctness.", "input_schema": "VerifyInput", "output_schema": "VerifyOutput"}, "add_schemas": [{"name": "VerifyInput", "fields": [{"name": "answer", "type": "string"}, {"name": "question", "type": "string"}]}, {"name": "VerifyOutput", "fields": [{"name": "is_correct", "type": "boolean"}, {"name": "feedback", "type": "string"}]}], "description": "Add verifier agent"}
+
+5. Add an edge:
+{"action": "add_edge", "edge": {"type": "invoke", "from": "verify_step", "to": "verifier", "input": "VerifyInput", "output": "VerifyOutput"}, "description": "Wire verify step to verifier agent"}
+
+6. Modify process logic:
+{"action": "modify_logic", "process_id": "receive_task", "append_logic": "state.data['max_rounds'] = 5", "description": "Increase max refinement rounds"}
 
 Rules:
-- Output ONLY the complete mutated YAML spec (no explanation, no markdown fences)
-- Make exactly ONE structural change (add/remove/modify a process, edge, gate condition, or schema)
-- Keep the spec valid: every process referenced in edges must exist, entry_point must exist,
-  every gate must have branches, every invoke edge needs input/output schemas
-- Preserve the name field but append a short suffix describing your change
-- Do NOT change the model fields on entities
-- Focus on architecture changes that could improve benchmark performance
-
-Common effective mutations:
-- Add a review/critique step after generation (improves quality)
-- Add a retrieval step before reasoning (adds knowledge)
-- Change gate conditions to be more/less strict
-- Add a reflection loop (retry with self-evaluation)
-- Simplify by removing unnecessary intermediate steps
-- Add parallel execution paths (fan-out + aggregation)
+- Output ONLY valid JSON, no explanation or markdown fences
+- Make exactly ONE mutation (you can add multiple edges to support it)
+- Ensure all process IDs referenced in edges exist in the spec
+- Do NOT change model fields
+- Focus on changes that could improve benchmark performance
+- Keep all string values on a single line (no literal newlines inside strings)
+- Your entire response must be a single JSON object starting with { and ending with }
 """
 
 MUTATION_USER_TEMPLATE = """\
-## Parent Spec
-```yaml
-{spec_yaml}
-```
+## Spec Summary
+Name: {spec_name}
+Entry point: {entry_point}
+Entities ({entity_count}): {entity_ids}
+Processes ({process_count}): {process_ids}
+Edges ({edge_count}): {edge_summary}
+Detected patterns: {patterns}
+
+## Process Details
+{process_details}
 
 ## Context
-- Detected patterns: {patterns}
 - Lint warnings: {lint_warnings}
 - Verify issues: {verify_issues}
 {benchmark_context}
@@ -397,8 +415,8 @@ MUTATION_USER_TEMPLATE = """\
 {knowledge_context}
 
 ## Task
-Produce a mutated version of this spec that addresses the issues above and could score higher
-on the benchmark. Output ONLY the complete YAML spec.
+Propose ONE structural mutation as JSON that could improve this agent's benchmark performance.
+Output ONLY the JSON instruction.
 """
 
 ANALYSIS_SYSTEM_PROMPT = """\
@@ -480,18 +498,261 @@ def _get_knowledge_context(store, benchmark, limit=5):
     return "\n".join(lines) if lines else "No prior data."
 
 
+def _summarize_spec(spec):
+    """Create a concise summary of a spec for the LLM prompt."""
+    entities = spec.get("entities", [])
+    processes = spec.get("processes", [])
+    edges = spec.get("edges", [])
+
+    entity_ids = ", ".join(f"{e['id']}({e.get('type','')})" for e in entities)
+    process_ids = ", ".join(f"{p['id']}({p.get('type','')})" for p in processes)
+
+    # Summarize edges by type
+    edge_counts = {}
+    for e in edges:
+        t = e.get("type", "?")
+        edge_counts[t] = edge_counts.get(t, 0) + 1
+    edge_summary = ", ".join(f"{c}x {t}" for t, c in sorted(edge_counts.items()))
+
+    # Process details (id, type, label, key fields)
+    proc_lines = []
+    for p in processes:
+        parts = [f"  - {p['id']} (type={p.get('type','step')})"]
+        if p.get("label"):
+            parts.append(f"label=\"{p['label']}\"")
+        if p.get("condition"):
+            parts.append(f"condition=\"{p['condition']}\"")
+        if p.get("branches"):
+            targets = [b.get("target", "?") for b in p["branches"]]
+            parts.append(f"branches→{','.join(targets)}")
+        if p.get("data_in"):
+            parts.append(f"in={p['data_in']}")
+        if p.get("data_out"):
+            parts.append(f"out={p['data_out']}")
+        proc_lines.append(" ".join(parts))
+
+    return {
+        "spec_name": spec.get("name", "?"),
+        "entry_point": spec.get("entry_point", "?"),
+        "entity_count": len(entities),
+        "entity_ids": entity_ids,
+        "process_count": len(processes),
+        "process_ids": process_ids,
+        "edge_count": len(edges),
+        "edge_summary": edge_summary,
+        "process_details": "\n".join(proc_lines),
+    }
+
+
+def _apply_mutation_instruction(spec, instruction):
+    """Apply a structured mutation instruction (JSON dict) to a spec.
+
+    Returns (mutated_spec, description).
+    """
+    result = copy.deepcopy(spec)
+    action = instruction.get("action", "")
+    desc = instruction.get("description", action)
+
+    if action == "add_process":
+        new_proc = instruction["process"]
+        result.setdefault("processes", []).append(new_proc)
+        for edge in instruction.get("add_edges", []):
+            result.setdefault("edges", []).append(edge)
+        for edge_spec in instruction.get("remove_edges", []):
+            result["edges"] = [
+                e for e in result.get("edges", [])
+                if not (e.get("type") == edge_spec.get("type") and
+                        e.get("from") == edge_spec.get("from") and
+                        e.get("to") == edge_spec.get("to"))
+            ]
+
+    elif action == "remove_process":
+        pid = instruction["process_id"]
+        result["processes"] = [p for p in result.get("processes", []) if p["id"] != pid]
+        # Remove edges referencing the removed process
+        result["edges"] = [
+            e for e in result.get("edges", [])
+            if e.get("from") != pid and e.get("to") != pid
+        ]
+        # Add rewire edge if specified
+        rewire = instruction.get("rewire")
+        if rewire:
+            result["edges"].append({
+                "type": "flow",
+                "from": rewire["from"],
+                "to": rewire["to"],
+                "label": f"rewired (was through {pid})",
+            })
+
+    elif action == "modify_gate":
+        pid = instruction["process_id"]
+        for proc in result.get("processes", []):
+            if proc["id"] == pid:
+                if "new_condition" in instruction:
+                    proc["condition"] = instruction["new_condition"]
+                if "new_branches" in instruction:
+                    proc["branches"] = instruction["new_branches"]
+                break
+
+    elif action == "add_entity":
+        new_entity = instruction["entity"]
+        result.setdefault("entities", []).append(new_entity)
+        for schema in instruction.get("add_schemas", []):
+            result.setdefault("schemas", []).append(schema)
+
+    elif action == "add_edge":
+        result.setdefault("edges", []).append(instruction["edge"])
+
+    elif action == "modify_logic":
+        pid = instruction["process_id"]
+        for proc in result.get("processes", []):
+            if proc["id"] == pid:
+                if "append_logic" in instruction:
+                    existing = proc.get("logic", "")
+                    proc["logic"] = existing + "\n" + instruction["append_logic"]
+                if "replace_logic" in instruction:
+                    proc["logic"] = instruction["replace_logic"]
+                break
+
+    else:
+        raise ValueError(f"Unknown mutation action: {action}")
+
+    # Update spec name
+    result["name"] = result.get("name", "Agent") + " (mutated)"
+
+    return result, f"llm: {desc}"
+
+
+def _extract_json(text):
+    """Robustly extract a JSON object from LLM output.
+
+    Handles: markdown fences, leading/trailing text, literal newlines
+    in string values, and truncated output.
+    """
+    # Strip markdown fences
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+
+    # Try direct parse first (fast path)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Find the outermost {...} using brace counting
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+
+    depth = 0
+    in_string = False
+    escape = False
+    end = len(text)  # default: take everything from start
+    matched = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                matched = True
+                break
+
+    candidate = text[start:end]
+
+    # Try parsing the extracted object
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # Replace literal newlines inside string values with \\n
+    # Walk through char-by-char, tracking whether we're in a string
+    sanitized = []
+    in_str = False
+    esc = False
+    for c in candidate:
+        if esc:
+            sanitized.append(c)
+            esc = False
+            continue
+        if c == "\\":
+            sanitized.append(c)
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            sanitized.append(c)
+            continue
+        if in_str and c == "\n":
+            sanitized.append("\\n")
+            continue
+        if in_str and c == "\t":
+            sanitized.append("\\t")
+            continue
+        sanitized.append(c)
+    sanitized_text = "".join(sanitized)
+
+    try:
+        return json.loads(sanitized_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: try to close truncated JSON
+    if not matched and depth > 0:
+        # Close any open string, then close braces
+        suffix = ""
+        if in_string:
+            suffix += '"'
+        # Close any open arrays we might be inside
+        open_brackets = sanitized_text.count("[") - sanitized_text.count("]")
+        if open_brackets > 0:
+            suffix += "]" * open_brackets
+        suffix += "}" * depth
+        try:
+            return json.loads(sanitized_text + suffix)
+        except json.JSONDecodeError:
+            pass
+
+    raise json.JSONDecodeError(
+        f"Could not extract valid JSON (depth={depth})", candidate[:200], 0
+    )
+
+
 def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
                benchmark_results=None, previous_analysis=None,
                knowledge_store=None, model=None, verbose=False):
     """Generate a mutation using an LLM (Flash model).
 
-    Returns (mutated_spec_dict, mutation_description) or raises on failure.
+    Flash outputs a JSON mutation instruction, which is applied programmatically
+    to the parent spec. This avoids the YAML generation reliability problem.
+
+    Returns (mutated_spec_dict, mutation_description, yaml_text) or raises on failure.
     """
     import yaml
-    from .specgen import call_llm, extract_yaml
+    from .specgen import call_llm
 
     model = model or FLASH_MODEL
     patterns = _detect_pattern_names(parent_spec)
+    summary = _summarize_spec(parent_spec)
 
     # Build context
     benchmark_ctx = ""
@@ -510,8 +771,16 @@ def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
     knowledge_ctx = _get_knowledge_context(knowledge_store, benchmark_suite)
 
     user_prompt = MUTATION_USER_TEMPLATE.format(
-        spec_yaml=parent_yaml[:3000],  # truncate very large specs
+        spec_name=summary["spec_name"],
+        entry_point=summary["entry_point"],
+        entity_count=summary["entity_count"],
+        entity_ids=summary["entity_ids"],
+        process_count=summary["process_count"],
+        process_ids=summary["process_ids"],
+        edge_count=summary["edge_count"],
+        edge_summary=summary["edge_summary"],
         patterns=", ".join(patterns) if patterns else "none detected",
+        process_details=summary["process_details"],
         lint_warnings=_get_lint_warnings(parent_spec),
         verify_issues=_get_verify_issues(parent_spec),
         benchmark_context=benchmark_ctx,
@@ -522,51 +791,35 @@ def llm_mutate(parent_spec, parent_yaml, benchmark_suite=None,
     if verbose:
         print(f"    [Flash] Generating mutation with {model}...")
 
-    # Retry up to 2 times with error feedback
+    # Retry up to 3 times with error feedback
     last_error = None
-    for attempt in range(2):
+    for attempt in range(3):
         prompt = user_prompt
         if last_error and attempt > 0:
-            prompt += f"\n\n## IMPORTANT: Your previous attempt failed with this error:\n{last_error}\nPlease fix the issue and output ONLY valid YAML."
+            prompt += f"\n\n## IMPORTANT: Your previous attempt failed:\n{last_error}\nPlease output ONLY valid JSON."
 
         response = call_llm(model, MUTATION_SYSTEM_PROMPT, prompt,
-                             temperature=0.7, max_tokens=8192)
-        yaml_text = extract_yaml(response)
+                             temperature=0.7, max_tokens=2048)
 
         try:
-            mutated_spec = yaml.safe_load(yaml_text)
-            if isinstance(mutated_spec, dict) and "processes" in mutated_spec:
-                break
-            last_error = "Output is a dict but missing 'processes' key. Include ALL sections: entities, processes, edges, schemas."
-        except yaml.YAMLError as e:
-            last_error = f"YAML parse error: {e}"
+            instruction = _extract_json(response)
+        except json.JSONDecodeError as e:
+            last_error = f"JSON parse error: {e}. Output ONLY valid JSON, no explanations."
             continue
-    else:
-        raise ValueError(last_error or "LLM output is not a valid spec dict")
 
-    # Compute a description of what changed
-    orig_procs = {p["id"] for p in parent_spec.get("processes", [])}
-    new_procs = {p["id"] for p in mutated_spec.get("processes", [])}
-    added = new_procs - orig_procs
-    removed = orig_procs - new_procs
+        if not isinstance(instruction, dict) or "action" not in instruction:
+            last_error = "Missing 'action' field. Must be one of: add_process, remove_process, modify_gate, add_entity, add_edge, modify_logic"
+            continue
 
-    desc_parts = []
-    if added:
-        desc_parts.append(f"added {', '.join(sorted(added))}")
-    if removed:
-        desc_parts.append(f"removed {', '.join(sorted(removed))}")
-    if not desc_parts:
-        # Check edge count changes
-        orig_edges = len(parent_spec.get("edges", []))
-        new_edges = len(mutated_spec.get("edges", []))
-        if new_edges != orig_edges:
-            desc_parts.append(f"edges {orig_edges}→{new_edges}")
-        else:
-            desc_parts.append("modified structure")
+        try:
+            mutated_spec, mutation_desc = _apply_mutation_instruction(parent_spec, instruction)
+            yaml_text = yaml.dump(mutated_spec, default_flow_style=False)
+            return mutated_spec, mutation_desc, yaml_text
+        except (KeyError, ValueError, TypeError) as e:
+            last_error = f"Failed to apply mutation: {e}"
+            continue
 
-    mutation_desc = "llm: " + "; ".join(desc_parts)
-
-    return mutated_spec, mutation_desc, yaml_text
+    raise ValueError(last_error or "LLM failed to produce a valid mutation instruction")
 
 
 def llm_analyze(generation, gen_results, benchmark_suite=None,
@@ -619,15 +872,7 @@ def llm_analyze(generation, gen_results, benchmark_suite=None,
 
     # Parse JSON response
     try:
-        # Strip markdown fences if present
-        text = response.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines)
-        analysis = json.loads(text)
+        analysis = _extract_json(response)
     except (json.JSONDecodeError, ValueError):
         analysis = {
             "diagnosis": response[:300],
