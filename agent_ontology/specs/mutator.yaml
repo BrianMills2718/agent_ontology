@@ -38,33 +38,6 @@ entities:
     input_schema: DiagnosisInput
     output_schema: DiagnosisOutput
 
-  - id: editor
-    type: agent
-    label: "Spec Editor Agent"
-    model: gemini-3-flash-preview
-    system_prompt: |
-      You are an agent spec editor. You receive:
-      1. A complete agent spec in YAML format
-      2. A diagnosis explaining what's wrong
-      3. Fix details explaining exactly what to change
-
-      Your job: produce an IMPROVED version of the spec YAML that addresses the diagnosis.
-
-      Rules:
-      - Output the COMPLETE spec YAML (not a diff, not a partial spec)
-      - Preserve the overall structure: name, version, description, entry_point, entities, processes, edges, schemas
-      - Make targeted changes based on the fix_details — don't rewrite everything
-      - Keep all entity IDs, process IDs, and schema names consistent with edges
-      - If adding a new process, add the necessary flow edges to connect it
-      - If editing a system_prompt, make surgical changes (add/modify specific instructions)
-      - Do NOT change model fields
-      - Ensure the output is valid YAML
-
-      Output JSON with:
-      - "mutated_spec_yaml": the complete improved spec as a YAML string
-      - "changes_summary": a brief description of what was changed
-    input_schema: EditorInput
-    output_schema: EditorOutput
 
 # ── Processes ────────────────────────────────────────────────
 
@@ -92,11 +65,36 @@ processes:
   - id: apply_mutation
     type: step
     label: "Apply Mutation"
-    description: "Invoke the editor agent to produce an improved spec based on the diagnosis"
+    description: "Call editor LLM directly to produce raw YAML (avoids JSON wrapping)"
     data_in: EditorInput
     data_out: EditorOutput
     logic: |
       print(f"    Applying mutation: {state.data.get('fix_type', 'unknown')} — {state.data.get('fix_details', '')[:80]}...")
+      _sys = (
+          "You are an agent spec editor. You receive a complete agent spec in YAML format, "
+          "a diagnosis explaining what's wrong, and fix details explaining what to change.\n\n"
+          "Your job: output the COMPLETE IMPROVED spec as valid YAML.\n\n"
+          "Rules:\n"
+          "- Output ONLY valid YAML — no JSON wrapping, no markdown fences, no explanation\n"
+          "- Include ALL sections: name, version, description, entry_point, entities, processes, edges, schemas\n"
+          "- Make targeted changes based on the fix_details\n"
+          "- Keep all entity IDs, process IDs, and schema names consistent with edges\n"
+          "- Do NOT change model fields\n"
+          "- Do NOT add comments — just the YAML content\n"
+          "- Start your output with 'name:' on the first line\n\n"
+          "Your ENTIRE response must be a valid YAML document."
+      )
+      _user = (
+          f"## Original Spec\n\n{state.data.get('spec_yaml', '')}\n\n"
+          f"## Diagnosis\n\n{state.data.get('diagnosis', '')}\n\n"
+          f"## Fix Type\n\n{state.data.get('fix_type', '')}\n\n"
+          f"## Fix Details\n\n{state.data.get('fix_details', '')}\n\n"
+          "Output the complete improved spec as valid YAML. Start with 'name:' on the first line."
+      )
+      _resp = call_llm("gemini-3-flash-preview", _sys, _user, temperature=0.3, max_tokens=8192)
+      state.data["mutated_spec_yaml"] = _resp.strip()
+      state.data["changes_summary"] = state.data.get("fix_details", "")
+      print(f"    Editor output: {len(_resp)} chars")
 
   - id: validate_output
     type: step
@@ -106,7 +104,14 @@ processes:
     data_out: ValidationResult
     logic: |
       import yaml as _yaml
+      import re as _re
       spec_text = state.data.get("mutated_spec_yaml", "")
+      # Strip markdown fences if present (editor should output raw YAML)
+      if spec_text:
+          m = _re.search(r'```(?:yaml)?\s*\n(.*?)```', spec_text, _re.DOTALL)
+          if m:
+              spec_text = m.group(1).strip()
+              state.data["mutated_spec_yaml"] = spec_text
       try:
           parsed = _yaml.safe_load(spec_text)
           if not isinstance(parsed, dict):
@@ -162,13 +167,6 @@ edges:
     from: diagnose
     to: apply_mutation
     label: "Pass diagnosis to editor"
-
-  - type: invoke
-    from: apply_mutation
-    to: editor
-    label: "Generate improved spec"
-    input: EditorInput
-    output: EditorOutput
 
   - type: flow
     from: apply_mutation

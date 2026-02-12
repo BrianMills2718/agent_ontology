@@ -89,7 +89,7 @@ def _openrouter_model_id(model):
     return model
 
 
-def _get_chat_model(model, temperature=0.7, max_tokens=4096):
+def _get_chat_model(model, temperature=0.7, max_tokens=8192):
     """Get a LangChain ChatModel instance for the given model name."""
     if _OPENROUTER_API_KEY:
         from langchain_openai import ChatOpenAI
@@ -113,7 +113,7 @@ def _get_chat_model(model, temperature=0.7, max_tokens=4096):
         return ChatOpenAI(model=model, temperature=temperature, max_tokens=max_tokens)
 
 
-def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
+def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=8192, retries=3):
     if _MODEL_OVERRIDE:
         model = _MODEL_OVERRIDE
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -305,7 +305,6 @@ class AgentState(TypedDict, total=False):
     _iteration: int
     _schema_violations: Annotated[int, operator.add]
     answer: Any
-    apply_mutation_result: Any
     benchmark_description: str
     changes_summary: str
     diagnose_result: Any
@@ -352,46 +351,9 @@ Output JSON with:
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Diagnostician Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
-    return result
-
-
-def invoke_editor(user_message, output_schema=None):
-    """Spec Editor Agent"""
-    system = """You are an agent spec editor. You receive:
-1. A complete agent spec in YAML format
-2. A diagnosis explaining what's wrong
-3. Fix details explaining exactly what to change
-
-Your job: produce an IMPROVED version of the spec YAML that addresses the diagnosis.
-
-Rules:
-- Output the COMPLETE spec YAML (not a diff, not a partial spec)
-- Preserve the overall structure: name, version, description, entry_point, entities, processes, edges, schemas
-- Make targeted changes based on the fix_details — don't rewrite everything
-- Keep all entity IDs, process IDs, and schema names consistent with edges
-- If adding a new process, add the necessary flow edges to connect it
-- If editing a system_prompt, make surgical changes (add/modify specific instructions)
-- Do NOT change model fields
-- Ensure the output is valid YAML
-
-Output JSON with:
-- "mutated_spec_yaml": the complete improved spec as a YAML string
-- "changes_summary": a brief description of what was changed
-"""
-    if output_schema:
-        system += output_instruction(output_schema)
-    t0 = time.time()
-    result = call_llm(
-        model="gemini-3-flash-preview",
-        system_prompt=system,
-        user_message=user_message,
-        temperature=0.7,
-        max_tokens=4096,
-    )
-    trace_call("Spec Editor Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -459,37 +421,40 @@ def node_diagnose(state: AgentState) -> dict:
 def node_apply_mutation(state: AgentState) -> dict:
     """
     Apply Mutation
-    Invoke the editor agent to produce an improved spec based on the diagnosis
+    Call editor LLM directly to produce raw YAML (avoids JSON wrapping)
     """
     print(f"  → Apply Mutation")
     updates = {}
 
     # Logic from spec
     print(f"    Applying mutation: {state.get('fix_type', 'unknown')} — {state.get('fix_details', '')[:80]}...")
+    _sys = (
+        "You are an agent spec editor. You receive a complete agent spec in YAML format, "
+        "a diagnosis explaining what's wrong, and fix details explaining what to change.\n\n"
+        "Your job: output the COMPLETE IMPROVED spec as valid YAML.\n\n"
+        "Rules:\n"
+        "- Output ONLY valid YAML — no JSON wrapping, no markdown fences, no explanation\n"
+        "- Include ALL sections: name, version, description, entry_point, entities, processes, edges, schemas\n"
+        "- Make targeted changes based on the fix_details\n"
+        "- Keep all entity IDs, process IDs, and schema names consistent with edges\n"
+        "- Do NOT change model fields\n"
+        "- Do NOT add comments — just the YAML content\n"
+        "- Start your output with 'name:' on the first line\n\n"
+        "Your ENTIRE response must be a valid YAML document."
+    )
+    _user = (
+        f"## Original Spec\n\n{state.get('spec_yaml', '')}\n\n"
+        f"## Diagnosis\n\n{state.get('diagnosis', '')}\n\n"
+        f"## Fix Type\n\n{state.get('fix_type', '')}\n\n"
+        f"## Fix Details\n\n{state.get('fix_details', '')}\n\n"
+        "Output the complete improved spec as valid YAML. Start with 'name:' on the first line."
+    )
+    _resp = call_llm("gemini-3-flash-preview", _sys, _user, temperature=0.3, max_tokens=8192)
+    updates["mutated_spec_yaml"] = _resp.strip()
+    updates["changes_summary"] = state.get("fix_details", "")
+    print(f"    Editor output: {len(_resp)} chars")
     if updates.get("_done") or state.get("_done"):
         return updates
-
-    # Flatten nested dicts
-    _combined = dict(state)
-    _combined.update(updates)
-    for _nested_val in list(_combined.values()):
-        if isinstance(_nested_val, dict):
-            for _nk, _nv in _nested_val.items():
-                if _nk not in _combined:
-                    updates[_nk] = _nv
-
-    # Invoke: Generate improved spec
-    _cur = dict(state)
-    _cur.update(updates)
-    editor_input = build_input(_cur, "EditorInput")
-    editor_msg = json.dumps(editor_input, default=str)
-    editor_raw = invoke_editor(editor_msg, output_schema="EditorOutput")
-    editor_result = parse_response(editor_raw, "EditorOutput")
-    updates["_schema_violations"] = len(validate_output(editor_result, "EditorOutput"))
-    updates.update(editor_result)
-    updates["editor_output"] = editor_result
-    updates["apply_mutation_result"] = editor_result
-    print(f"    ← Spec Editor Agent: {editor_result}")
 
     return updates
 
@@ -504,7 +469,14 @@ def node_validate_output(state: AgentState) -> dict:
 
     # Logic from spec
     import yaml as _yaml
+    import re as _re
     spec_text = state.get("mutated_spec_yaml", "")
+    # Strip markdown fences if present (editor should output raw YAML)
+    if spec_text:
+        m = _re.search(r'```(?:yaml)?\s*\n(.*?)```', spec_text, _re.DOTALL)
+        if m:
+            spec_text = m.group(1).strip()
+            updates["mutated_spec_yaml"] = spec_text
     try:
         parsed = _yaml.safe_load(spec_text)
         if not isinstance(parsed, dict):

@@ -112,7 +112,12 @@ def evaluate_improvement(mutator_output, task):
 
     try:
         # Import benchmark_candidate from evolve (lazy to avoid circular imports)
-        from ..evolve import benchmark_candidate
+        # Try relative import first (when loaded as agent_ontology.benchmarks.meta_eval),
+        # fall back to absolute package import (when loaded from benchmark.py)
+        try:
+            from ..evolve import benchmark_candidate
+        except (ImportError, ValueError):
+            from agent_ontology.evolve import benchmark_candidate
 
         bench_result = benchmark_candidate(
             spec,

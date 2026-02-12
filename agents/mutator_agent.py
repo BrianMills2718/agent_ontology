@@ -105,7 +105,7 @@ def _call_openrouter(model, system_prompt, user_message, temperature, max_tokens
     return response.choices[0].message.content
 
 
-def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
+def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=8192, retries=3):
     if _MODEL_OVERRIDE:
         model = _MODEL_OVERRIDE
     for attempt in range(retries):
@@ -368,46 +368,9 @@ Output JSON with:
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Diagnostician Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
-    return result
-
-
-def invoke_editor(user_message, output_schema=None):
-    """Spec Editor Agent"""
-    system = """You are an agent spec editor. You receive:
-1. A complete agent spec in YAML format
-2. A diagnosis explaining what's wrong
-3. Fix details explaining exactly what to change
-
-Your job: produce an IMPROVED version of the spec YAML that addresses the diagnosis.
-
-Rules:
-- Output the COMPLETE spec YAML (not a diff, not a partial spec)
-- Preserve the overall structure: name, version, description, entry_point, entities, processes, edges, schemas
-- Make targeted changes based on the fix_details — don't rewrite everything
-- Keep all entity IDs, process IDs, and schema names consistent with edges
-- If adding a new process, add the necessary flow edges to connect it
-- If editing a system_prompt, make surgical changes (add/modify specific instructions)
-- Do NOT change model fields
-- Ensure the output is valid YAML
-
-Output JSON with:
-- "mutated_spec_yaml": the complete improved spec as a YAML string
-- "changes_summary": a brief description of what was changed
-"""
-    if output_schema:
-        system += output_instruction(output_schema)
-    t0 = time.time()
-    result = call_llm(
-        model="gemini-3-flash-preview",
-        system_prompt=system,
-        user_message=user_message,
-        temperature=0.7,
-        max_tokens=4096,
-    )
-    trace_call("Spec Editor Agent", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
 
 
@@ -482,33 +445,39 @@ def process_diagnose(state):
 def process_apply_mutation(state):
     """
     Apply Mutation
-    Invoke the editor agent to produce an improved spec based on the diagnosis
+    Call editor LLM directly to produce raw YAML (avoids JSON wrapping)
     """
     print(f"  → Apply Mutation")
 
     # Logic from spec
     print(f"    Applying mutation: {state.data.get('fix_type', 'unknown')} — {state.data.get('fix_details', '')[:80]}...")
+    _sys = (
+        "You are an agent spec editor. You receive a complete agent spec in YAML format, "
+        "a diagnosis explaining what's wrong, and fix details explaining what to change.\n\n"
+        "Your job: output the COMPLETE IMPROVED spec as valid YAML.\n\n"
+        "Rules:\n"
+        "- Output ONLY valid YAML — no JSON wrapping, no markdown fences, no explanation\n"
+        "- Include ALL sections: name, version, description, entry_point, entities, processes, edges, schemas\n"
+        "- Make targeted changes based on the fix_details\n"
+        "- Keep all entity IDs, process IDs, and schema names consistent with edges\n"
+        "- Do NOT change model fields\n"
+        "- Do NOT add comments — just the YAML content\n"
+        "- Start your output with 'name:' on the first line\n\n"
+        "Your ENTIRE response must be a valid YAML document."
+    )
+    _user = (
+        f"## Original Spec\n\n{state.data.get('spec_yaml', '')}\n\n"
+        f"## Diagnosis\n\n{state.data.get('diagnosis', '')}\n\n"
+        f"## Fix Type\n\n{state.data.get('fix_type', '')}\n\n"
+        f"## Fix Details\n\n{state.data.get('fix_details', '')}\n\n"
+        "Output the complete improved spec as valid YAML. Start with 'name:' on the first line."
+    )
+    _resp = call_llm("gemini-3-flash-preview", _sys, _user, temperature=0.3, max_tokens=8192)
+    state.data["mutated_spec_yaml"] = _resp.strip()
+    state.data["changes_summary"] = state.data.get("fix_details", "")
+    print(f"    Editor output: {len(_resp)} chars")
     if state.data.get("_done"):
         return state
-
-    # Flatten nested dicts: promote schema fields to top-level state.data
-    for _nested_val in list(state.data.values()):
-        if isinstance(_nested_val, dict):
-            for _nk, _nv in _nested_val.items():
-                if _nk not in state.data:
-                    state.data[_nk] = _nv
-
-    # Invoke: Generate improved spec
-    editor_input = build_input(state, "EditorInput")
-    editor_msg = json.dumps(editor_input, default=str)
-    editor_raw = invoke_editor(editor_msg, output_schema="EditorOutput")
-    editor_result = parse_response(editor_raw, "EditorOutput")
-    # Validate and merge output fields into state.data
-    state.schema_violations += len(validate_output(editor_result, "EditorOutput"))
-    state.data.update(editor_result)
-    state.data["editor_output"] = editor_result
-    state.data["apply_mutation_result"] = editor_result
-    print(f"    ← Spec Editor Agent: {editor_result}")
 
     return state
 
@@ -522,7 +491,14 @@ def process_validate_output(state):
 
     # Logic from spec
     import yaml as _yaml
+    import re as _re
     spec_text = state.data.get("mutated_spec_yaml", "")
+    # Strip markdown fences if present (editor should output raw YAML)
+    if spec_text:
+        m = _re.search(r'```(?:yaml)?\s*\n(.*?)```', spec_text, _re.DOTALL)
+        if m:
+            spec_text = m.group(1).strip()
+            state.data["mutated_spec_yaml"] = spec_text
     try:
         parsed = _yaml.safe_load(spec_text)
         if not isinstance(parsed, dict):
