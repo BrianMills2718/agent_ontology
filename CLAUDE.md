@@ -52,7 +52,8 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
   - Knowledge store has 75 candidates across 4 benchmarks with mutation effectiveness data
   - `change_model` is highest single-run mutation (216.4), `insert_pattern` consistently worst (avg 37.5, now blacklisted)
   - On MultiDoc (25 cross-reference questions): baseline 72% EM → best evolved 76% EM (modify_prompt)
-  - Progressive disclosure pipeline operational: correctly diagnoses failures but over-corrects on rewrites
+  - On KB-Tool (25 multi-tool questions, fictional data): baseline 88% EM (fitness 161.4) → best evolved 92% EM (fitness 176.2, +9%)
+  - Progressive disclosure pipeline: diagnoses failures from context, prescribes surgical prompt edits. Context-driven (not prescriptive) prompts are critical
 - **Level 3**: KG RAG agent queries real networkx-backed knowledge graph with fictional data
 
 ### Known Weaknesses (and fixes)
@@ -62,8 +63,10 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 4. ~~**Near-saturated accuracy limits evolution**~~ FIXED: Custom multi-doc benchmark has genuine headroom (baseline 72% EM, structured 76% EM, hard questions consistently wrong).
 5. ~~**Freeform prompt rewrite over-corrects**~~ FIXED: Replaced `rewrite_prompt` with `edit_prompt` (surgical find-and-replace). LLM provides `old_text` and `new_text` for targeted edits. Verified working in progressive disclosure pipeline.
 6. **Search stagnation in later generations** — Average fitness declines Gen 1→2→3. Greedy top-K selection narrows to local optima. Needs diversity injection or periodic restarts.
-5. ~~**No error analysis**~~ FIXED: Per-example failure details + failure_summary fed to LLM mutations (Session 24).
-6. **Symbolic types mostly stubs** — `symbolic_inference`, `search`, `world_model` generate placeholder code. Only `knowledge_graph` stores have real runtime (networkx).
+7. ~~**No error analysis**~~ FIXED: Per-example failure details + failure_summary fed to LLM mutations (Session 24).
+8. ~~**Prescriptive mutation prompts**~~ FIXED (Session 26): Removed "Key insights" prescriptive guidance from mutation selection prompt. Now context-driven: provides goal + failure data, lets LLM reason about what to fix. Base spec pre-evaluated before gen 1 so failure data exists from the start.
+9. **Symbolic types mostly stubs** — `symbolic_inference`, `search`, `world_model` generate placeholder code. Only `knowledge_graph` stores have real runtime (networkx).
+10. **Mutation selector could be a full agent** — Currently a single LLM call with a menu. Could be an agent itself (with tool use for spec analysis, memory for mutation history, multi-step reasoning). Deferred — current pipeline works, and making the selector an agent would be a significant architecture change. The key principle is: provide context, not prescriptions. The LLM should reason from failure data, not follow hardcoded heuristics.
 
 ### Strategic Direction (Session 24)
 
@@ -102,7 +105,7 @@ This lets the LLM *generate* fixes from error patterns (e.g., "outputs numbers i
 
 **Step 10: Multi-tool benchmark** — DONE. KB-Tool benchmark (25 questions over fictional knowledge base, 2-4 chained tool calls). All entities fictional → 0% without tools. Monkey-patches tool functions at runtime. `kb_react.yaml` spec, `kb_tools.py` module, `score_kb_tool` scoring.
 
-**Step 11: Compelling experiment** — Run evolution on kb_tool benchmark. Show: 0% (no tools) < X% (naive ReAct) < Y% (evolved). This is the proof that architecture search matters for tool-using agents.
+**Step 11: Compelling experiment** — DONE (Session 26). Evolution on kb_tool (25 examples, 2 gen, pop 4): base 161.4 fitness (88% EM) → best evolved 176.2 (+9%). Progressive disclosure diagnosed `format_mismatch` from failure data, prescribed surgical prompt edit. Context-driven prompts (no prescriptive guidance) were the key fix — previous run with prescriptive prompts found no improvement.
 
 ### What NOT to Prioritize
 - **More framework exporters** — 5 importers + 2 code gen backends prove the interchange story

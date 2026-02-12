@@ -626,17 +626,17 @@ Patterns detected: {patterns}
 {mutation_menu}
 
 ## Task
-Select 1-3 mutations from the menu above that will IMPROVE ACCURACY on the benchmark.
+Analyze the performance context and failure details above. Select 1-3 mutations that address
+the specific weaknesses revealed by the data.
+
+Your reasoning process:
+1. What specific failures or suboptimalities does the performance data reveal?
+2. What is the root cause? (e.g., runs out of steps, wrong output format, missing information, bad tool usage)
+3. Which mutations from the menu above would fix that root cause?
+
 Output a JSON array of selected mutations.
 Each must have "operator" plus the parameter fields shown. Example:
 [{{"operator": "modify_prompt", "agent": "solver", "transform": "add_chain_of_thought"}}]
-
-Key insights for math/reasoning benchmarks:
-- modify_prompt with add_chain_of_thought or add_verification often helps accuracy
-- add_review_step adds a second LLM call to check the answer — helpful if accuracy < 100%
-- insert_pattern(critique_cycle) adds generation+critique — useful for iterative refinement
-- Structural changes (add processes, patterns) only help if they improve reasoning quality
-- Prefer accuracy-improving mutations over efficiency-optimizing ones
 """
 
 ANALYSIS_SYSTEM_PROMPT = """\
@@ -694,26 +694,26 @@ def _get_benchmark_description(benchmark_suite):
     """Return a human-readable description of what the benchmark tests."""
     descriptions = {
         "gsm8k": "Grade school math problems requiring multi-step arithmetic reasoning. "
-                 "Accuracy improves with chain-of-thought and step-by-step problem decomposition.",
-        "gsm8k_hard": "Difficult multi-step math problems (4-8 reasoning steps). "
-                      "Benefits from structured reasoning, verification, and problem decomposition.",
-        "gsm8k_tricky": "Tricky math/logic problems with common-error traps (bat-and-ball, etc). "
-                        "Quick guessing fails; careful step-by-step reasoning and answer verification help. "
-                        "Key failure: intuitive answers are wrong (e.g., bat-and-ball costs 5 cents, not 10).",
-        "arc": "Science multiple-choice questions (A/B/C/D). "
-               "Requires scientific reasoning and knowledge application.",
+                 "Answer is always a single number. Scored by extracting the final number from output.",
+        "gsm8k_hard": "Difficult multi-step math problems requiring 4-8 reasoning steps. "
+                      "Answer is always a single number.",
+        "gsm8k_tricky": "Math/logic problems with common-error traps (bat-and-ball, lily pad doubling, etc). "
+                        "Intuitive first-reaction answers are wrong — e.g., bat costs $1.05 and ball costs $0.05 (not $0.10). "
+                        "Answer is always a single number.",
+        "arc": "Science multiple-choice questions. Output must be a single letter A/B/C/D. "
+               "Requires scientific reasoning and knowledge application. Scored by extracting a choice letter.",
         "hotpotqa": "Multi-hop question answering requiring information from multiple sources. "
-                    "Benefits from retrieval augmentation and reasoning chains.",
-        "humaneval": "Python code generation from docstrings. "
-                     "Benefits from code review and test-driven verification.",
+                    "Answers are short text spans. Scored by exact match and F1.",
+        "humaneval": "Python code generation from docstrings. Output must be valid Python code. "
+                     "Scored by executing generated code against test cases.",
         "multidoc": "Multi-document reasoning with traps. Questions require cross-referencing 3-5 fact cards. "
-                    "Trap types include contradictions between sources, misleading details, arithmetic aggregation, "
-                    "negation, and temporal reasoning. Benefits from retrieve-relevant-facts → cross-check → "
-                    "reason → verify architectures. Single LLM calls struggle on hard cross-reference + trap combos.",
+                    "Trap types: contradictions between sources, misleading details, arithmetic aggregation, "
+                    "negation, and temporal reasoning. Hard questions combine multiple trap types. "
+                    "Answers are short text or numbers.",
         "kb_tool": "Multi-tool reasoning over a fictional knowledge base. Questions require 2-4 chained tool calls "
-                   "(search → lookup → lookup → calculate). All entities are fictional so LLM knowledge alone gives 0%. "
-                   "Question types: chain lookup, multi-hop, aggregation, comparison, temporal. "
-                   "Benefits from planning tool sequences, caching intermediate results, and verifying tool outputs.",
+                   "(search → lookup → lookup → calculate). All entities are fictional — LLM knowledge alone gives 0%. "
+                   "Question types: chain lookup (2 calls), multi-hop (3 calls), aggregation (3-4 calls), "
+                   "comparison (3 calls), temporal (3 calls). Answers are short text or numbers.",
     }
     return descriptions.get(benchmark_suite, f"Benchmark: {benchmark_suite}")
 
@@ -1752,6 +1752,40 @@ def evolve(base_spec_path, test_inputs, generations=3, population=5,
     current_population = [("base", base_spec_path, copy.deepcopy(base_spec))]
     previous_analysis = None  # Mini's analysis from previous generation
     parent_test_results = {}  # Track last test_result per parent for error context
+
+    # Pre-evaluate base spec so gen 1 mutations have failure context
+    if benchmark_suite and llm_guided:
+        if verbose:
+            print(f"\n  Pre-evaluating base spec on {benchmark_suite} ({benchmark_examples} examples)...")
+        try:
+            # Instantiate base to temp file
+            base_agent_path = os.path.join(work_dir, "base_agent.py")
+            ok = instantiate_spec(base_spec_path, base_agent_path)
+            if ok:
+                if work_dir not in sys.path:
+                    sys.path.insert(0, work_dir)
+                base_fitness, base_test_result = compute_fitness_benchmark(
+                    "base_agent", benchmark_suite, benchmark_examples,
+                    timeout_sec=timeout_sec,
+                    base_agent_type=base_agent_type,
+                    verbose=verbose,
+                )
+                parent_test_results["base"] = {
+                    "fitness": base_fitness,
+                    "status": base_test_result.get("status", "?"),
+                    "llm_calls": base_test_result.get("llm_calls", 0),
+                    "failure_summary": base_test_result.get("failure_summary", ""),
+                    "score_em": base_test_result.get("score_em", 0.0),
+                    "error": base_test_result.get("error"),
+                }
+                if verbose:
+                    fs = parent_test_results["base"]["failure_summary"]
+                    print(f"  Base pre-eval: fitness={base_fitness:.1f}, "
+                          f"EM={base_test_result.get('score_em', 0):.3f}"
+                          f"{', failures: ' + fs[:100] if fs else ''}")
+        except Exception as e:
+            if verbose:
+                print(f"  Base pre-eval failed: {e}")
 
     for gen in range(generations):
         gen_results = []
