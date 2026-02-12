@@ -1,20 +1,21 @@
 # Agent Ontology Roadmap
 
-**Date:** 2026-02-10
-**Current state:** v0.2 ontology, 23 specs, 31 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI + AutoGen + OpenAI Agents SDK + Google ADK), spec-level state schema support, benchmark evolution
+**Date:** 2026-02-12
+**Current state:** v0.2 ontology, 32 specs, 34 tools, 2 code gen backends, OWL dual representation, PyPI package, real-world-tested importers (LangGraph + CrewAI + AutoGen + OpenAI Agents SDK + Google ADK), spec-level state schema support, benchmark evolution, meta-evolution (mutator agent + nested fitness)
 
 ---
 
 ## Where We Are
 
 ### Assets
-- **Ontology** (ONTOLOGY.yaml v0.2): 8 entity types, 7 process types, 12 edge types, 25+ validation rules
-- **Spec catalog**: 23 agent specs covering major patterns in the literature (ReAct, debate, RAG, plan-and-solve, self-refine, tree-of-thought, LATS, voyager, multi-agent codegen, map-reduce, socratic tutor, reflexion, mixture-of-agents, meta-prompting, customer-support swarm, software team, self-improver, etc.)
+- **Ontology** (ONTOLOGY.yaml v0.2): 9 entity types, 10 process types, 13 edge types, 25+ validation rules
+- **Spec catalog**: 32 agent specs covering major patterns (ReAct, debate, RAG, plan-and-solve, self-refine, tree-of-thought, LATS, voyager, multi-agent codegen, map-reduce, socratic tutor, reflexion, mixture-of-agents, meta-prompting, customer-support swarm, software team, self-improver, KG RAG, PDDL planner, RAP, alpha-geometry, minimal-solver, multidoc, kb-react, mutator)
 - **Full pipeline**: docs -> spec -> {validate, visualize, instantiate, test, analyze, mutate, evolve, benchmark}
-- **Two code gen backends**: custom state machine + LangGraph
+- **Two code gen backends**: custom state machine + LangGraph (32 agents each)
 - **Pattern library**: 7 reusable patterns with composition, mutation, crossover
-- **Benchmarks**: 4 datasets (HotpotQA, GSM8K, ARC, HumanEval)
-- **Property tests**: 182/182 pass across all 23 specs
+- **Benchmarks**: 9 datasets (HotpotQA, GSM8K, GSM8K-Hard, GSM8K-Tricky, ARC, HumanEval, MultiDoc, KB-Tool, Meta-Improve)
+- **Property tests**: 254/254 pass across all 32 specs
+- **Meta-evolution**: Mutator agent that improves other specs, evaluated via nested fitness on meta_improve benchmark
 
 ### Core Thesis
 Agent architectures are typed graphs. If you make the graph formal, you unlock validation, visualization, code generation, testing, analysis, comparison, mutation, and evolution for free.

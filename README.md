@@ -89,7 +89,7 @@ ao-mermaid agent_ontology/specs/react.yaml
 # 21. Spec similarity and clustering
 ao-similarity --all agent_ontology/specs/ --top 5 --clusters 5
 
-# 22. Run property-based tests (no API keys needed, 238 tests)
+# 22. Run property-based tests (no API keys needed, 254 tests)
 python3 tests/test_properties.py
 
 # 23. Generate comparative analysis report
@@ -192,11 +192,11 @@ Two backends available:
 - TypedDict-based state with fields derived from schemas + logic block analysis
 - Gate chaining support (gate → gate inserts pass-through node)
 - Channel support: publish/subscribe edges generate channel read/write code
-- All 27 specs generate valid Python; verified E2E on multiple agents
+- All 32 specs generate valid Python; verified E2E on multiple agents
 
 ## Agent Catalog
 
-31 agent specs, all validated. 30 are instantiable and runnable with `gemini-3-flash-preview` (1 description-only).
+32 agent specs, all validated. 31 are instantiable and runnable with `gemini-3-flash-preview` (1 description-only).
 
 | Spec | Type | Ent | Proc | Sch | Complexity | Status |
 |------|------|-----|------|-----|------------|--------|
@@ -231,6 +231,7 @@ Two backends available:
 | `multidoc_baseline` | Single-shot multi-doc QA | 1 | 3 | 4 | — | Working |
 | `multidoc_structured` | Structured multi-doc QA | 2 | 8 | 7 | — | Working |
 | `kb_react` | KB tool-using ReAct | 6 | 8 | 8 | — | Working |
+| `mutator` | Meta-evolution agent | 2 | 5 | 7 | — | Working |
 
 Complexity scores computed by `complexity.py` using weighted graph metrics (entities, edges, fan-out, loops, schema count, graph depth, invocation density).
 
@@ -299,7 +300,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `complexity.py` | Spec complexity scoring | `python3 complexity.py --all specs/` |
 | `mutate.py` | Spec mutation engine (field + pattern-level) | `python3 mutate.py spec.yaml --random -n 5` |
 | `evolve.py` | Evolutionary search with crossover | `python3 evolve.py spec.yaml --generations 3 --crossover` |
-| `benchmark.py` | Benchmark suite (8 datasets) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
+| `benchmark.py` | Benchmark suite (9 datasets) | `python3 benchmark.py --suite gsm8k --agent self_refine` |
 | `patterns.py` | Pattern library (7 patterns) | `from patterns import detect_patterns, PATTERNS` |
 | `compose.py` | Compose patterns into new specs | `python3 compose.py compose_spec.yaml -o spec.yaml` |
 | `test_specgen.py` | Specgen E2E testing | `python3 test_specgen.py --fix` |
@@ -311,7 +312,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 | `migrate.py` | Spec version migration | `python3 migrate.py --all specs/ --to 2.0 --dry-run` |
 | `mermaid.py` | Mermaid flowchart export | `python3 mermaid.py specs/react.yaml` |
 | `similarity.py` | Spec similarity & clustering | `python3 similarity.py --all specs/ --clusters 5` |
-| `test_properties.py` | Property-based structural tests (246) | `python3 test_properties.py` |
+| `test_properties.py` | Property-based structural tests (254) | `python3 test_properties.py` |
 | `comparative_report.py` | Cross-spec comparative analysis | `python3 comparative_report.py --all specs/` |
 | `import_langgraph.py` | Import LangGraph StateGraph → YAML spec | `python3 import_langgraph.py agent.py -o spec.yaml` |
 | `import_crewai.py` | Import CrewAI → YAML spec | `python3 import_crewai.py crew.py -o spec.yaml` |
@@ -333,7 +334,7 @@ Full type system: `ONTOLOGY.yaml` | Machine-readable: `spec_schema.json` (JSON S
 ONTOLOGY.yaml          # Type system (entity types, edge types, constraints)
      |
      v
-specs/*.yaml           # Agent specifications (31 agents)
+specs/*.yaml           # Agent specifications (32 agents)
      |
      +---> validate.py       # Validation (25+ rules, graph analysis)
      +---> instantiate.py    # Code generation -> agents/*.py or agents_lg/*.py
@@ -355,14 +356,14 @@ specs/*.yaml           # Agent specifications (31 agents)
      +---> similarity.py     # Spec similarity & clustering
      +---> migrate.py        # Spec version migration
      +---> comparative_report.py  # Cross-spec comparative analysis
-     +---> test_properties.py     # Property-based structural tests (246)
+     +---> test_properties.py     # Property-based structural tests (254)
      +---> spec-viewer.html  # Visualization (5 views + trace overlay)
 
 agents/*.py            # Generated runnable agents (custom backend)
 agents_lg/*.py         # Generated runnable agents (LangGraph backend)
      |
      +---> test_agents.py    # Automated testing + multi-model comparison
-     +---> benchmark.py      # Benchmark suite (8 datasets)
+     +---> benchmark.py      # Benchmark suite (9 datasets)
      +---> trace.json        # Runtime traces
               |
               v

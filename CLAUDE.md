@@ -34,7 +34,8 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 | Deep analysis | `evolve.py` Mini (gpt-5-mini) analyzes top-K per generation | Working |
 | Population evolution | `evolve.py` (selection, crossover, lineage) | Working |
 | Knowledge store | `knowledge_store.py` (SQLite, persistent across runs) | Working |
-| Benchmark fitness | `benchmark.py` + 8 datasets (incl. multidoc, kb_tool) | Working |
+| Benchmark fitness | `benchmark.py` + 9 datasets (incl. multidoc, kb_tool, meta_improve) | Working |
+| Meta-evolution | `mutator.yaml` agent + `meta_improve` benchmark (nested fitness) | Working |
 | Error analysis | Per-example failure tracking, failure_summary in LLM context | Working |
 | Early stop | Skip remaining examples after N failures (saves ~40% budget) | Working |
 | Multi-run eval | `--eval-runs N` averages fitness across runs | Working |
@@ -43,7 +44,7 @@ AlphaEvolve searches over raw code (hundreds of lines, unstructured). We search 
 | OWL reasoning | `owl_bridge.py` (round-trip + pattern classification) | Working |
 
 ### What's Proven
-- **Level 1**: 26/26 agents pass E2E tests, 246/246 property tests (31 specs)
+- **Level 1**: 26/26 agents pass E2E tests, 254/254 property tests (32 specs)
 - **Level 2**: Evolution finds genuinely better architectures. On GSM8K-Tricky (25 trick questions):
   - Baseline (minimal_solver, no CoT): 96% EM, fitness 200.8
   - Best evolved variant (change_model mutation): 100% EM, fitness 216.4
@@ -107,6 +108,8 @@ This lets the LLM *generate* fixes from error patterns (e.g., "outputs numbers i
 
 **Step 11: Compelling experiment** — DONE (Session 26). Evolution on kb_tool (25 examples, 2 gen, pop 4): base 161.4 fitness (88% EM) → best evolved 176.2 (+9%). Progressive disclosure diagnosed `format_mismatch` from failure data, prescribed surgical prompt edit. Context-driven prompts (no prescriptive guidance) were the key fix — previous run with prescriptive prompts found no improvement.
 
+**Step 12: Meta-evolution** — DONE (Session 27). The mutator itself is an agent spec (`mutator.yaml`) that can be evolved. `meta_improve` benchmark evaluates mutator quality via nested fitness: run mutator on target spec → validate output → benchmark improved spec → compare to baseline. 5 improvement tasks across kb_tool, gsm8k_tricky, hotpotqa, gsm8k, multidoc. Base mutator: 60% EM (3/5 tasks improved). Evolution run (2 gen, pop 4): base tied at 102.4 fitness — mutations were too shallow to improve the already-effective diagnose→edit architecture.
+
 ### What NOT to Prioritize
 - **More framework exporters** — 5 importers + 2 code gen backends prove the interchange story
 - **Polish/ecosystem** (VS Code extension, web editor) — doesn't advance the core vision
@@ -115,9 +118,9 @@ This lets the LLM *generate* fixes from error patterns (e.g., "outputs numbers i
 
 ## Project Structure
 ```
-agent_ontology/          Python package (33 modules, pip install -e .)
+agent_ontology/          Python package (34 modules, pip install -e .)
   ONTOLOGY.yaml          Entity/process/edge type definitions (v0.2+, 9 entity types, 10 process types, 13 edge types, verify edge added)
-  specs/                 31 agent spec YAMLs (30 runnable + 1 description-only)
+  specs/                 32 agent spec YAMLs (31 runnable + 1 description-only)
   instantiate.py         Spec → Python agent code (custom + LangGraph backends)
   validate.py            23 structural validation rules
   design.py              End-to-end agent design pipeline (ao-design)
@@ -128,11 +131,11 @@ agent_ontology/          Python package (33 modules, pip install -e .)
   recommend.py           Evidence-backed architecture recommender (ao-recommend)
   owl_bridge.py          Bidirectional YAML↔OWL with DL pattern classification
   import_*.py            5 framework importers (LangGraph, CrewAI, AutoGen, OpenAI Agents, Google ADK)
-  benchmarks/            8 datasets (GSM8K, GSM8K-Hard, GSM8K-Tricky, HotpotQA, ARC, HumanEval, MultiDoc, KB-Tool) + scoring
+  benchmarks/            9 datasets (GSM8K, GSM8K-Hard, GSM8K-Tricky, HotpotQA, ARC, HumanEval, MultiDoc, KB-Tool, Meta-Improve) + scoring
   ...                    lint, verify, patterns, compose, benchmark, specgen, etc.
-agents/                  31 generated custom-backend agents
-agents_lg/               27 generated LangGraph-backend agents
-tests/                   test_agents.py (26 E2E), test_properties.py (246), test_roundtrip.py
+agents/                  32 generated custom-backend agents
+agents_lg/               32 generated LangGraph-backend agents
+tests/                   test_agents.py (26 E2E), test_properties.py (254), test_roundtrip.py
 ```
 
 ## Key Commands
@@ -143,7 +146,7 @@ python3 agent_ontology/instantiate.py SPEC -o agents/X.py       # Generate agent
 python3 agent_ontology/instantiate.py --all agent_ontology/specs/ -o agents/  # Batch regen
 python3 tests/test_agents.py --agent react --timeout 120        # Test one agent
 python3 tests/test_agents.py --timeout 120                      # Test all runnable agents
-python3 tests/test_properties.py                                # 246 property tests
+python3 tests/test_properties.py                                # 254 property tests
 python3 -m agent_ontology.evolve specs/X.yaml -g 3 -p 5 --benchmark multidoc --llm-guided  # Evolution
 python3 -m agent_ontology.evolve specs/X.yaml --eval-runs 3 --benchmark gsm8k  # Multi-run eval
 python3 -m agent_ontology.knowledge_store stats              # Query knowledge store

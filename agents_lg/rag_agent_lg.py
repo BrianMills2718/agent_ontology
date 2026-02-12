@@ -89,7 +89,7 @@ def _openrouter_model_id(model):
     return model
 
 
-def _get_chat_model(model, temperature=0.7, max_tokens=4096):
+def _get_chat_model(model, temperature=0.7, max_tokens=8192):
     """Get a LangChain ChatModel instance for the given model name."""
     if _OPENROUTER_API_KEY:
         from langchain_openai import ChatOpenAI
@@ -113,7 +113,7 @@ def _get_chat_model(model, temperature=0.7, max_tokens=4096):
         return ChatOpenAI(model=model, temperature=temperature, max_tokens=max_tokens)
 
 
-def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
+def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=8192, retries=3):
     if _MODEL_OVERRIDE:
         model = _MODEL_OVERRIDE
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -469,7 +469,7 @@ enough information, say so. Cite which passages you used.
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Generator", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
@@ -488,7 +488,7 @@ search query that will match relevant documents. Output only the rewritten query
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Query Rewriter", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
@@ -507,7 +507,7 @@ output a relevance score (0-10) and whether to include it. Return a filtered lis
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Relevance Judge", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result

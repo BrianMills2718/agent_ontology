@@ -90,7 +90,7 @@ def _openrouter_model_id(model):
     return model
 
 
-def _get_chat_model(model, temperature=0.7, max_tokens=4096):
+def _get_chat_model(model, temperature=0.7, max_tokens=8192):
     """Get a LangChain ChatModel instance for the given model name."""
     if _OPENROUTER_API_KEY:
         from langchain_openai import ChatOpenAI
@@ -114,7 +114,7 @@ def _get_chat_model(model, temperature=0.7, max_tokens=4096):
         return ChatOpenAI(model=model, temperature=temperature, max_tokens=max_tokens)
 
 
-def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=4096, retries=3):
+def call_llm(model, system_prompt, user_message, temperature=0.7, max_tokens=8192, retries=3):
     if _MODEL_OVERRIDE:
         model = _MODEL_OVERRIDE
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -345,7 +345,7 @@ def invoke_construction_proposer(user_message, output_schema=None):
         system_prompt=system,
         user_message=user_message,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     trace_call("Construction Proposer (LLM)", "gemini-3-flash-preview", system, user_message, result, int((time.time()-t0)*1000))
     return result
