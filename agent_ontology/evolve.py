@@ -175,6 +175,7 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
         extract_answer, score_hotpotqa, score_gsm8k,
         score_arc, score_humaneval, score_multidoc, score_kb_tool,
     )
+    from .benchmarks.meta_eval import score_meta_improve
 
     # Use base_agent_type for formatting inputs (evolved agents share base schema)
     agent_type = base_agent_type or agent_module_name.replace("_agent", "")
@@ -253,6 +254,8 @@ def compute_fitness_benchmark(agent_module_name, suite, examples=5, timeout_sec=
                     s = score_multidoc(predicted, str(expected))
                 elif suite == "kb_tool":
                     s = score_kb_tool(predicted, str(expected))
+                elif suite == "meta_improve":
+                    s = score_meta_improve(predicted, example)
                 else:
                     s = {"em": 1.0 if str(expected).lower() in predicted.lower() else 0.0}
 
@@ -714,6 +717,10 @@ def _get_benchmark_description(benchmark_suite):
                    "(search → lookup → lookup → calculate). All entities are fictional — LLM knowledge alone gives 0%. "
                    "Question types: chain lookup (2 calls), multi-hop (3 calls), aggregation (3-4 calls), "
                    "comparison (3 calls), temporal (3 calls). Answers are short text or numbers.",
+        "meta_improve": "Meta-evolution benchmark. Each example is an improvement task: given a target agent spec, "
+                        "failure data, and benchmark description, produce an improved spec YAML. "
+                        "Scored by running a nested benchmark — the output spec is validated, instantiated, "
+                        "and evaluated on the target benchmark. EM=1.0 if the improved spec outperforms the baseline.",
     }
     return descriptions.get(benchmark_suite, f"Benchmark: {benchmark_suite}")
 
@@ -2121,6 +2128,7 @@ EVOLVE_INPUTS = {
     "multidoc_baseline": {"query": "Where did the founder earn her PhD?", "context": "[Source A] Founded by Dr. Chen. [Source B] PhD from MIT."},
     "multidoc_structured": {"query": "Where did the founder earn her PhD?", "context": "[Source A] Founded by Dr. Chen. [Source B] PhD from MIT."},
     "kb_react": {"query": "What city is the headquarters of the company that manufactures the NeuroSync Headset?"},
+    "mutator": {"spec_yaml": "name: Test\nentities:\n  - id: a\n    type: agent\nprocesses:\n  - id: s\n    type: step\nedges:\n  - {type: flow, from: s, to: s}\n", "failure_summary": "Test failure", "benchmark_description": "Test benchmark"},
 }
 
 

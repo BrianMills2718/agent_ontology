@@ -20,6 +20,7 @@ COMPATIBILITY = {
     "multidoc_baseline": ["multidoc"],
     "multidoc_structured": ["multidoc"],
     "kb_react": ["kb_tool"],
+    "mutator": ["meta_improve"],
 }
 
 # Dataset -> list of compatible agents (derived from COMPATIBILITY)
@@ -82,6 +83,24 @@ def format_input(agent_name, example, dataset_name):
 
     elif agent_name == "kb_react":
         return {"query": question}
+
+    elif agent_name == "mutator":
+        # Load the target spec YAML from file
+        spec_yaml = example.get("spec_yaml", "")
+        if not spec_yaml and example.get("target_spec"):
+            import os
+            spec_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "specs")
+            spec_path = os.path.join(spec_dir, f"{example['target_spec']}.yaml")
+            try:
+                with open(spec_path) as _f:
+                    spec_yaml = _f.read()
+            except FileNotFoundError:
+                spec_yaml = f"# Spec not found: {example['target_spec']}"
+        return {
+            "spec_yaml": spec_yaml,
+            "failure_summary": example.get("failure_summary", question),
+            "benchmark_description": example.get("benchmark_description", ""),
+        }
 
     elif agent_name in ("multidoc_baseline", "multidoc_structured"):
         # MultiDoc benchmark: include fact cards as context

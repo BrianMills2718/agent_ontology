@@ -375,3 +375,12 @@ def score_humaneval(predicted, example):
     return {
         "pass_at_1": 1.0 if result["passed"] else 0.0,
     }
+
+
+def score_meta_improve(predicted, example):
+    """Score a meta_improve prediction. Delegates to meta_eval module.
+
+    Returns dict with em (0.0 or 1.0) and eval_details.
+    """
+    from .meta_eval import score_meta_improve as _score_meta_improve
+    return _score_meta_improve(predicted, example)
