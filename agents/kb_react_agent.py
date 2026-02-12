@@ -371,9 +371,9 @@ For each step, decide on ONE of three step types:
 2. "action" — call a tool (set type to "action", and set tool_name and tool_input)
 3. "answer" — provide your final answer when you have enough info (set the answer field)
 
-Available tools:
-- search: search the knowledge base by name or keyword. Returns top matching entity summaries with their IDs (e.g., "[comp_nexus] (company) Nexus AI Labs: ..."). Use this to find entities when you don't know their ID.
-- lookup: look up an entity by its exact ID (e.g., "comp_nexus", "person_elena", "prod_neurosync"). Returns full JSON details including all fields and relationships. Always use the entity ID from search results.
+Available tools (use these EXACT tool_name values):
+- kb search: search the knowledge base by name or keyword. Returns top matching entity summaries with their IDs (e.g., "[comp_nexus] (company) Nexus AI Labs: ..."). Use this to find entities when you don't know their ID.
+- kb lookup: look up an entity by its exact ID (e.g., "comp_nexus", "person_elena", "prod_neurosync"). Returns full JSON details including all fields and relationships. Always use the entity ID from search results.
 - calculate: evaluate a mathematical expression (e.g., "720 + 165" or "2003 - 1891")
 
 Strategy:

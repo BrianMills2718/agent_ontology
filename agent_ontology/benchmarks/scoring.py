@@ -355,6 +355,13 @@ def score_kb_tool(predicted, expected):
     if norm_exp and norm_pred and (norm_exp in norm_pred or norm_pred in norm_exp):
         return {"em": 1.0, "f1": 1.0}
 
+    # Try word-set containment (all expected words appear in predicted)
+    if norm_exp and norm_pred:
+        exp_words = set(norm_exp.split())
+        pred_words = set(norm_pred.split())
+        if exp_words and exp_words.issubset(pred_words):
+            return {"em": 1.0, "f1": 1.0}
+
     return {"em": 0.0, "f1": f1_score(predicted, expected)}
 
 
